@@ -94,3 +94,50 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 - POST /api/arena（并行多模型 + 10s 心跳）
 - GET|POST /api/ui-config（30s 缓存 + 失效逻辑）
 - 全量回归所有接口
+
+## 阶段4（2026-08-06）✅ 完成
+
+### 完成内容
+- POST /api/arena：并行调用最多 6 个模型（CachedThreadPool + 队列聚合），SSE 事件序列与 Python 一致：
+  `{"started":true,"models":[...]}` → 每个模型完成即发 `{"model","content"}` 或 `{"model","error"}`（按完成顺序），
+  期间每 10s 无结果发 `{"keepalive":true}` 心跳，最后 `{"done":true}`。
+- GET /api/ui-config：`{config, defaults}`，config 走 30s 缓存（DB → 默认值兜底）。
+- POST /api/ui-config：原始入参解析（非法 JSON → 400 {"error":"请求体不是合法 JSON"}，与 Python 一致），
+  `config = body.config 或 body`，仅保留 background/menus 两键（缺省用默认值），入库后缓存失效。
+
+### 验证（pm2 restart + /tmp/cmp_stage4.sh，8000 vs 8001）
+- arena 双模型并行：两端事件序列完全一致（started → qwen-plus 404 error 事件（该网关无此模型，两端同样报错，
+  文案 `HTTP 404: {"error":{"message":"Model not exist."...` 一致）→ qwen3.8-max content 事件 → done）✅
+- arena 坏模型名：error 事件结构一致 ✅
+- arena 校验：空消息 400、无模型 400 文案一致 ✅
+- **arena 心跳实测**：单模型长任务（约 70s）期间每 10s 收到一个 `{"keepalive":true}`（共 7 个），
+  随后 content + done ✅
+- ui-config GET：键结构与 defaults 完全一致 ✅
+- ui-config POST 往返：保存 `{"menus":{"chat":{"name":"对话Pro","icon":"🚀"}}}` 后 /api/menu 立即生效，
+  background 颜色同步生效；还原默认成功 ✅
+- ui-config 非法 JSON / config 非对象：两端均 400 且文案一致 ✅
+
+## 全量回归（2026-08-06）✅ 通过
+
+重跑阶段1~4 全部对比脚本（/tmp/cmp_stage1.sh ~ cmp_stage4.sh），所有接口 8000 vs 8001 行为一致：
+
+| 模块 | 接口 | 结果 |
+|---|---|---|
+| 认证 | register/login/logout/me | ✅ 校验文案、状态码、Cookie 双向互认一致 |
+| 菜单/模型 | menu / models | ✅ 结构、顺序、缓存行为一致 |
+| 智能对话 | conversations* / chat SSE | ✅ 流式帧、历史、自动命名、404/400 一致 |
+| 文本工具箱 | toolbox | ✅ 4 动作 + 错误路径一致 |
+| RAG | upload/docs/ask | ✅ 名称清洗、分块数、检索打分（0.438）逐位一致 |
+| 英语学习 | scenarios/conversations/messages/delete/chat | ✅ scenarios diff 为空、纠错结构一致 |
+| 结构化抽取 | extract | ✅ raw/result 一致 |
+| 模型竞技场 | arena | ✅ 事件序列 + 心跳一致 |
+| 界面配置 | ui-config GET/POST | ✅ 往返 + 错误路径一致 |
+
+期间还验证：共享 Redis 限流（Python 用尽配额后 Java 同样 429；本轮回归 Java 登录也被同一限流键拦下，
+换 X-Forwarded-For 后通过——与 Python 行为完全一致）。
+
+### 剩余工作（切流前，属后续步骤）
+1. 数据迁移：Python MySQL 的 users/conversations/messages/english_*/ui_config → data/notelab-java.db
+   （用户密码哈希与 id 需原样迁移，迁移后交叉登录态即可无缝衔接）。
+2. 人工切流：/root/myapp/next.config.ts 的 rewrites 目标 8000 → 8001，重启 myapp。
+3. 观察期后 pm2 stop notelab。

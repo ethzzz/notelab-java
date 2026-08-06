@@ -15,8 +15,8 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 文档问答 RAG | /api/rag/upload /api/rag/docs /api/rag/ask | ✅ 已完成（JSON 上传，检索打分与 Python 完全一致） |
 | 英语学习 | /api/english/* | ✅ 已完成（场景/开场白/语法纠错全对齐） |
 | 结构化抽取 | /api/extract | ✅ 已完成 |
-| 模型竞技场 | /api/arena (并行 SSE+心跳) | ⬜ 未开始 |
-| 界面配置 | /api/ui-config | ⬜ 未开始 |
+| 模型竞技场 | /api/arena (并行 SSE+心跳) | ✅ 已完成（10s 心跳实测生效） |
+| 界面配置 | /api/ui-config | ✅ 已完成（30s 缓存+保存失效） |
 
 ## 项目简介
 
@@ -86,3 +86,7 @@ mvn -DskipTests package && pm2 restart notelab-java
 - 非法 JSON 请求体的 422 `detail` 数组内部字段与 FastAPI 略有差异（外层结构一致）。
 - Set-Cookie 头细节差异：Python 版对带 `=` 的 token 值加双引号、Java 版不加；`SameSite=lax/Lax` 大小写不同。均为合法 Cookie，浏览器/代理行为一致，互认已实测通过。
 - /api/rag/upload 为 **JSON** 接口（`{name, content}`），与 main.py 实际实现一致（任务简报中写的 multipart 以源码为准）。
+
+## 验证状态
+
+全部 4 个阶段完成并通过与 Python 版（8000）的逐接口 curl 对比验收，详见 [PROGRESS.md](PROGRESS.md)。
