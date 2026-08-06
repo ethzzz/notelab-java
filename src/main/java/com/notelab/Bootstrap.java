@@ -14,6 +14,7 @@ public class Bootstrap implements CommandLineRunner {
     @Override
     public void run(String... args) {
         Db.init();
+        RagService.init();
         log.info("NoteLab-Java 启动完成：port=8001, base_url={}, model={}, key={}, secret_key={}, data_dir={}",
                 AppConfig.qwenBaseUrl(), AppConfig.qwenModel(),
                 AppConfig.qwenKey().isEmpty() ? "(未配置)" : "(已配置)",

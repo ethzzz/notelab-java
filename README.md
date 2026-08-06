@@ -12,8 +12,8 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 菜单/模型 | /api/menu /api/models | ✅ 已完成（models 600s 缓存，结构逐项对比一致） |
 | 智能对话 | /api/conversations* /api/chat(SSE) | ✅ 已完成（流式+历史+自动命名验证通过） |
 | 文本工具箱 | /api/toolbox | ✅ 已完成 |
-| 文档问答 RAG | /api/rag/upload /api/rag/docs /api/rag/ask | ⬜ 未开始 |
-| 英语学习 | /api/english/* | ⬜ 未开始 |
+| 文档问答 RAG | /api/rag/upload /api/rag/docs /api/rag/ask | ✅ 已完成（JSON 上传，检索打分与 Python 完全一致） |
+| 英语学习 | /api/english/* | ✅ 已完成（场景/开场白/语法纠错全对齐） |
 | 结构化抽取 | /api/extract | ✅ 已完成 |
 | 模型竞技场 | /api/arena (并行 SSE+心跳) | ⬜ 未开始 |
 | 界面配置 | /api/ui-config | ⬜ 未开始 |

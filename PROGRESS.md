@@ -67,3 +67,30 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 ### 下一步（阶段3）
 - RAG：/api/rag/upload（JSON {name,content}，注意不是 multipart，以 main.py 为准）、/api/rag/docs、/api/rag/ask
 - 英语：scenarios / conversations（创建时生成开场白）/ messages / delete / chat（JSON 语法纠错，非流式）
+
+## 阶段3（2026-08-06）✅ 完成
+
+### 完成内容
+- RAG：POST /api/rag/upload（JSON {name,content}，文件名清洗规则与 Python 一致）、GET /api/rag/docs、
+  POST /api/rag/ask（bigram 重叠打分 top3 + 引用编号提示词，照抄 Python）。文档持久化在 data/uploads/*.txt，
+  启动时自动加载；与 Python 版 uploads 目录互相独立。
+- 英语学习全套：GET /api/english/scenarios（8 场景常量照抄）、GET|POST /api/english/conversations
+  （创建时调用模型生成开场白、非法场景回退 free）、GET .../messages（含 correction/error_note 字段）、
+  DELETE、POST /api/english/chat（语法纠错 JSON 提示词照抄 Python；注意该接口在 Python 版即为非流式 JSON，
+  任务简报中的「SSE」描述以 main.py 源码为准）。
+
+### 验证（pm2 restart + /tmp/cmp_stage3.sh，8000 vs 8001）
+- RAG upload：名称清洗 `我的 文档@v1 → 我的_文档_v1` 两端一致；长文分块数一致（2 块）；空内容 400 一致 ✅
+- RAG docs：条目结构一致 ✅
+- RAG ask：**citations 完全一致（同一片段、同分 0.438）**，证明 chunk/bigram/round 逻辑逐位对齐；
+  两端回答都正确引用 [1]；空问题 400 一致 ✅
+- English scenarios：diff 无任何差异 ✅
+- English 创建会话：结构一致、开场白正常生成、非法 scenario 回退 free ✅
+- English chat：两端均把 "I go ... yesterday and eat noodles" 纠错为 "I went ... and ate noodles"，
+  error_note 为中文说明；响应键集合一致 ✅
+- English messages/list/delete：字段结构、404、删除语义一致 ✅
+
+### 下一步（阶段4）
+- POST /api/arena（并行多模型 + 10s 心跳）
+- GET|POST /api/ui-config（30s 缓存 + 失效逻辑）
+- 全量回归所有接口
