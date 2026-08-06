@@ -41,3 +41,29 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 - conversations 全套（list/create/messages/delete/set-model）
 - POST /api/chat SSE 流式（历史入库、首条消息自动命名）
 - POST /api/toolbox、POST /api/extract
+
+## 阶段2（2026-08-06）✅ 完成
+
+### 完成内容
+- conversations 全套：GET/POST /api/conversations、GET /api/conversations/{cid}/messages、
+  DELETE /api/conversations/{cid}、POST /api/conversations/{cid}/model（默认模型、404 语义与 Python 一致）。
+- POST /api/chat：SSE 流式（`data: {"delta":...}` 帧 + 结束 `{"done":true}`），用户消息先入库、
+  首条消息自动设为标题（前 30 字符）、助手回复完整入库、上游非 200/超时/异常分别发 error 事件，文案与 Python 一致。
+- POST /api/toolbox：4 个动作（summarize/translate/rewrite/sentiment）提示词照抄 Python 版。
+- POST /api/extract：结构化抽取，raw + result（首个 `{` 到末尾 `}` 的 JSON 解析）逻辑与 Python 一致。
+
+### 验证（pm2 restart + /tmp/cmp_stage2.sh，8000 vs 8001）
+- 创建会话：`{"id":N,"title":"新对话","model":"qwen3.8-max"}` 两端一致；默认模型创建一致 ✅
+- 会话列表：键结构、条目字段、updated_at 格式（`2026-08-06 23:29:28`）一致 ✅
+- 会话消息：空会话/404 语义一致 ✅
+- chat SSE 第一轮：两端事件序列均为 `{"delta":...}* + {"done":true}` ✅
+- 多轮历史：第二轮问「刚才记住的数字」，两端均正确回答 42（历史入库生效）✅
+- 标题自动命名：两端标题均被设为首条消息前 30 字 ✅；消息数 4 条、角色交替一致 ✅
+- chat 错误路径：空消息 400、会话不存在 404，文案一致 ✅
+- set-model/delete：200/404 行为一致，删除后查消息 404 ✅
+- toolbox：summarize 返回 `{action,name,result}` 结构一致；未知动作 400、空文本 400 文案一致 ✅
+- extract：`{raw,result}` 结构一致，抽取结果完全一致（姓名/电话/城市）✅
+
+### 下一步（阶段3）
+- RAG：/api/rag/upload（JSON {name,content}，注意不是 multipart，以 main.py 为准）、/api/rag/docs、/api/rag/ask
+- 英语：scenarios / conversations（创建时生成开场白）/ messages / delete / chat（JSON 语法纠错，非流式）
