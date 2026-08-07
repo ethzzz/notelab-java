@@ -20,9 +20,12 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 
 ## 项目简介
 
-- 技术栈：Java 17 + Spring Boot 3.4 + SQLite（xerial JDBC）+ 原生 HttpClient（调模型网关）。
+- 技术栈：Java 17 + Spring Boot 3.4 + **MySQL（直连 Python 版同一个库）+ HikariCP 连接池（最大 10）** + 原生 HttpClient（调模型网关）。
 - 只实现前端（Next.js，/root/myapp）实际调用的 `/api/*` 接口；Python 版的服务端渲染 HTML 页面不在重写范围（前端不使用）。
-- 数据层表结构与行为和 Python 版 db.py 一致，但使用**独立的 SQLite 文件** `data/notelab-java.db`，不触碰 Python 服务的数据（Python 版用 MySQL）。数据迁移是切流前的单独步骤。
+- **数据层直连 Python 版正在用的 MySQL（127.0.0.1:3306 的 `notelab` 库），两个服务共享同一份数据**：
+  用户、会话、消息、英语学习、ui_config 全部互通，一端写入另一端即时可见，无需数据迁移。
+  建表语句与 Python 版 db.py 逐条一致（仅 CREATE TABLE IF NOT EXISTS，不改动现有表结构）。
+  原 SQLite 方案已废弃：`data/notelab-java.db` 仅保留为历史产物，不再读写。
 
 ## 环境依赖
 
@@ -32,6 +35,9 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
   若进程环境没有，程序会按 `进程环境变量 → ./.env → /root/notelab/.env（只读）→ 默认值` 的顺序读取
   `QWEN_API_KEY / QWEN_BASE_URL / QWEN_MODEL / SECRET_KEY / REDIS_HOST / REDIS_PORT`，
   其中 SECRET_KEY 复用 Python 版的值是**会话 Cookie 兼容**的关键。
+- **MySQL**（阶段5 起必需）：本机 systemd 服务 `mysql`（127.0.0.1:3306），库名 `notelab`，
+  连接参数读取 `MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DB`
+  （与 Python 版同用 /root/notelab/.env 中的同一套账号；密钥不落代码、不入 git）。
 - Node.js / pm2（仅用于进程管理）
 - Redis（可选）：限流与 Python 版共用（键 `rl:*`）；不可用时自动退回进程内限流。
 
@@ -73,13 +79,14 @@ mvn -DskipTests package && pm2 restart notelab-java
 ## 与 Python 版的关系及切流方法
 
 1. **契约来源**：所有请求/响应契约以 `/root/notelab/main.py` 源码为准（错误文案、状态码、字段顺序均照抄）。
-2. **会话兼容**：HMAC 会话 Cookie（`notelab_session`，base64url(`uid.exp.hmac_sha256_hex`)，30 天有效期）与 Python 版算法完全一致，已验证双向互认（Python 签发的 token 可直接登录 Java 版，反之亦然），切流后用户登录态不丢失（前提是用户数据已迁移到 Java 侧数据库）。
+2. **会话兼容**：HMAC 会话 Cookie（`notelab_session`，base64url(`uid.exp.hmac_sha256_hex`)，30 天有效期）与 Python 版算法完全一致，且两服务共享同一张 users 表，切流后用户登录态无缝保留（已实测双向互认）。
 3. **限流兼容**：与 Python 版共用 Redis 限流键（`rl:register:<ip>` 5次/10分钟、`rl:login:<ip>` 10次/5分钟）。
-4. **切流步骤**（人工）：
+4. **数据共享**（阶段5 起）：两服务直连同一个 MySQL 库 `notelab`，注册/会话/消息/英语/ui_config 全部共享，
+   **切流无需任何数据迁移**。切换前的备份见 `data/backup-before-mysql-switch.sql`（mysqldump，不入库）。
+5. **切流步骤**（人工）：
    - 确认 Java 版回归通过（见 PROGRESS.md）；
-   - 将 Python 库中的用户/对话等数据迁移到 `data/notelab-java.db`（单独步骤）；
    - 修改 `/root/myapp/next.config.ts` 中 rewrites 目标 `8000 → 8001` 并重启 myapp；
-   - 观察无异常后 `pm2 stop notelab`。
+   - 观察无异常后 `pm2 stop notelab`（数据在同一 MySQL，停 Python 服务不丢任何数据）。
 
 ## 已知差异（不影响前端）
 
@@ -87,6 +94,11 @@ mvn -DskipTests package && pm2 restart notelab-java
 - Set-Cookie 头细节差异：Python 版对带 `=` 的 token 值加双引号、Java 版不加；`SameSite=lax/Lax` 大小写不同。均为合法 Cookie，浏览器/代理行为一致，互认已实测通过。
 - /api/rag/upload 为 **JSON** 接口（`{name, content}`），与 main.py 实际实现一致（任务简报中写的 multipart 以源码为准）。
 
+## 已知差异补充（阶段5）
+
+- extract 请求缺 `fields` 字段时：Python 返回 422 `detail`（Pydantic 校验），Java 返回 400 `{"error":"文本和目标字段都不能为空"}`；正常请求两端一致。
+- ui_config 现为两服务共享表：任何一端保存配置会即时影响另一端（30s 缓存过期后生效），操作即生产。
+
 ## 验证状态
 
-全部 4 个阶段完成并通过与 Python 版（8000）的逐接口 curl 对比验收，详见 [PROGRESS.md](PROGRESS.md)。
+全部 5 个阶段完成并通过与 Python 版（8000）的逐接口 curl 对比验收（阶段5 为共享 MySQL 数据互通 + 全量回归），详见 [PROGRESS.md](PROGRESS.md)。

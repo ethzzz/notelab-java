@@ -24,14 +24,24 @@ import java.util.Map;
 public class EnglishController {
 
     public static final List<Map<String, String>> SCENARIOS = List.of(
-            Map.of("id", "daily", "name", "日常问候", "en", "Daily Greetings", "desc", "casual daily greeting and small talk"),
-            Map.of("id", "restaurant", "name", "餐厅点餐", "en", "Ordering Food", "desc", "ordering food at a restaurant; you play the waiter"),
-            Map.of("id", "travel", "name", "机场旅行", "en", "Travel & Airport", "desc", "at the airport or while traveling; you play an airport staff member"),
-            Map.of("id", "interview", "name", "求职面试", "en", "Job Interview", "desc", "a job interview; you play the interviewer"),
-            Map.of("id", "shopping", "name", "购物", "en", "Shopping", "desc", "shopping at a store; you play the shop assistant"),
-            Map.of("id", "doctor", "name", "看医生", "en", "Seeing a Doctor", "desc", "at a clinic; you play the doctor"),
-            Map.of("id", "hotel", "name", "酒店预订", "en", "Hotel Booking", "desc", "checking into a hotel; you play the front desk clerk"),
-            Map.of("id", "free", "name", "自由对话", "en", "Free Talk", "desc", "free talk on any topic"));
+            sc("daily", "日常问候", "Daily Greetings", "casual daily greeting and small talk"),
+            sc("restaurant", "餐厅点餐", "Ordering Food", "ordering food at a restaurant; you play the waiter"),
+            sc("travel", "机场旅行", "Travel & Airport", "at the airport or while traveling; you play an airport staff member"),
+            sc("interview", "求职面试", "Job Interview", "a job interview; you play the interviewer"),
+            sc("shopping", "购物", "Shopping", "shopping at a store; you play the shop assistant"),
+            sc("doctor", "看医生", "Seeing a Doctor", "at a clinic; you play the doctor"),
+            sc("hotel", "酒店预订", "Hotel Booking", "checking into a hotel; you play the front desk clerk"),
+            sc("free", "自由对话", "Free Talk", "free talk on any topic"));
+
+    /** 场景条目：键序与 Python 版 ENGLISH_SCENARIOS 完全一致（id/name/en/desc） */
+    private static Map<String, String> sc(String id, String name, String en, String desc) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("name", name);
+        m.put("en", en);
+        m.put("desc", desc);
+        return m;
+    }
 
     private static final Map<String, Map<String, String>> SCENARIO_MAP = new LinkedHashMap<>();
 

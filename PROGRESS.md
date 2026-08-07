@@ -141,3 +141,79 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
    （用户密码哈希与 id 需原样迁移，迁移后交叉登录态即可无缝衔接）。
 2. 人工切流：/root/myapp/next.config.ts 的 rewrites 目标 8000 → 8001，重启 myapp。
 3. 观察期后 pm2 stop notelab。
+
+## 阶段5（2026-08-07）✅ 完成：数据层切换为 Python 版同一个 MySQL（两服务共享数据）
+
+### 改动内容
+- **切换前备份**：`mysqldump --single-transaction` 全库导出到 `data/backup-before-mysql-switch.sql`
+  （6 表：users/conversations/messages/english_conversations/english_messages/ui_config，含全部数据；
+  备份文件在 data/ 下，已被 .gitignore 排除，不入库）。
+- **pom.xml**：移除 `org.xerial:sqlite-jdbc`，新增 `spring-boot-starter-jdbc`（HikariCP 5.1.0）+
+  `com.mysql:mysql-connector-j`（9.1.0，版本由 Spring Boot 3.4.5 管理）。
+- **Db.java 全面重写**（方法签名不变，控制器零改动）：
+  - HikariCP 连接池 `notelab-mysql`，**maximumPoolSize=10**，连接串
+    `jdbc:mysql://<MYSQL_HOST>:<MYSQL_PORT>/<MYSQL_DB>?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true`；
+  - 配置来自 `MYSQL_HOST/MYSQL_PORT/MYSQL_USER/MYSQL_PASSWORD/MYSQL_DB`（AppConfig 新增读取，
+    优先级：进程环境变量 → ./.env → /root/notelab/.env，默认值与 db.py 一致；密钥不硬编码、不提交）；
+  - 建表语句逐条照抄 db.py（CREATE TABLE IF NOT EXISTS，MySQL 方言，InnoDB/utf8mb4），
+    并按 db.py migrate_schema 补 users.email 列（仅缺列时 ALTER）与 ui_config 表——只增不改；
+  - 方言适配：占位符 ?（JDBC 通用）、时间列交给 MySQL `DEFAULT CURRENT_TIMESTAMP`（与 db.py 一致）、
+    `ON DUPLICATE KEY UPDATE`（ui_config upsert）、唯一键冲突按 SQLState 23000 映射 UniqueViolation；
+  - 删除会话/英语会话改为与 db.py 一致的单条 DELETE（消息由外键 ON DELETE CASCADE 级联，
+    顺带消除了 SQLite 版「兜底删消息」可能误删他人会话消息的隐患）；
+  - DATETIME 读取统一格式化为 `yyyy-MM-dd HH:mm:ss`（对齐 Python `str(datetime)`），
+    updated_at 等字段两端输出逐字节一致（已实测）。
+- **NoteLabApplication**：`exclude = DataSourceAutoConfiguration`（连接池由 Db 手动管理，不走 Spring 装配）。
+- **Bootstrap**：启动日志打印 MySQL 连接信息（不含密码）。
+- **EnglishController**：scenarios 改用 LinkedHashMap 固定键序 id/name/en/desc，与 Python
+  ENGLISH_SCENARIOS 字节级一致（此前 Map.of 迭代序导致 JSON 键序差异，回归中发现并修复）。
+- SQLite 相关依赖与代码已全部移除；`data/notelab-java.db` 保留为历史产物，不再读写。
+
+### 验收（逐条执行）
+1. **Java 注册 → Python 登录**：Java 侧注册 `s5j2p1786106786`（users.id=12）→ Python /api/login 成功，
+   /api/me 返回同一用户 ✅
+2. **Java 建会话 → Python 可见**：Java 侧创建会话 id=7 → Python /api/conversations 列表可见 ✅
+3. **Python 已有用户 → Java 登录读历史**：
+   - Python 侧新注册 `s5p2j1786106786`（id=13）→ Java 登录成功 ✅（反向互认）
+   - 切换前已存在的老用户 `crosstest1786029852`（id=8，密码哈希来自 Python 侧写入）在 Java 登录成功，
+     并读到我切换前在 MySQL 中的历史会话 id=4,6 ✅
+   - 消息级共享:Python 侧 chat 一轮（会话 id=8）→ Java 侧读取该会话得 2 条消息、角色交替正确 ✅
+4. **全量接口回归**（/tmp/cmp_stage5_share.sh、cmp_stage5_full.sh、cmp_stage5_full2.sh，共享库适配版）：
+   - 未登录 me/menu/models、404：两端一致 ✅
+   - Cookie 双向互认（共享用户表，同一 uid=8 两端互打 /api/me 一致）✅
+   - menu / models：字节级一致（16 模型、10 菜单项、默认背景）✅
+   - login 成功/失败、logout、register 全部校验文案与状态码一致；**重复注册两侧均 409「用户名已存在」**
+     （共享唯一约束生效）✅
+   - conversations：**同一用户会话列表两端 id 序列完全相同 [9,10,6,4]**；create/404/set-model/
+     跨端删除（Python 删 Java 建的会话）全部一致 ✅
+   - chat SSE：两端事件序列一致，多轮历史均答 42，标题自动命名一致，空消息 400/会话不存在 404 一致 ✅
+   - toolbox 4 动作 + 错误路径一致 ✅；extract raw/result 完全一致 ✅
+   - RAG：upload 名称清洗、chunks 一致；ask citations 同文档同分（0.733）——两端 citations 条数不同仅因
+     RAG 文档为各自 uploads 目录的文件态数据（非 DB，设计如此，阶段3 已说明）✅
+   - 英语：scenarios 字节级一致（修复键序后复验）；create/chat 纠错/messages/404/delete 一致 ✅
+   - arena：两端事件序列一致（started → qwen-plus 404 error（网关无此模型，报错文案一致）→
+     qwen3.8-max content → done）；校验文案一致 ✅（10s 心跳已在阶段4 实测，数据层切换不影响，未重跑 70s 长任务）
+   - ui-config：GET 结构一致；**Java 保存配置 → Python 侧 /api/menu 同步生效（对话Pro/🚀/#123456）**，
+     证明 ui_config 表真共享 ✅；非法 JSON / config 非对象文案一致 ✅
+5. **Python 服务不受影响**：pm2 status `notelab` online（自 08-06 00:08 起零重启，切换期间未重启）；
+   /api/menu、/api/conversations（含共享数据）、404 行为正常 ✅
+
+### 过程中发现并处理的问题
+- **ui_config 测试残留**：B14 往返测试在共享表写入了一行 `menus:{}`，导致两端菜单 icon 回退为空串
+  （build_menu_items 对空 menus 的行为，两端逻辑一致，但切换前该表为 0 行、菜单 icon 取默认值 💬）。
+  已删除该行（仅回滚本次测试自己写入的数据，非既有生产数据），复验两端菜单恢复默认 icon，
+  表恢复切换前状态（0 行）。今后对共享 ui_config 的写操作即生产操作，需谨慎。
+- extract 缺 `fields` 字段：Python 返回 422 detail（Pydantic），Java 返回 400 {"error":"文本和目标字段都不能为空"}；
+  属 README「已知差异」同类（缺字段时 FastAPI 422 vs Java 400），正常请求行为一致。
+
+### 剩余风险
+1. ui_config / 限流外的所有数据现为单点共享：任何一侧的写入即时影响另一侧（这是本阶段目标，但意味着
+   误操作影响面变大）；备份文件 data/backup-before-mysql-switch.sql 可用于恢复。
+2. 并发写同一行（如两端同时保存 ui_config）为后写覆盖，与 Python 单服务时的语义一致，可接受。
+3. Java 侧连接池 10 + Python 侧 pymysql 短连接并存，当前负载余量充足；如后续上量需关注 MySQL
+   max_connections 与慢查询。
+4. arena 10s 心跳未在本阶段重跑长任务（阶段4 已实测；数据层不参与心跳路径）。
+
+### 下一步（人工）
+1. 切流：/root/myapp/next.config.ts rewrites 目标 8000 → 8001，重启 myapp（数据已共享，无需迁移）。
+2. 观察期后 pm2 stop notelab。

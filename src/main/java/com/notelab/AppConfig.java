@@ -93,7 +93,32 @@ public final class AppConfig {
         }
     }
 
-    /** 数据目录（SQLite 库文件与 RAG 上传文件），默认 ./data */
+    // ---------- MySQL（阶段5：直连 Python 版同一个库，默认值与 db.py 一致） ----------
+    public static String mysqlHost() {
+        return get("MYSQL_HOST", "127.0.0.1");
+    }
+
+    public static int mysqlPort() {
+        try {
+            return Integer.parseInt(get("MYSQL_PORT", "3306").trim());
+        } catch (NumberFormatException e) {
+            return 3306;
+        }
+    }
+
+    public static String mysqlUser() {
+        return get("MYSQL_USER", "notelab");
+    }
+
+    public static String mysqlPassword() {
+        return get("MYSQL_PASSWORD", "");
+    }
+
+    public static String mysqlDb() {
+        return get("MYSQL_DB", "notelab");
+    }
+
+    /** 数据目录（RAG 上传文件），默认 ./data */
     public static Path dataDir() {
         Path p = Paths.get(get("NOTELAB_DATA_DIR", "data")).toAbsolutePath();
         try {

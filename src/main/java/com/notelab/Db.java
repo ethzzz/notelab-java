@@ -1,12 +1,14 @@
 package com.notelab;
 
-import java.nio.file.Path;
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -15,113 +17,134 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 数据层：与 Python 版 db.py 的表结构/行为一致，但使用独立的 SQLite 文件
- * （data/notelab-java.db），不触碰 Python 服务的数据。
- * 单连接 + synchronized：SQLite 写入串行化，读多写少场景足够。
+ * 数据层：直连 Python 版同一个 MySQL 库（notelab），两服务共享数据。
+ * 表结构与行为和 Python 版 db.py 完全一致（建表语句逐条照抄 db.py）。
+ * 连接池：HikariCP，最大 10 连接（与 Python 侧 pymysql 短连接并发读写兼容）。
+ * 配置来自 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DB
+ * （进程环境变量 → ./.env → /root/notelab/.env，见 AppConfig）。
  */
 public final class Db {
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static Connection conn;
+    private static volatile HikariDataSource ds;
 
     private Db() {}
 
     public static synchronized void init() {
+        if (ds != null) return;
+        HikariConfig cfg = new HikariConfig();
+        cfg.setPoolName("notelab-mysql");
+        cfg.setJdbcUrl("jdbc:mysql://" + AppConfig.mysqlHost() + ":" + AppConfig.mysqlPort() + "/"
+                + AppConfig.mysqlDb() + "?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true");
+        cfg.setUsername(AppConfig.mysqlUser());
+        cfg.setPassword(AppConfig.mysqlPassword());
+        cfg.setMaximumPoolSize(10);
+        cfg.setMinimumIdle(1);
+        cfg.setConnectionTimeout(5000);
+        ds = new HikariDataSource(cfg);
         try {
-            Path dbFile = AppConfig.dataDir().resolve("notelab-java.db");
-            conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile);
-            try (Statement st = conn.createStatement()) {
-                st.execute("PRAGMA foreign_keys=ON");
-                st.execute("PRAGMA busy_timeout=5000");
-                for (String s : SCHEMA) st.execute(s);
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("SQLite 初始化失败: " + e.getMessage(), e);
+            for (String s : SCHEMA) exec(s);
+            for (String s : ENGLISH_SCHEMA) exec(s);
+            migrateSchema();
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("MySQL 初始化失败: " + e.getMessage(), e);
         }
     }
 
-    private static String now() {
-        return LocalDateTime.now().format(TS);
+    /** 对应 db.py migrate_schema：users.email 补列 + ui_config 表（只增不改）。 */
+    private static void migrateSchema() {
+        Map<String, Object> col = queryOne("SHOW COLUMNS FROM users LIKE 'email'");
+        if (col == null) {
+            exec("ALTER TABLE users ADD COLUMN email VARCHAR(100) NULL UNIQUE");
+        }
+        exec("""
+            CREATE TABLE IF NOT EXISTS ui_config (
+                id INT PRIMARY KEY,
+                config MEDIUMTEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
+    // 建表语句与 /root/notelab/db.py 的 SCHEMA / ENGLISH_SCHEMA 逐条一致（仅 CREATE TABLE IF NOT EXISTS）。
     private static final String[] SCHEMA = {
             """
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                email TEXT UNIQUE,
-                created_at TEXT
-            )""",
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                email VARCHAR(100) NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """
             CREATE TABLE IF NOT EXISTS conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT NOT NULL DEFAULT '新对话',
-                model TEXT NOT NULL DEFAULT 'qwen3.8-max',
-                created_at TEXT,
-                updated_at TEXT
-            )""",
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                title VARCHAR(200) NOT NULL DEFAULT '新对话',
+                model VARCHAR(100) NOT NULL DEFAULT 'qwen3.8-max',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_user (user_id),
+                CONSTRAINT fk_conv_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
             """
             CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TEXT
-            )""",
-            """
-            CREATE TABLE IF NOT EXISTS english_conversations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                title TEXT NOT NULL DEFAULT '新对话',
-                scenario TEXT NOT NULL DEFAULT 'free',
-                created_at TEXT,
-                updated_at TEXT
-            )""",
-            """
-            CREATE TABLE IF NOT EXISTS english_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id INTEGER NOT NULL REFERENCES english_conversations(id) ON DELETE CASCADE,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                correction TEXT,
-                error_note TEXT,
-                created_at TEXT
-            )""",
-            """
-            CREATE TABLE IF NOT EXISTS ui_config (
-                id INTEGER PRIMARY KEY,
-                config TEXT NOT NULL,
-                updated_at TEXT
-            )""",
-            "CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id)",
-            "CREATE INDEX IF NOT EXISTS idx_en_conv_user ON english_conversations(user_id)",
-            "CREATE INDEX IF NOT EXISTS idx_en_msg_conv ON english_messages(conversation_id)",
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                conversation_id INT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                content MEDIUMTEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_conv (conversation_id),
+                CONSTRAINT fk_msg_conv FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     };
 
+    private static final String[] ENGLISH_SCHEMA = {
+            """
+            CREATE TABLE IF NOT EXISTS english_conversations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                title VARCHAR(200) NOT NULL DEFAULT '新对话',
+                scenario VARCHAR(50) NOT NULL DEFAULT 'free',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_en_user (user_id),
+                CONSTRAINT fk_en_conv_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """
+            CREATE TABLE IF NOT EXISTS english_messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                conversation_id INT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                content MEDIUMTEXT NOT NULL,
+                correction MEDIUMTEXT NULL,
+                error_note VARCHAR(500) NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_en_conv (conversation_id),
+                CONSTRAINT fk_en_msg_conv FOREIGN KEY (conversation_id) REFERENCES english_conversations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    };
+
+    /** 模拟 Python pymysql.err.IntegrityError（唯一键冲突） */
+    public static final class UniqueViolation extends RuntimeException {
+        public UniqueViolation(SQLException cause) { super(cause); }
+    }
+
     // ---------- users ----------
-    public static synchronized long createUser(String username, String passwordHash, String email) {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO users (username,password_hash,email,created_at) VALUES (?,?,?,?)",
+    public static long createUser(String username, String passwordHash, String email) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO users (username,password_hash,email) VALUES (?,?,?)",
                 Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, username);
             ps.setString(2, passwordHash);
             ps.setString(3, email);
-            ps.setString(4, now());
             ps.executeUpdate();
             try (ResultSet rs = ps.getGeneratedKeys()) {
                 return rs.next() ? rs.getLong(1) : -1;
             }
         } catch (SQLException e) {
-            throw new UniqueViolation(e);
+            if ("23000".equals(e.getSQLState())) throw new UniqueViolation(e);
+            throw new RuntimeException(e);
         }
-    }
-
-    /** 模拟 Python pymysql.err.IntegrityError（唯一键冲突） */
-    public static final class UniqueViolation extends RuntimeException {
-        public UniqueViolation(SQLException cause) { super(cause); }
     }
 
     public static Map<String, Object> getUserByUsername(String username) {
@@ -141,15 +164,13 @@ public final class Db {
         return queryAll("SELECT id,title,model,created_at,updated_at FROM conversations WHERE user_id=? ORDER BY updated_at DESC", userId);
     }
 
-    public static synchronized long createConversation(long userId, String title, String model) {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO conversations (user_id,title,model,created_at,updated_at) VALUES (?,?,?,?,?)",
+    public static long createConversation(long userId, String title, String model) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO conversations (user_id,title,model) VALUES (?,?,?)",
                 Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, userId);
             ps.setString(2, title);
             ps.setString(3, model);
-            ps.setString(4, now());
-            ps.setString(5, now());
             ps.executeUpdate();
             try (ResultSet rs = ps.getGeneratedKeys()) {
                 return rs.next() ? rs.getLong(1) : -1;
@@ -163,21 +184,21 @@ public final class Db {
         return queryOne("SELECT * FROM conversations WHERE id=? AND user_id=?", cid, userId);
     }
 
-    public static synchronized void deleteConversation(long cid, long userId) {
+    /** 与 db.py 一致：仅删会话行，消息由外键 ON DELETE CASCADE 级联删除。 */
+    public static void deleteConversation(long cid, long userId) {
         exec("DELETE FROM conversations WHERE id=? AND user_id=?", cid, userId);
-        exec("DELETE FROM messages WHERE conversation_id=?", cid); // SQLite 级联兜底
     }
 
-    public static synchronized void setConversationTitle(long cid, String title) {
+    public static void setConversationTitle(long cid, String title) {
         exec("UPDATE conversations SET title=? WHERE id=?", title, cid);
     }
 
-    public static synchronized void setConversationModel(long cid, String model) {
+    public static void setConversationModel(long cid, String model) {
         exec("UPDATE conversations SET model=? WHERE id=?", model, cid);
     }
 
-    public static synchronized void touchConversation(long cid) {
-        exec("UPDATE conversations SET updated_at=? WHERE id=?", now(), cid);
+    public static void touchConversation(long cid) {
+        exec("UPDATE conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", cid);
     }
 
     // ---------- messages ----------
@@ -185,12 +206,13 @@ public final class Db {
         return queryAll("SELECT role,content,created_at FROM messages WHERE conversation_id=? ORDER BY id ASC", cid);
     }
 
-    public static synchronized void addMessage(long cid, String role, String content) {
-        exec("INSERT INTO messages (conversation_id,role,content,created_at) VALUES (?,?,?,?)", cid, role, content, now());
+    public static void addMessage(long cid, String role, String content) {
+        exec("INSERT INTO messages (conversation_id,role,content) VALUES (?,?,?)", cid, role, content);
     }
 
-    public static synchronized long countMessages(long cid) {
-        try (PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?")) {
+    public static long countMessages(long cid) {
+        try (Connection c = conn();
+             PreparedStatement ps = c.prepareStatement("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=?")) {
             ps.setLong(1, cid);
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getLong(1) : 0;
@@ -205,15 +227,13 @@ public final class Db {
         return queryAll("SELECT id,title,scenario,created_at,updated_at FROM english_conversations WHERE user_id=? ORDER BY updated_at DESC", userId);
     }
 
-    public static synchronized long enCreateConversation(long userId, String title, String scenario) {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO english_conversations (user_id,title,scenario,created_at,updated_at) VALUES (?,?,?,?,?)",
+    public static long enCreateConversation(long userId, String title, String scenario) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO english_conversations (user_id,title,scenario) VALUES (?,?,?)",
                 Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, userId);
             ps.setString(2, title);
             ps.setString(3, scenario);
-            ps.setString(4, now());
-            ps.setString(5, now());
             ps.executeUpdate();
             try (ResultSet rs = ps.getGeneratedKeys()) {
                 return rs.next() ? rs.getLong(1) : -1;
@@ -227,45 +247,48 @@ public final class Db {
         return queryOne("SELECT * FROM english_conversations WHERE id=? AND user_id=?", cid, userId);
     }
 
-    public static synchronized void enDeleteConversation(long cid, long userId) {
+    /** 与 db.py 一致：仅删会话行，消息由外键级联删除。 */
+    public static void enDeleteConversation(long cid, long userId) {
         exec("DELETE FROM english_conversations WHERE id=? AND user_id=?", cid, userId);
-        exec("DELETE FROM english_messages WHERE conversation_id=?", cid);
     }
 
-    public static synchronized void enTouch(long cid) {
-        exec("UPDATE english_conversations SET updated_at=? WHERE id=?", now(), cid);
+    public static void enSetTitle(long cid, String title) {
+        exec("UPDATE english_conversations SET title=? WHERE id=?", title, cid);
+    }
+
+    public static void enTouch(long cid) {
+        exec("UPDATE english_conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", cid);
     }
 
     public static List<Map<String, Object>> enListMessages(long cid) {
         return queryAll("SELECT role,content,correction,error_note,created_at FROM english_messages WHERE conversation_id=? ORDER BY id ASC", cid);
     }
 
-    public static synchronized void enAddMessage(long cid, String role, String content, String correction, String errorNote) {
-        exec("INSERT INTO english_messages (conversation_id,role,content,correction,error_note,created_at) VALUES (?,?,?,?,?,?)",
-                cid, role, content, correction, errorNote, now());
+    public static void enAddMessage(long cid, String role, String content, String correction, String errorNote) {
+        exec("INSERT INTO english_messages (conversation_id,role,content,correction,error_note) VALUES (?,?,?,?,?)",
+                cid, role, content, correction, errorNote);
     }
 
     // ---------- UI 配置 ----------
-    public static synchronized String getUiConfigJson() {
+    public static String getUiConfigJson() {
         Map<String, Object> row = queryOne("SELECT config FROM ui_config WHERE id=1");
         return row == null ? null : (String) row.get("config");
     }
 
-    public static synchronized void saveUiConfig(String configJson) {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO ui_config (id,config,updated_at) VALUES (1,?,?) " +
-                "ON CONFLICT(id) DO UPDATE SET config=excluded.config, updated_at=excluded.updated_at")) {
-            ps.setString(1, configJson);
-            ps.setString(2, now());
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+    public static void saveUiConfig(String configJson) {
+        exec("INSERT INTO ui_config (id,config) VALUES (1,?) ON DUPLICATE KEY UPDATE config=?",
+                configJson, configJson);
     }
 
     // ---------- 内部工具 ----------
-    private static synchronized void exec(String sql, Object... args) {
-        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+    private static Connection conn() throws SQLException {
+        HikariDataSource d = ds;
+        if (d == null) throw new SQLException("Db.init() 尚未调用");
+        return d.getConnection();
+    }
+
+    private static void exec(String sql, Object... args) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
             bind(ps, args);
             ps.executeUpdate();
         } catch (SQLException e) {
@@ -274,31 +297,27 @@ public final class Db {
     }
 
     private static Map<String, Object> queryOne(String sql, Object... args) {
-        synchronized (Db.class) {
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                bind(ps, args);
-                try (ResultSet rs = ps.executeQuery()) {
-                    if (!rs.next()) return null;
-                    return row(rs);
-                }
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bind(ps, args);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (!rs.next()) return null;
+                return row(rs);
             }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
     private static List<Map<String, Object>> queryAll(String sql, Object... args) {
-        synchronized (Db.class) {
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                bind(ps, args);
-                try (ResultSet rs = ps.executeQuery()) {
-                    List<Map<String, Object>> out = new ArrayList<>();
-                    while (rs.next()) out.add(row(rs));
-                    return out;
-                }
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bind(ps, args);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<Map<String, Object>> out = new ArrayList<>();
+                while (rs.next()) out.add(row(rs));
+                return out;
             }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -316,7 +335,11 @@ public final class Db {
         int n = rs.getMetaData().getColumnCount();
         Map<String, Object> m = new LinkedHashMap<>();
         for (int i = 1; i <= n; i++) {
-            m.put(rs.getMetaData().getColumnLabel(i).toLowerCase(), rs.getObject(i));
+            Object v = rs.getObject(i);
+            // 对齐 Python 的 str(datetime)：'yyyy-MM-dd HH:mm:ss'
+            if (v instanceof LocalDateTime ldt) v = ldt.format(TS);
+            else if (v instanceof Timestamp t) v = t.toLocalDateTime().format(TS);
+            m.put(rs.getMetaData().getColumnLabel(i).toLowerCase(), v);
         }
         return m;
     }
