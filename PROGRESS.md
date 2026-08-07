@@ -217,3 +217,11 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 ### 下一步（人工）
 1. 切流：/root/myapp/next.config.ts rewrites 目标 8000 → 8001，重启 myapp（数据已共享，无需迁移）。
 2. 观察期后 pm2 stop notelab。
+
+## 2026-08-07 22:45 切流完成：前端流量 8000 → 8001
+- /root/myapp/next.config.ts 的 rewrites 目标改为 8001，原文件备份为 /root/myapp/next.config.ts.bak-8000
+- npm run build 成功（Next 16.2.12 Turbopack，13 个静态页），pm2 restart myapp
+- 验证：经 3000 的 /api/models 与 /api/menu 响应头无 uvicorn server 头、响应体与直连 8001 逐字节一致、Python uvicorn access 日志行数前后不变、登录页 HTTP 200、公网 IP 访问正常 → 流量全部走 Java
+- 副作用：pm2 watch 使 myapp-dev 随构建自动重启，3001 开发服也一并切到 8001
+- 回滚方法：next.config.ts 改回 8000（或恢复备份文件）后 npm run build 并 pm2 restart myapp
+- 下一步：观察期无异常后 pm2 stop notelab 退役 Python 版

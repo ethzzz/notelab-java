@@ -102,3 +102,9 @@ mvn -DskipTests package && pm2 restart notelab-java
 ## 验证状态
 
 全部 5 个阶段完成并通过与 Python 版（8000）的逐接口 curl 对比验收（阶段5 为共享 MySQL 数据互通 + 全量回归），详见 [PROGRESS.md](PROGRESS.md)。
+
+## 切流状态（2026-08-07 22:45 更新）
+- ✅ 切流已完成：前端生产 3000 与开发 3001 的 API 流量均已切到 Java 版 8001，原 next.config 备份为 /root/myapp/next.config.ts.bak-8000
+- Python 版 8000 观察期内保持运行，确认无异常后退役：pm2 stop notelab（数据都在共享 MySQL，零丢失）
+- 回滚方法：next.config.ts rewrites 改回 8000（或恢复备份文件），然后 npm run build 并 pm2 restart myapp
+- 切流验证记录见 PROGRESS.md 末节
