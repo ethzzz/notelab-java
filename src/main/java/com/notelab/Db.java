@@ -63,6 +63,35 @@ public final class Db {
                 config MEDIUMTEXT NOT NULL,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- RBAC: users.role 补列 + 权限路由/角色/角色-路由 三张新表（只增不改） ----
+        Map<String, Object> roleCol = queryOne("SHOW COLUMNS FROM users LIKE 'role'");
+        if (roleCol == null) {
+            exec("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'");
+        }
+        exec("""
+            CREATE TABLE IF NOT EXISTS perm_routes (
+                code VARCHAR(120) PRIMARY KEY,
+                path VARCHAR(200) NOT NULL,
+                method VARCHAR(30) NOT NULL DEFAULT '',
+                kind VARCHAR(20) NOT NULL DEFAULT 'api',
+                name VARCHAR(120) NOT NULL DEFAULT '',
+                builtin TINYINT NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        exec("""
+            CREATE TABLE IF NOT EXISTS perm_roles (
+                code VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(50) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        exec("""
+            CREATE TABLE IF NOT EXISTS perm_role_routes (
+                role_code VARCHAR(50) NOT NULL,
+                route_code VARCHAR(120) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (role_code, route_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        exec("INSERT IGNORE INTO perm_roles (code,name) VALUES ('super_admin','超级管理员'),('user','普通用户')");
     }
 
     // 建表语句与 /root/notelab/db.py 的 SCHEMA / ENGLISH_SCHEMA 逐条一致（仅 CREATE TABLE IF NOT EXISTS）。
@@ -279,6 +308,94 @@ public final class Db {
         exec("INSERT INTO ui_config (id,config) VALUES (1,?) ON DUPLICATE KEY UPDATE config=?",
                 configJson, configJson);
     }
+
+
+
+    // ---------- RBAC：权限路由 / 角色 / 账户角色 ----------
+    public static void upsertRoute(String code, String path, String method, String kind, String name) {
+        exec("INSERT INTO perm_routes (code,path,method,kind,name) VALUES (?,?,?,?,?) " +
+             "ON DUPLICATE KEY UPDATE path=VALUES(path), method=VALUES(method), kind=VALUES(kind), name=VALUES(name)",
+                code, path, method, kind, name);
+    }
+
+    public static List<Map<String, Object>> listRoutes() {
+        return queryAll("SELECT code,path,method,kind,name FROM perm_routes ORDER BY kind,code");
+    }
+
+    public static List<String> roleRouteCodes(String roleCode) {
+        List<Map<String, Object>> rows = queryAll(
+                "SELECT route_code FROM perm_role_routes WHERE role_code=? ORDER BY route_code", roleCode);
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) out.add((String) r.get("route_code"));
+        return out;
+    }
+
+    public static void setRoleRoutes(String roleCode, List<String> codes) {
+        try (Connection c = conn()) {
+            try (PreparedStatement ps = c.prepareStatement("DELETE FROM perm_role_routes WHERE role_code=?")) {
+                ps.setString(1, roleCode);
+                ps.executeUpdate();
+            }
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT IGNORE INTO perm_role_routes (role_code,route_code) VALUES (?,?)")) {
+                for (String code : codes) {
+                    ps.setString(1, roleCode);
+                    ps.setString(2, code);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static List<Map<String, Object>> listUsersForPerm() {
+        return queryAll("SELECT id,username,email,role,created_at FROM users ORDER BY id");
+    }
+
+    public static void setUserRole(long uid, String role) {
+        exec("UPDATE users SET role=? WHERE id=?", role, uid);
+    }
+
+    public static void setUserPassword(long uid, String passwordHash) {
+        exec("UPDATE users SET password_hash=? WHERE id=?", passwordHash, uid);
+    }
+
+    public static long countSuperAdmins() {
+        try (Connection c = conn();
+             PreparedStatement ps = c.prepareStatement("SELECT COUNT(*) AS n FROM users WHERE role='super_admin'")) {
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0;
+            }
+        } catch (SQLException e) {
+            return 0;
+        }
+    }
+
+    /** 首次自举：若尚无超级管理员，把最早注册的用户提升为超级管理员 */
+    public static void promoteFirstUserToAdmin() {
+        exec("UPDATE users SET role='super_admin' WHERE id=(SELECT id FROM (SELECT MIN(id) AS id FROM users) t)");
+    }
+
+    public static long createUserWithRole(String username, String passwordHash, String email, String role) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(
+                "INSERT INTO users (username,password_hash,email,role) VALUES (?,?,?,?)",
+                Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, username);
+            ps.setString(2, passwordHash);
+            ps.setString(3, email);
+            ps.setString(4, role);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                return rs.next() ? rs.getLong(1) : -1;
+            }
+        } catch (SQLException e) {
+            if ("23000".equals(e.getSQLState())) throw new UniqueViolation(e);
+            throw new RuntimeException(e);
+        }
+    }
+
 
     // ---------- 内部工具 ----------
     private static Connection conn() throws SQLException {

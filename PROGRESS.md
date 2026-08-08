@@ -225,3 +225,23 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 - 副作用：pm2 watch 使 myapp-dev 随构建自动重启，3001 开发服也一并切到 8001
 - 回滚方法：next.config.ts 改回 8000（或恢复备份文件）后 npm run build 并 pm2 restart myapp
 - 下一步：观察期无异常后 pm2 stop notelab 退役 Python 版
+
+## 2026-08-08 RBAC 权限体系上线（关注册 + users.role + 权限路由表 + 权限管理）
+### 改动
+- 数据库（改前已备份 data/backup-before-rbac.sql）：
+  - users 表 ADD COLUMN role VARCHAR(20) DEFAULT 'user'（只增不改，Python 版不受影响）
+  - 新表 perm_routes（权限路由表，code 主键）、perm_roles（super_admin/user）、perm_role_routes（角色↔路由组）
+- 后端：PermService（启动时从 RequestMappingHandlerMapping 自动采集全部 API 路由 + 页面路由 upsert 入库=自动注册；首次启动无超管则提升最早用户）、PermController（overview/角色路由组/建号/角色赋予/重置密码，全部超管守卫）、MenuController 按角色过滤菜单、/api/register 改 403、/api/me 增加 role
+- 前端：新增 /perm 权限管理页；登录页移除注册链接；/register 改为关闭提示页
+### 验收（curl 实测）
+1. POST /api/register → 403「注册入口已关闭」✅（直连 8001 与经 3000 代理均验证）
+2. 启动日志 perm_routes=40（11 页面 + 29 API 自动注册）✅；tester1 自动提升 super_admin ✅
+3. 超管登录 → /api/menu 全量 11 项含 /perm /ui ✅；/api/perm/overview 200 ✅；/api/me 含 role ✅
+4. 普通用户登录 → 菜单仅 9 项（无 /ui /perm）✅；/api/perm/overview 403 ✅
+5. 超管给普通角色路由组加 page:/ui → 普通用户菜单即时多出 /ui（无需重登）✅
+6. 超管建号 POST /api/perm/users ✅（修复：空邮箱存 NULL，多账号不撞 UNIQUE）
+7. 生产验证：/perm 页 200、/login 无注册入口、/register 显示关闭提示 ✅
+- 临时测试账户已全部删除，普通角色路由组已恢复默认 9 项
+### 备注
+- Python 版 8000 的 register 仍在（内网不可达，前端流量只到 Java），退役 Python 时一并消失
+- API 级权限码已登记备用，当前仅页面路由参与菜单过滤；后续可做接口级拦截

@@ -23,7 +23,8 @@ public final class UiConfigService {
             menu("image", "文生图", "/image", false),
             menu("audio", "语音转文字", "/audio", false),
             menu("extract", "结构化抽取", "/extract", true),
-            menu("ui", "界面配置", "/ui", true));
+            menu("ui", "界面配置", "/ui", true),
+            menu("perm", "权限管理", "/perm", true));
 
     private static Map<String, Object> menu(String key, String name, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();
@@ -50,6 +51,7 @@ public final class UiConfigService {
         menus.put("audio", menuItem("语音转文字", "🎤"));
         menus.put("extract", menuItem("结构化抽取", "🧩"));
         menus.put("ui", menuItem("界面配置", "🎛️"));
+        menus.put("perm", menuItem("权限管理", "🔐"));
         Map<String, Object> cfg = new LinkedHashMap<>();
         cfg.put("background", background);
         cfg.put("menus", menus);

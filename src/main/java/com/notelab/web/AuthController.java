@@ -28,46 +28,14 @@ public class AuthController {
         public String email = "";
     }
 
-    @PostMapping("/register")
+        @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(@RequestBody(required = false) AuthReq req,
                                                         HttpServletRequest request,
                                                         HttpServletResponse response) {
-        String ip = AuthUtil.clientIp(request);
-        if (!RateLimit.rateOk("register:" + ip, 5, 600)) {
-            return ResponseEntity.status(429).body(Map.of("error", "注册过于频繁，请 10 分钟后再试"));
-        }
-        if (req == null || req.username == null || req.password == null) {
-            return badField();
-        }
-        String username = req.username.trim();
-        String password = req.password;
-        if (!USERNAME_RE.matcher(username).matches()) {
-            return ResponseEntity.status(400).body(Map.of("error", "用户名需为 2-20 位字母/数字/下划线/中文"));
-        }
-        if (password.length() < 6) {
-            return ResponseEntity.status(400).body(Map.of("error", "密码至少 6 位"));
-        }
-        String email = req.email == null ? "" : req.email.trim().toLowerCase();
-        if (!EMAIL_RE.matcher(email).matches()) {
-            return ResponseEntity.status(400).body(Map.of("error", "邮箱格式不正确"));
-        }
-        if (Db.getUserByUsername(username) != null) {
-            return ResponseEntity.status(409).body(Map.of("error", "用户名已存在"));
-        }
-        if (Db.getUserByEmail(email) != null) {
-            return ResponseEntity.status(409).body(Map.of("error", "该邮箱已被注册"));
-        }
-        long uid;
-        try {
-            uid = Db.createUser(username, Passwords.hash(password), email);
-        } catch (Db.UniqueViolation e) {
-            return ResponseEntity.status(409).body(Map.of("error", "用户名或邮箱已存在"));
-        }
-        Session.setCookie(response, Session.makeToken(uid));
-        return ResponseEntity.ok(Map.of("ok", true));
+        // 注册入口已关闭：账号由超级管理员在「权限管理」中统一创建（POST /api/perm/users）
+        return ResponseEntity.status(403).body(Map.of("error", "注册入口已关闭，请联系管理员创建账号"));
     }
-
-    @PostMapping("/login")
+@PostMapping("/login")
     public ResponseEntity<Map<String, Object>> login(@RequestBody(required = false) AuthReq req,
                                                      HttpServletRequest request,
                                                      HttpServletResponse response) {
@@ -100,6 +68,7 @@ public class AuthController {
         body.put("id", user.get("id"));
         body.put("username", user.get("username"));
         body.put("email", user.get("email"));
+        body.put("role", user.get("role"));
         return ResponseEntity.ok(body);
     }
 

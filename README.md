@@ -8,7 +8,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 
 | 模块 | 接口 | 状态 |
 |---|---|---|
-| 认证 | /api/register /api/login /api/logout /api/me | ✅ 已完成（会话 Cookie 与 Python 版双向兼容） |
+| 认证 | /api/register /api/login /api/logout /api/me | ✅ 已完成（会话 Cookie 双向兼容；**register 已关闭，改由权限管理建号**） |
 | 菜单/模型 | /api/menu /api/models | ✅ 已完成（models 600s 缓存，结构逐项对比一致） |
 | 智能对话 | /api/conversations* /api/chat(SSE) | ✅ 已完成（流式+历史+自动命名验证通过） |
 | 文本工具箱 | /api/toolbox | ✅ 已完成 |
@@ -17,6 +17,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 结构化抽取 | /api/extract | ✅ 已完成 |
 | 模型竞技场 | /api/arena (并行 SSE+心跳) | ✅ 已完成（10s 心跳实测生效） |
 | 界面配置 | /api/ui-config | ✅ 已完成（30s 缓存+保存失效） |
+| 权限管理 RBAC | /api/perm/*（overview/角色路由组/账户角色/建号/重置密码） | ✅ 已完成（users.role + 权限路由表 + 启动自动注册路由 + 菜单按角色过滤） |
 
 ## 项目简介
 
@@ -108,3 +109,14 @@ mvn -DskipTests package && pm2 restart notelab-java
 - Python 版 8000 观察期内保持运行，确认无异常后退役：pm2 stop notelab（数据都在共享 MySQL，零丢失）
 - 回滚方法：next.config.ts rewrites 改回 8000（或恢复备份文件），然后 npm run build 并 pm2 restart myapp
 - 切流验证记录见 PROGRESS.md 末节
+
+## RBAC 权限体系（2026-08-08 上线）
+
+- **注册入口已关闭**：POST /api/register 返回 403；新账号由超级管理员在「权限管理」页创建（POST /api/perm/users）。
+- **users 表新增 role 列**（`super_admin` / `user`，默认 `user`，ADD COLUMN 只增不改，Python 服务不受影响）。首次启动若无超级管理员，自动把最早注册的用户提升为超级管理员（本次为 tester1）。
+- **权限路由表 perm_routes**：每条路由带权限码。页面路由 `page:<path>`（驱动菜单可见性），API 路由 `api:<path>`。
+  **自动注册**：每次启动时从 SpringMVC 请求映射自动采集全部 Controller 路由 + 前端页面路由 upsert 入库，以后新增路由重启即自动登记，无需手工维护。当前共 40 条（11 页面 + 29 API）。
+- **角色-路由组（perm_role_routes）**：超级管理员天然拥有全部路由（含未来新增，不存行、无需分配）；普通用户按分配的路由组过滤 `/api/menu` 返回的菜单，改授权即时生效（无需重登）。
+- **管理接口（仅超级管理员，403 守卫）**：GET /api/perm/overview、POST /api/perm/roles/{code}/routes、POST /api/perm/users、POST /api/perm/users/{id}/role、POST /api/perm/users/{id}/password。
+- **前端**：新增 /perm 权限管理页（路由表/角色授权/账户管理/建号）；登录页移除注册入口，/register 显示关闭提示；侧边栏菜单由后端按角色过滤。
+- 改库前备份：data/backup-before-rbac.sql。
