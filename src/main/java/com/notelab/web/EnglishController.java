@@ -4,8 +4,13 @@ import com.notelab.AppConfig;
 import com.notelab.Db;
 import com.notelab.JsonUtil;
 import com.notelab.QwenClient;
+import com.notelab.SseUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.IOException;
+import java.io.OutputStream;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -153,19 +158,17 @@ public class EnglishController {
     }
 
     @PostMapping("/chat")
-    public ResponseEntity<Map<String, Object>> chat(@RequestBody EnChatReq req, HttpServletRequest request) {
+    public void chat(@RequestBody EnChatReq req, HttpServletRequest request, HttpServletResponse response)
+            throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
-        if (user == null) return AuthUtil.unauth();
-        if (AppConfig.qwenKey().isEmpty()) {
-            return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
-        }
-        if (req.conversation_id == null) {
-            return ResponseEntity.status(422).body(Map.of("error", "conversation_id 必填"));
-        }
+        if (user == null) { ChatController.jsonError(response, 401, "请先登录"); return; }
+        String key = AppConfig.qwenKey();
+        if (key.isEmpty()) { ChatController.jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
+        if (req.conversation_id == null) { ChatController.jsonError(response, 422, "conversation_id 必填"); return; }
         Map<String, Object> conv = Db.enGetConversation(req.conversation_id, AuthUtil.userId(user));
-        if (conv == null) return ResponseEntity.status(404).body(Map.of("error", "会话不存在"));
+        if (conv == null) { ChatController.jsonError(response, 404, "会话不存在"); return; }
         String message = req.message == null ? "" : req.message.trim();
-        if (message.isEmpty()) return ResponseEntity.status(400).body(Map.of("error", "消息不能为空"));
+        if (message.isEmpty()) { ChatController.jsonError(response, 400, "消息不能为空"); return; }
         Map<String, String> sc = SCENARIO_MAP.getOrDefault(String.valueOf(conv.get("scenario")), SCENARIO_MAP.get("free"));
 
         List<Map<String, Object>> history = Db.enListMessages(((Number) conv.get("id")).longValue());
@@ -180,52 +183,231 @@ public class EnglishController {
                 + sc.get("en") + " (" + sc.get("desc") + "). You play your role in the scenario and chat in English. "
                 + "After each learner message you must check the grammar and vocabulary of the learner's sentence, "
                 + "give a corrected version, briefly note any errors, and reply conversationally in English.";
+        // 键序 reply 在最前：流式输出时回复可以最先开始打字机展示，修正信息随后补上
         String userPrompt = "Conversation so far:\n" + histText + "\n\n"
                 + "The learner now says: \"" + message + "\"\n\n"
-                + "Respond ONLY with a JSON object (no extra text) with these keys:\n"
-                + "{\"corrected\": \"<corrected version of the learner's sentence; same as the original if already correct>\", "
-                + "\"error_note\": \"<a brief explanation of the errors in Chinese; say 表达正确，无需修改 if there are none>\", "
-                + "\"reply\": \"<your 1-3 sentence conversational reply in English, staying in the scenario>\"}";
+                + "Respond ONLY with a JSON object (no extra text) with keys in exactly this order:\n"
+                + "{\"reply\": \"<your 1-3 sentence conversational reply in English, staying in the scenario>\", "
+                + "\"corrected\": \"<corrected version of the learner's sentence; same as the original if already correct>\", "
+                + "\"error_note\": \"<a brief explanation of the errors in Chinese; say 表达正确，无需修改 if there are none>\"}";
 
-        String raw;
+        SseUtil.prepare(response);
+        OutputStream out = response.getOutputStream();
+        EnStreamParser parser = new EnStreamParser(out, message);
+        boolean ok = false;
         try {
-            raw = enGenerate(List.of(
-                    Map.of("role", "system", "content", sysPrompt),
-                    Map.of("role", "user", "content", userPrompt)));
-        } catch (QwenClient.ModelHttpException e) {
-            return ResponseEntity.status(502).body(Map.of("error", e.messageShort()));
+            String upstreamErr = QwenClient.streamChat(AppConfig.qwenModel(),
+                    List.of(Map.of("role", "system", "content", sysPrompt),
+                            Map.of("role", "user", "content", userPrompt)),
+                    key, 90, parser::onDelta);
+            if (upstreamErr != null) {
+                parser.sendError(upstreamErr);
+            } else {
+                parser.finish();
+                ok = true;
+            }
         } catch (Exception e) {
-            return ResponseEntity.status(502).body(Map.of("error", String.valueOf(e.getMessage())));
+            parser.sendError("请求模型出错：" + (e.getCause() != null ? e.getCause().toString() : e.toString()));
+        }
+        // 与旧契约一致：模型成功才把本轮消息入库
+        if (ok) {
+            long cid = ((Number) conv.get("id")).longValue();
+            Db.enAddMessage(cid, "user", message, parser.corrected, parser.errorNote);
+            if (parser.reply.length() > 0) {
+                Db.enAddMessage(cid, "assistant", parser.reply.toString(), null, null);
+            }
+            Db.enTouch(cid);
+        }
+        try {
+            SseUtil.send(out, Map.of("done", true));
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * 英语对话流式解析器：模型按 JSON 输出（键序 reply → corrected → error_note）。
+     * 检测到 "reply" 字段开始即进入流式阶段，对 reply 值做增量 JSON 反转义并以 delta 事件持续推送（打字机效果）；
+     * 流结束后解析 reply 之后的 corrected / error_note 并发出 correction 事件。
+     * 若始终未定位 reply 字段，退化为整体解析一次性发出。
+     */
+    static final class EnStreamParser {
+        private final OutputStream out;
+        private final String originalMessage;
+        private final StringBuilder raw = new StringBuilder();
+        final StringBuilder reply = new StringBuilder();
+        String corrected;
+        String errorNote = "";
+        private int pos = -1;
+        private int suffixStart = -1;
+        private boolean inReply = false;
+        private boolean replyDone = false;
+        private boolean correctionSent = false;
+        private boolean escape = false;
+        private boolean collectingUnicode = false;
+        private final StringBuilder unicode = new StringBuilder();
+
+        EnStreamParser(OutputStream out, String originalMessage) {
+            this.out = out;
+            this.originalMessage = originalMessage;
+            this.corrected = originalMessage;
         }
 
-        String corrected = message;
-        String errorNote = "";
-        String reply = raw;
-        try {
-            String s = raw.trim();
+        void onDelta(String delta) {
+            raw.append(delta);
+            try {
+                if (!inReply) {
+                    int start = findReplyValueStart();
+                    if (start < 0) return;
+                    inReply = true;
+                    pos = start;
+                }
+                drain();
+            } catch (IOException ignored) {
+            }
+        }
+
+        /** 返回 reply 值开引号之后的字符索引；缓冲区尚不足以判定时返回 -1 */
+        private int findReplyValueStart() {
+            int k = 0;
+            while (true) {
+                k = raw.indexOf("\"reply\"", k);
+                if (k < 0) return -1;
+                int i = k + 7;
+                while (i < raw.length() && Character.isWhitespace(raw.charAt(i))) i++;
+                if (i >= raw.length()) return -1;
+                if (raw.charAt(i) != ':') { k = k + 7; continue; }
+                i++;
+                while (i < raw.length() && Character.isWhitespace(raw.charAt(i))) i++;
+                if (i >= raw.length()) return -1;
+                if (raw.charAt(i) != '"') { k = k + 7; continue; }
+                return i + 1;
+            }
+        }
+
+        private void emitCorrection() throws IOException {
+            if (correctionSent) return;
+            correctionSent = true;
+            Map<String, Object> corr = new LinkedHashMap<>();
+            corr.put("corrected", corrected);
+            corr.put("error_note", errorNote);
+            SseUtil.send(out, Map.of("correction", corr));
+        }
+
+        /** 增量反转义 reply 字符串并推送；遇到闭引号停止并记录后缀起点 */
+        private void drain() throws IOException {
+            StringBuilder emit = new StringBuilder();
+            while (pos < raw.length() && !replyDone) {
+                char ch = raw.charAt(pos);
+                if (collectingUnicode) {
+                    unicode.append(ch);
+                    pos++;
+                    if (unicode.length() == 4) {
+                        try {
+                            emit.append((char) Integer.parseInt(unicode.toString(), 16));
+                        } catch (Exception e) {
+                            emit.append('?');
+                        }
+                        unicode.setLength(0);
+                        collectingUnicode = false;
+                    }
+                    continue;
+                }
+                if (escape) {
+                    escape = false;
+                    pos++;
+                    switch (ch) {
+                        case 'n': emit.append('\n'); break;
+                        case 't': emit.append('\t'); break;
+                        case 'r': emit.append('\r'); break;
+                        case 'b': emit.append('\b'); break;
+                        case 'f': emit.append('\f'); break;
+                        case '"': emit.append('"'); break;
+                        case '\\': emit.append('\\'); break;
+                        case '/': emit.append('/'); break;
+                        case 'u': collectingUnicode = true; break;
+                        default: emit.append(ch);
+                    }
+                    continue;
+                }
+                if (ch == '\\') {
+                    escape = true;
+                    pos++;
+                    continue;
+                }
+                if (ch == '"') {
+                    replyDone = true;
+                    pos++;
+                    suffixStart = pos;
+                    break;
+                }
+                emit.append(ch);
+                pos++;
+            }
+            if (emit.length() > 0) {
+                reply.append(emit);
+                SseUtil.send(out, Map.of("delta", emit.toString()));
+            }
+        }
+
+        /** 流正常结束：解析 reply 之后的修正信息；若始终未定位 reply 字段，退化为整体解析 */
+        void finish() {
+            try {
+                if (!inReply) {
+                    fallbackFullParse();
+                } else if (!correctionSent) {
+                    parseSuffix();
+                    emitCorrection();
+                }
+            } catch (IOException ignored) {
+            }
+        }
+
+        private void parseSuffix() {
+            if (suffixStart < 0) return;
+            String s = raw.substring(suffixStart);
+            int lb = s.indexOf(',');
+            int rb = s.lastIndexOf('}');
+            if (lb >= 0 && rb > lb) {
+                try {
+                    JsonNode obj = JsonUtil.parse("{" + s.substring(lb + 1, rb) + "}");
+                    String c = obj.path("corrected").asText("").trim();
+                    corrected = c.isEmpty() ? originalMessage : c;
+                    errorNote = obj.path("error_note").asText("").trim();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        private void fallbackFullParse() throws IOException {
+            String s = raw.toString().trim();
             int i = s.indexOf('{');
             int j = s.lastIndexOf('}');
-            if (i != -1 && j != -1 && j > i) {
-                JsonNode obj = JsonUtil.parse(s.substring(i, j + 1));
-                String c = obj.path("corrected").asText(message).trim();
-                corrected = c.isEmpty() ? message : c;
-                errorNote = obj.path("error_note").asText("").trim();
-                String r = obj.path("reply").asText("").trim();
-                reply = r.isEmpty() ? raw : r;
+            String replyText = s;
+            if (i != -1 && j > i) {
+                try {
+                    JsonNode obj = JsonUtil.parse(s.substring(i, j + 1));
+                    String c = obj.path("corrected").asText("").trim();
+                    corrected = c.isEmpty() ? originalMessage : c;
+                    errorNote = obj.path("error_note").asText("").trim();
+                    replyText = obj.path("reply").asText(s).trim();
+                } catch (Exception ignored) {
+                }
             }
-        } catch (Exception ignored) {
+            emitCorrection();
+            if (!replyText.isEmpty()) {
+                reply.append(replyText);
+                SseUtil.send(out, Map.of("delta", replyText));
+            }
         }
 
-        long cid = ((Number) conv.get("id")).longValue();
-        Db.enAddMessage(cid, "user", message, corrected, errorNote);
-        Db.enAddMessage(cid, "assistant", reply, null, null);
-        Db.enTouch(cid);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("corrected", corrected);
-        body.put("error_note", errorNote);
-        body.put("reply", reply);
-        return ResponseEntity.ok(body);
+        void sendError(String msg) {
+            try {
+                SseUtil.send(out, Map.of("error", msg));
+            } catch (IOException ignored) {
+            }
+        }
     }
+
 
     /** _en_generate：非流式调用（90s 超时），错误语义与 Python 一致 */
     private static String enGenerate(List<Map<String, String>> messages) throws Exception {

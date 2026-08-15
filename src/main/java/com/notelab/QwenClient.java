@@ -10,12 +10,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * 阿里云 token-plan 网关（OpenAI 兼容协议）调用封装。
  * 超时/错误语义与 Python 版 httpx 调用一致。
+ * 多 Key 轮换：某把 key 配额耗尽（429 insufficient_quota）时自动切换下一把（见 QwenKeys）。
  */
 public final class QwenClient {
 
@@ -70,8 +72,29 @@ public final class QwenClient {
         return JsonUtil.parse(resp.body());
     }
 
-    /** 非流式 chat completion，返回 content；非 200 抛 ModelHttpException，超时抛 HttpTimeoutException */
+    /** 非流式 chat completion，返回 content；非 200 抛 ModelHttpException，超时抛 HttpTimeoutException。
+     *  入参 key 仅作首选：配额耗尽时自动轮换到下一把候选 key。 */
     public static String complete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
+            throws Exception {
+        ModelHttpException last = null;
+        for (String k : QwenKeys.candidates()) {
+            try {
+                String r = doComplete(model, messages, k, timeoutSec);
+                QwenKeys.markWorking(k);
+                return r;
+            } catch (ModelHttpException e) {
+                if (QwenKeys.isQuotaExhausted(e.status, e.body)) {
+                    QwenKeys.markExhausted(k);
+                    last = e;
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw last != null ? last : new ModelHttpException(429, "no usable qwen api key");
+    }
+
+    private static String doComplete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
             throws Exception {
         Map<String, Object> payload = Map.of("model", model, "messages", messages, "stream", false);
         HttpRequest req = base(chatUrl(), key, timeoutSec)
@@ -97,7 +120,62 @@ public final class QwenClient {
      */
     public static String streamChat(String model, List<Map<String, String>> messages, String key,
                                     int timeoutSec, StreamHandler handler) throws Exception {
-        Map<String, Object> payload = Map.of("model", model, "messages", messages, "stream", true);
+        return streamChat(model, messages, key, timeoutSec, false, handler);
+    }
+
+    /** 流式 chat completion（disableThinking=true 时关闭 qwen3 思考链，结构化长输出场景显著提速）。
+     *  入参 key 仅作首选：仅当尚未向下游吐出任何内容时，配额耗尽才轮换重试（避免重复输出）。 */
+    public static String streamChat(String model, List<Map<String, String>> messages, String key,
+                                    int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
+        int[] emitted = {0};
+        StreamHandler wrapped = d -> { emitted[0]++; handler.onDelta(d); };
+        String lastErr = null;
+        for (String k : QwenKeys.candidates()) {
+            emitted[0] = 0;
+            String err = doStreamChat(model, messages, k, timeoutSec, disableThinking, wrapped);
+            if (err == null) {
+                QwenKeys.markWorking(k);
+                return null;
+            }
+            if (emitted[0] == 0) {
+                int status = statusOf(err);
+                String body = bodyOf(err);
+                if (QwenKeys.isQuotaExhausted(status, body)) {
+                    QwenKeys.markExhausted(k);
+                    lastErr = err;
+                    continue;
+                }
+            }
+            return err;
+        }
+        return lastErr;
+    }
+
+    /** 从 doStreamChat 的错误串（"模型返回 HTTP {status}：{body}"，全角冒号）提取状态码 */
+    private static int statusOf(String err) {
+        try {
+            int s = err.indexOf("HTTP ") + 5;
+            int e = err.indexOf('\uff1a', s);
+            if (s < 5 || e < 0) return 0;
+            return Integer.parseInt(err.substring(s, e).trim());
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    /** 从 doStreamChat 的错误串提取响应体部分 */
+    private static String bodyOf(String err) {
+        int i = err.indexOf('\uff1a');
+        return i >= 0 ? err.substring(i + 1) : "";
+    }
+
+    private static String doStreamChat(String model, List<Map<String, String>> messages, String key,
+                                       int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model", model);
+        payload.put("messages", messages);
+        payload.put("stream", true);
+        if (disableThinking) payload.put("enable_thinking", false);
         HttpRequest req = base(chatUrl(), key, timeoutSec)
                 .POST(HttpRequest.BodyPublishers.ofString(JsonUtil.write(payload), StandardCharsets.UTF_8))
                 .build();

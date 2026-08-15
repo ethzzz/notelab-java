@@ -77,6 +77,20 @@ public final class AppConfig {
         return get("QWEN_API_KEY", "").trim();
     }
 
+    /**
+     * 候选 key 列表（QwenKeys 轮换用）：QWEN_API_KEYS 逗号分隔；未配置时退化为单把 QWEN_API_KEY。
+     * 建议写在 /root/notelab-java/.env（仅 Java 生效，不影响 Python 版共用的 QWEN_API_KEY）。
+     */
+    public static java.util.List<String> qwenApiKeys() {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        for (String k : get("QWEN_API_KEYS", "").split(",")) {
+            String t = k.trim();
+            if (!t.isEmpty()) keys.add(t);
+        }
+        if (keys.isEmpty() && !qwenKey().isEmpty()) keys.add(qwenKey());
+        return keys;
+    }
+
     public static String secretKey() {
         return get("SECRET_KEY", "dev-secret-change-me");
     }

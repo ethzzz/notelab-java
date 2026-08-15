@@ -26,19 +26,8 @@ public class MenuController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         Map<String, Object> cfg = UiConfigService.getConfig();
-        List<Map<String, Object>> items = UiConfigService.buildMenuItems(cfg);
-        // RBAC：非超级管理员只能看到其角色路由组内的页面菜单
-        if (!PermService.isSuperAdmin(user)) {
-            Object role = user.get("role");
-            Set<String> allowed = role == null
-                    ? Set.of()
-                    : new HashSet<>(Db.roleRouteCodes(role.toString()));
-            List<Map<String, Object>> filtered = new ArrayList<>();
-            for (Map<String, Object> it : items) {
-                if (allowed.contains("page:" + it.get("path"))) filtered.add(it);
-            }
-            items = filtered;
-        }
+        // 多级菜单树 + RBAC（叶子级过滤、空分组剪枝）在 buildMenuItems 内完成
+        List<Map<String, Object>> items = UiConfigService.buildMenuItems(cfg, user);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("menu", items);
         Object bg = cfg.get("background");

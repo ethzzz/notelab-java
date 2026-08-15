@@ -41,6 +41,14 @@ public final class PermService {
             new String[]{"/image", "文生图"},
             new String[]{"/audio", "语音转文字"},
             new String[]{"/extract", "结构化抽取"},
+            new String[]{"/tools", "AI工具库"},
+            new String[]{"/lowcode", "低代码平台"},
+            new String[]{"/trpg/play", "玩剧本"},
+            new String[]{"/trpg/gen", "生成剧本"},
+            new String[]{"/vs", "吸血鬼幸存者"},
+            new String[]{"/spire", "爬塔尖塔"},
+            new String[]{"/user/accounts", "账户管理"},
+            new String[]{"/user/roles", "角色组管理"},
             new String[]{"/ui", "界面配置"},
             new String[]{"/perm", "权限管理"}
     );
@@ -93,8 +101,9 @@ public final class PermService {
         return user != null && ROLE_ADMIN.equals(user.get("role"));
     }
 
+    /** 角色是否有效：以 perm_roles 表为准（支持自建角色组） */
     public static boolean isValidRole(String role) {
-        return ROLE_ADMIN.equals(role) || ROLE_USER.equals(role);
+        return role != null && Db.getRole(role) != null;
     }
 
     /** 用户是否拥有某页面路由权限（super_admin 一律放行） */
