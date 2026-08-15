@@ -1,5 +1,10 @@
 package com.notelab;
 
+import com.notelab.common.AppConfig;
+import com.notelab.dao.Db;
+import com.notelab.dao.PermDao;
+import com.notelab.service.PermService;
+import com.notelab.service.RagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +31,6 @@ public class Bootstrap implements CommandLineRunner {
                 AppConfig.qwenBaseUrl(), AppConfig.qwenModel(),
                 AppConfig.qwenKey().isEmpty() ? "(未配置)" : "(已配置)",
                 AppConfig.secretKey().equals("dev-secret-change-me") ? "(默认值)" : "(已配置)",
-                AppConfig.dataDir(), Db.listRoutes().size());
+                AppConfig.dataDir(), PermDao.listRoutes().size());
     }
 }

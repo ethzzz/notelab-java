@@ -1,0 +1,200 @@
+package com.notelab.dao;
+
+import java.util.Map;
+
+/**
+ * 建表层：表结构与行为和 Python 版 db.py 完全一致（建表语句逐条照抄 db.py）。
+ * 只增不改：新表/补列一律 CREATE TABLE IF NOT EXISTS / ALTER 前探测。
+ * 由 Db.init() 在连接池就绪后委托调用。
+ */
+final class DbSchema {
+
+    private DbSchema() {}
+
+    static void initSchema() {
+        for (String s : SCHEMA) Db.exec(s);
+        for (String s : ENGLISH_SCHEMA) Db.exec(s);
+        migrateSchema();
+    }
+
+    /** 对应 db.py migrate_schema：users.email 补列 + ui_config 表（只增不改）。 */
+    private static void migrateSchema() {
+        Map<String, Object> col = Db.queryOne("SHOW COLUMNS FROM users LIKE 'email'");
+        if (col == null) {
+            Db.exec("ALTER TABLE users ADD COLUMN email VARCHAR(100) NULL UNIQUE");
+        }
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS ui_config (
+                id INT PRIMARY KEY,
+                config MEDIUMTEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- RBAC: users.role 补列 + 权限路由/角色/角色-路由 三张新表（只增不改） ----
+        Map<String, Object> roleCol = Db.queryOne("SHOW COLUMNS FROM users LIKE 'role'");
+        if (roleCol == null) {
+            Db.exec("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'");
+        }
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS perm_routes (
+                code VARCHAR(120) PRIMARY KEY,
+                path VARCHAR(200) NOT NULL,
+                method VARCHAR(30) NOT NULL DEFAULT '',
+                kind VARCHAR(20) NOT NULL DEFAULT 'api',
+                name VARCHAR(120) NOT NULL DEFAULT '',
+                builtin TINYINT NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS perm_roles (
+                code VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(50) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS perm_role_routes (
+                role_code VARCHAR(50) NOT NULL,
+                route_code VARCHAR(120) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (role_code, route_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS trpg_scenarios (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                title VARCHAR(120) NOT NULL,
+                genre VARCHAR(60) DEFAULT '',
+                summary VARCHAR(500) DEFAULT '',
+                config_json MEDIUMTEXT,
+                scenario_json MEDIUMTEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_trpg_s_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS trpg_gen_tasks (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                state VARCHAR(20) NOT NULL DEFAULT 'running',
+                config_json MEDIUMTEXT,
+                scenario_id BIGINT NULL,
+                error VARCHAR(500) DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_trpg_t_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS trpg_playthroughs (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                scenario_id BIGINT NOT NULL,
+                user_id BIGINT NOT NULL,
+                current_node VARCHAR(80) NOT NULL,
+                state VARCHAR(20) DEFAULT 'playing',
+                ending_title VARCHAR(160) DEFAULT '',
+                steps INT DEFAULT 0,
+                history_json MEDIUMTEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_trpg_p_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("INSERT IGNORE INTO perm_roles (code,name) VALUES ('super_admin','超级管理员'),('user','普通用户')");
+        // ---- AI 工具库：tools 表（只增不改） ----
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS tools (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                icon VARCHAR(20) NOT NULL DEFAULT '🔧',
+                category VARCHAR(50) NOT NULL DEFAULT '自定义',
+                type VARCHAR(30) NOT NULL DEFAULT 'api',
+                description TEXT,
+                endpoint VARCHAR(500) NOT NULL DEFAULT '',
+                config MEDIUMTEXT,
+                enabled TINYINT NOT NULL DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        seedToolsIfEmpty();
+    }
+
+    // 建表语句与 /root/notelab/db.py 的 SCHEMA / ENGLISH_SCHEMA 逐条一致（仅 CREATE TABLE IF NOT EXISTS）。
+    private static final String[] SCHEMA = {
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                email VARCHAR(100) NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                title VARCHAR(200) NOT NULL DEFAULT '新对话',
+                model VARCHAR(100) NOT NULL DEFAULT 'qwen3.8-max',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_user (user_id),
+                CONSTRAINT fk_conv_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """
+            CREATE TABLE IF NOT EXISTS messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                conversation_id INT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                content MEDIUMTEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_conv (conversation_id),
+                CONSTRAINT fk_msg_conv FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    };
+
+    private static final String[] ENGLISH_SCHEMA = {
+            """
+            CREATE TABLE IF NOT EXISTS english_conversations (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NOT NULL,
+                title VARCHAR(200) NOT NULL DEFAULT '新对话',
+                scenario VARCHAR(50) NOT NULL DEFAULT 'free',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_en_user (user_id),
+                CONSTRAINT fk_en_conv_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            """
+            CREATE TABLE IF NOT EXISTS english_messages (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                conversation_id INT NOT NULL,
+                role VARCHAR(20) NOT NULL,
+                content MEDIUMTEXT NOT NULL,
+                correction MEDIUMTEXT NULL,
+                error_note VARCHAR(500) NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_en_conv (conversation_id),
+                CONSTRAINT fk_en_msg_conv FOREIGN KEY (conversation_id) REFERENCES english_conversations(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+    };
+
+    /** 首次建表后种子示例工具（仅表为空时写入，幂等） */
+    private static void seedToolsIfEmpty() {
+        Map<String, Object> row = Db.queryOne("SELECT COUNT(*) AS n FROM tools");
+        long n = row == null ? 0 : ((Number) row.get("n")).longValue();
+        if (n > 0) return;
+        Db.exec("INSERT INTO tools (name,icon,category,type,description,endpoint,config,enabled) VALUES (?,?,?,?,?,?,?,?)",
+                "语音合成 TTS", "🔊", "语音", "api",
+                "微软 edge-tts 神经音色朗读，NoteLab 英语页 /api/tts 已实际接入；可扩更多音色与语种",
+                "/api/tts", "{\"provider\":\"edge-tts\",\"voice\":\"en-US-AriaNeural\"}", 1);
+        Db.exec("INSERT INTO tools (name,icon,category,type,description,endpoint,config,enabled) VALUES (?,?,?,?,?,?,?,?)",
+                "图像生成", "🎨", "生成", "api",
+                "文本生成图像（DashScope 文生图服务示例条目，接入需在配置中补充 API 密钥引用）",
+                "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+                "{\"model\":\"wanx2.1-t2i-turbo\",\"size\":\"1024*1024\"}", 0);
+        Db.exec("INSERT INTO tools (name,icon,category,type,description,endpoint,config,enabled) VALUES (?,?,?,?,?,?,?,?)",
+                "联网搜索", "🌐", "搜索", "api",
+                "为对话提供实时联网检索能力（示例条目，可对接博查/Bing 等搜索 API）",
+                "", "{\"provider\":\"bocha\",\"top_k\":5}", 0);
+        Db.exec("INSERT INTO tools (name,icon,category,type,description,endpoint,config,enabled) VALUES (?,?,?,?,?,?,?,?)",
+                "MCP 文件服务", "🔌", "MCP", "mcp",
+                "Model Context Protocol 工具示例：本地文件系统读写（stdio 方式），供支持 MCP 的客户端挂载",
+                "stdio://filesystem", "{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"/root/notelab-java/data\"]}", 0);
+    }
+}
