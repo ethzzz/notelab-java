@@ -265,6 +265,7 @@ public class TrpgController {
             if (h.isArray()) for (JsonNode e : h) history.add(JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class));
         } catch (Exception ignored) {}
         Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("node_id", cur.path("id").asText(""));
         entry.put("node_title", cur.path("title").asText(""));
         entry.put("choice", choice.path("text").asText(""));
         if (diceResult != null) entry.put("dice", diceResult);
@@ -309,8 +310,29 @@ public class TrpgController {
         out.put("steps", play.get("steps"));
         out.put("ending_title", play.get("ending_title"));
         out.put("node", node == null ? null : TrpgService.toMap(node));
+        // 历史条目附带所属节点全文（剧情文本+全部选项），回忆翻阅用；旧数据无 node_id 时按标题匹配
         try {
-            out.put("history", JsonUtil.parse(String.valueOf(play.get("history_json"))));
+            JsonNode h = JsonUtil.parse(String.valueOf(play.get("history_json")));
+            List<Map<String, Object>> hist = new ArrayList<>();
+            if (h.isArray()) {
+                for (JsonNode e : h) {
+                    Map<String, Object> em = JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class);
+                    ObjectNode en = null;
+                    Object nid = em.get("node_id");
+                    if (nid != null && !String.valueOf(nid).isEmpty()) en = TrpgService.findNode(sc, String.valueOf(nid));
+                    if (en == null && em.get("node_title") != null) {
+                        for (JsonNode nj : sc.path("nodes")) {
+                            if (String.valueOf(em.get("node_title")).equals(nj.path("title").asText(""))) {
+                                en = (ObjectNode) nj;
+                                break;
+                            }
+                        }
+                    }
+                    if (en != null) em.put("node", TrpgService.toMap(en));
+                    hist.add(em);
+                }
+            }
+            out.put("history", hist);
         } catch (Exception e) {
             out.put("history", List.of());
         }
