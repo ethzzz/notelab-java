@@ -1,95 +1,131 @@
 package com.notelab.dao;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.notelab.common.RowUtil;
+import com.notelab.model.entity.TrpgGenTask;
+import com.notelab.model.entity.TrpgPlaythrough;
+import com.notelab.model.entity.TrpgScenario;
+
 import java.util.List;
 import java.util.Map;
 
-/** TRPG 跑团域 DAO：trpg_scenarios / trpg_playthroughs / trpg_gen_tasks 三表访问。 */
+/** TRPG 跑团域 DAO：trpg_scenarios / trpg_playthroughs / trpg_gen_tasks 三表访问（静态签名不变，内部委托 MyBatis-Plus）。 */
 public final class TrpgDao {
 
     private TrpgDao() {}
 
+    /** 原列表 SQL 投影列序 */
+    private static final String[] SCEN_LIST_COLS = {"id", "user_id", "title", "genre", "summary", "created_at", "updated_at"};
+    /** 原 SELECT * 列序（表列序） */
+    private static final String[] SCEN_ALL_COLS = {"id", "user_id", "title", "genre", "summary", "config_json", "scenario_json", "created_at", "updated_at"};
+    /** 原 getTrpgPlay JOIN SQL 列序：p.* + 别名列 */
+    private static final String[] PLAY_ALL_COLS = {"id", "scenario_id", "user_id", "current_node", "state", "ending_title", "steps", "history_json", "created_at", "updated_at", "scenario_title", "scenario_genre"};
+    /** 原 listTrpgPlays JOIN SQL 投影列序 */
+    private static final String[] PLAY_LIST_COLS = {"id", "scenario_id", "current_node", "state", "ending_title", "steps", "updated_at", "scenario_title", "scenario_genre"};
+    /** 原 SELECT * 列序（表列序） */
+    private static final String[] TASK_ALL_COLS = {"id", "user_id", "state", "config_json", "scenario_id", "error", "created_at", "updated_at"};
+
     public static long createTrpgScenario(long userId, String title, String genre, String summary, String configJson, String scenarioJson) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO trpg_scenarios (user_id,title,genre,summary,config_json,scenario_json) VALUES (?,?,?,?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setLong(1, userId); ps.setString(2, title); ps.setString(3, genre); ps.setString(4, summary);
-            ps.setString(5, configJson); ps.setString(6, scenarioJson);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) { return rs.next() ? rs.getLong(1) : -1; }
-        } catch (SQLException e) { throw new RuntimeException(e); }
+        TrpgScenario s = new TrpgScenario();
+        s.setUserId(userId);
+        s.setTitle(title);
+        s.setGenre(genre);
+        s.setSummary(summary);
+        s.setConfigJson(configJson);
+        s.setScenarioJson(scenarioJson);
+        DaoSupport.trpgScenario().insert(s);
+        return s.getId() == null ? -1 : s.getId();
     }
 
     public static List<Map<String, Object>> listTrpgScenarios(long userId) {
-        return Db.queryAll("SELECT id,user_id,title,genre,summary,created_at,updated_at FROM trpg_scenarios WHERE user_id=? ORDER BY id DESC", userId);
+        return RowUtil.rows(DaoSupport.trpgScenario().selectList(
+                Wrappers.lambdaQuery(TrpgScenario.class)
+                        .eq(TrpgScenario::getUserId, userId)
+                        .orderByDesc(TrpgScenario::getId)), SCEN_LIST_COLS);
     }
 
     public static Map<String, Object> getTrpgScenario(long id) {
-        return Db.queryOne("SELECT * FROM trpg_scenarios WHERE id=?", id);
+        return RowUtil.row(DaoSupport.trpgScenario().selectById(id), SCEN_ALL_COLS);
     }
 
     public static void deleteTrpgScenario(long id, long userId) {
-        Db.exec("DELETE FROM trpg_playthroughs WHERE scenario_id=? AND user_id=?", id, userId);
-        Db.exec("DELETE FROM trpg_scenarios WHERE id=? AND user_id=?", id, userId);
+        DaoSupport.trpgPlaythrough().delete(
+                Wrappers.lambdaQuery(TrpgPlaythrough.class)
+                        .eq(TrpgPlaythrough::getScenarioId, id)
+                        .eq(TrpgPlaythrough::getUserId, userId));
+        DaoSupport.trpgScenario().delete(
+                Wrappers.lambdaQuery(TrpgScenario.class)
+                        .eq(TrpgScenario::getId, id)
+                        .eq(TrpgScenario::getUserId, userId));
     }
 
     public static long createTrpgPlay(long scenarioId, long userId, String startNode) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO trpg_playthroughs (scenario_id,user_id,current_node,history_json) VALUES (?,?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setLong(1, scenarioId); ps.setLong(2, userId); ps.setString(3, startNode); ps.setString(4, "[]");
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) { return rs.next() ? rs.getLong(1) : -1; }
-        } catch (SQLException e) { throw new RuntimeException(e); }
+        TrpgPlaythrough p = new TrpgPlaythrough();
+        p.setScenarioId(scenarioId);
+        p.setUserId(userId);
+        p.setCurrentNode(startNode);
+        p.setHistoryJson("[]");
+        DaoSupport.trpgPlaythrough().insert(p);
+        return p.getId() == null ? -1 : p.getId();
     }
 
+    /** 双表 JOIN（Mapper 注解保留原 SQL），经 RowUtil 归一化列序/日期格式 */
     public static Map<String, Object> getTrpgPlay(long id) {
-        return Db.queryOne("SELECT p.*, s.title AS scenario_title, s.genre AS scenario_genre FROM trpg_playthroughs p JOIN trpg_scenarios s ON s.id=p.scenario_id WHERE p.id=?", id);
+        return RowUtil.norm(DaoSupport.trpgPlaythrough().getPlayJoined(id), PLAY_ALL_COLS);
     }
 
     public static List<Map<String, Object>> listTrpgPlays(long userId) {
-        return Db.queryAll("SELECT p.id,p.scenario_id,p.current_node,p.state,p.ending_title,p.steps,p.updated_at,s.title AS scenario_title,s.genre AS scenario_genre FROM trpg_playthroughs p JOIN trpg_scenarios s ON s.id=p.scenario_id WHERE p.user_id=? ORDER BY p.updated_at DESC LIMIT 50", userId);
+        return RowUtil.norms(DaoSupport.trpgPlaythrough().listPlaysJoined(userId), PLAY_LIST_COLS);
     }
 
     public static void updateTrpgPlay(long id, String currentNode, String state, String endingTitle, int steps, String historyJson) {
-        Db.exec("UPDATE trpg_playthroughs SET current_node=?,state=?,ending_title=?,steps=?,history_json=? WHERE id=?",
-                currentNode, state, endingTitle, steps, historyJson, id);
+        // 与原 UPDATE 一致：全部列显式覆盖（含 null/空串）
+        DaoSupport.trpgPlaythrough().update(Wrappers.lambdaUpdate(TrpgPlaythrough.class)
+                .eq(TrpgPlaythrough::getId, id)
+                .set(TrpgPlaythrough::getCurrentNode, currentNode)
+                .set(TrpgPlaythrough::getState, state)
+                .set(TrpgPlaythrough::getEndingTitle, endingTitle)
+                .set(TrpgPlaythrough::getSteps, steps)
+                .set(TrpgPlaythrough::getHistoryJson, historyJson));
     }
 
     public static void deleteTrpgPlay(long id, long userId) {
-        Db.exec("DELETE FROM trpg_playthroughs WHERE id=? AND user_id=?", id, userId);
+        DaoSupport.trpgPlaythrough().delete(
+                Wrappers.lambdaQuery(TrpgPlaythrough.class)
+                        .eq(TrpgPlaythrough::getId, id)
+                        .eq(TrpgPlaythrough::getUserId, userId));
     }
 
     // ---------- TRPG 生成任务（异步化：规避长请求被代理层超时断开） ----------
     public static long createTrpgGenTask(long userId, String configJson) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO trpg_gen_tasks (user_id,config_json) VALUES (?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setLong(1, userId); ps.setString(2, configJson);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) { return rs.next() ? rs.getLong(1) : -1; }
-        } catch (SQLException e) { throw new RuntimeException(e); }
+        TrpgGenTask t = new TrpgGenTask();
+        t.setUserId(userId);
+        t.setConfigJson(configJson);
+        DaoSupport.trpgGenTask().insert(t);
+        return t.getId() == null ? -1 : t.getId();
     }
 
     public static Map<String, Object> getTrpgGenTask(long id) {
-        return Db.queryOne("SELECT * FROM trpg_gen_tasks WHERE id=?", id);
+        return RowUtil.row(DaoSupport.trpgGenTask().selectById(id), TASK_ALL_COLS);
     }
 
+    /** 完成态（原 SQL 由 Mapper 注解保留：state='done' + error 置空串） */
     public static void finishTrpgGenTask(long id, long scenarioId) {
-        Db.exec("UPDATE trpg_gen_tasks SET state='done', scenario_id=?, error='' WHERE id=?", scenarioId, id);
+        DaoSupport.trpgGenTask().finishTask(id, scenarioId);
     }
 
     public static void failTrpgGenTask(long id, String error) {
         String e = error == null ? "" : (error.length() > 480 ? error.substring(0, 480) : error);
-        Db.exec("UPDATE trpg_gen_tasks SET state='error', error=? WHERE id=?", e, id);
+        DaoSupport.trpgGenTask().failTask(id, e);
     }
 
-    /** 启动时把残留的 running 任务标记为中断（进程重启即丢失，提示用户重新生成） */
+    /**
+     * 启动时把残留的 running 任务标记为中断。
+     * 注意：迁移前该调用发生在 TrpgController 的 @PostConstruct（早于 Db.init），实际总是静默跳过；
+     * 这里以 DaoSupport.ready() 保持同样语义——上下文未就绪时安全跳过。
+     */
     public static void abortStaleTrpgGenTasks() {
-        Db.exec("UPDATE trpg_gen_tasks SET state='error', error='服务重启，生成任务中断，请重新生成' WHERE state='running'");
+        if (!DaoSupport.ready()) return;
+        DaoSupport.trpgGenTask().abortStale();
     }
 }

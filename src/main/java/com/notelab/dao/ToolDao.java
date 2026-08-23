@@ -1,59 +1,67 @@
 package com.notelab.dao;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.notelab.common.RowUtil;
+import com.notelab.model.entity.Tool;
+
 import java.util.List;
 import java.util.Map;
 
-/** AI 工具库域 DAO：tools 表 CRUD。 */
+/** AI 工具库域 DAO：tools 表 CRUD（静态签名不变，内部委托 MyBatis-Plus）。 */
 public final class ToolDao {
 
     private ToolDao() {}
 
+    /** 原 listTools 与 getTool（SELECT *）的投影列序一致：表列序 */
+    private static final String[] COLS = {"id", "name", "icon", "category", "type", "description",
+            "endpoint", "config", "enabled", "created_at", "updated_at"};
+
     public static List<Map<String, Object>> listTools() {
-        return Db.queryAll("SELECT id,name,icon,category,type,description,endpoint,config,enabled,created_at,updated_at FROM tools ORDER BY id");
+        return RowUtil.rows(DaoSupport.tool().selectList(
+                Wrappers.lambdaQuery(Tool.class).orderByAsc(Tool::getId)), COLS);
     }
 
     public static Map<String, Object> getTool(long id) {
-        return Db.queryOne("SELECT * FROM tools WHERE id=?", id);
+        return RowUtil.row(DaoSupport.tool().selectById(id), COLS);
     }
 
     public static long createTool(String name, String icon, String category, String type,
                                   String description, String endpoint, String config, boolean enabled) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO tools (name,icon,category,type,description,endpoint,config,enabled) VALUES (?,?,?,?,?,?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setString(1, name);
-            ps.setString(2, icon);
-            ps.setString(3, category);
-            ps.setString(4, type);
-            ps.setString(5, description);
-            ps.setString(6, endpoint);
-            ps.setString(7, config);
-            ps.setInt(8, enabled ? 1 : 0);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                return rs.next() ? rs.getLong(1) : -1;
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        Tool t = new Tool();
+        t.setName(name);
+        t.setIcon(icon);
+        t.setCategory(category);
+        t.setType(type);
+        t.setDescription(description);
+        t.setEndpoint(endpoint);
+        t.setConfig(config);
+        t.setEnabled(enabled ? 1 : 0);
+        DaoSupport.tool().insert(t);
+        return t.getId() == null ? -1 : t.getId();
     }
 
     public static void updateTool(long id, String name, String icon, String category, String type,
                                   String description, String endpoint, String config, boolean enabled) {
-        Db.exec("UPDATE tools SET name=?,icon=?,category=?,type=?,description=?,endpoint=?,config=?,enabled=? WHERE id=?",
-                name, icon, category, type, description, endpoint, config, enabled ? 1 : 0, id);
+        // 与原 UPDATE 一致：全部列显式覆盖（含 null），不用 MP 默认的跳过 null 策略
+        DaoSupport.tool().update(Wrappers.lambdaUpdate(Tool.class)
+                .eq(Tool::getId, id)
+                .set(Tool::getName, name)
+                .set(Tool::getIcon, icon)
+                .set(Tool::getCategory, category)
+                .set(Tool::getType, type)
+                .set(Tool::getDescription, description)
+                .set(Tool::getEndpoint, endpoint)
+                .set(Tool::getConfig, config)
+                .set(Tool::getEnabled, enabled ? 1 : 0));
     }
 
     public static void setToolEnabled(long id, boolean enabled) {
-        Db.exec("UPDATE tools SET enabled=? WHERE id=?", enabled ? 1 : 0, id);
+        DaoSupport.tool().update(Wrappers.lambdaUpdate(Tool.class)
+                .eq(Tool::getId, id)
+                .set(Tool::getEnabled, enabled ? 1 : 0));
     }
 
     public static void deleteTool(long id) {
-        Db.exec("DELETE FROM tools WHERE id=?", id);
+        DaoSupport.tool().deleteById(id);
     }
 }

@@ -1,141 +1,146 @@
 package com.notelab.dao;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.notelab.common.RowUtil;
+import com.notelab.model.entity.User;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
+
 import java.util.List;
 import java.util.Map;
 
-/** 用户域 DAO：users 表的账户/角色相关访问。 */
+/** 用户域 DAO：users 表的账户/角色相关访问（静态签名不变，内部委托 MyBatis-Plus）。 */
 public final class UserDao {
 
     private UserDao() {}
 
+    /** 原 SELECT * 列序（现网 users 表列序：email/role 为后置补列） */
+    private static final String[] ALL_COLS = {"id", "username", "password_hash", "created_at", "email", "role"};
+    /** 原列表/分页 SQL 投影列序（不含 password_hash） */
+    private static final String[] LIST_COLS = {"id", "username", "email", "role", "created_at"};
+
     public static long createUser(String username, String passwordHash, String email) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO users (username,password_hash,email) VALUES (?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setString(1, username);
-            ps.setString(2, passwordHash);
-            ps.setString(3, email);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                return rs.next() ? rs.getLong(1) : -1;
-            }
-        } catch (SQLException e) {
-            if ("23000".equals(e.getSQLState())) throw new Db.UniqueViolation(e);
-            throw new RuntimeException(e);
+        User u = new User();
+        u.setUsername(username);
+        u.setPasswordHash(passwordHash);
+        u.setEmail(email);
+        try {
+            DaoSupport.user().insert(u);
+        } catch (DuplicateKeyException e) {
+            throw new Db.UniqueViolation(e);
         }
+        return u.getId() == null ? -1 : u.getId();
     }
 
     public static Map<String, Object> getUserByUsername(String username) {
-        return Db.queryOne("SELECT * FROM users WHERE username=?", username);
+        return RowUtil.row(DaoSupport.user().selectOne(
+                Wrappers.lambdaQuery(User.class).eq(User::getUsername, username)), ALL_COLS);
     }
 
     public static Map<String, Object> getUserByEmail(String email) {
-        return Db.queryOne("SELECT * FROM users WHERE email=?", email);
+        return RowUtil.row(DaoSupport.user().selectOne(
+                Wrappers.lambdaQuery(User.class).eq(User::getEmail, email)), ALL_COLS);
     }
 
     public static Map<String, Object> getUserById(long id) {
-        return Db.queryOne("SELECT * FROM users WHERE id=?", id);
+        return RowUtil.row(DaoSupport.user().selectById(id), ALL_COLS);
     }
 
     public static List<Map<String, Object>> listUsersForPerm() {
-        return Db.queryAll("SELECT id,username,email,role,created_at FROM users ORDER BY id");
+        return RowUtil.rows(DaoSupport.user().selectList(
+                Wrappers.lambdaQuery(User.class).orderByAsc(User::getId)), LIST_COLS);
     }
 
-    /** 分页 + 可选关键字（用户名/邮箱模糊）与角色筛选 */
+    /** 分页 + 可选关键字（用户名/邮箱模糊）与角色筛选（selectMaps 改走 Page + select 指定列，输出 key 集合与原 SQL 一致） */
     public static List<Map<String, Object>> listUsersPaged(String q, String role, int limit, long offset) {
-        StringBuilder sql = new StringBuilder("SELECT id,username,email,role,created_at FROM users");
-        List<Object> args = new java.util.ArrayList<>();
-        appendUserFilter(sql, args, q, role);
-        sql.append(" ORDER BY id LIMIT ? OFFSET ?");
-        args.add(limit);
-        args.add(offset);
-        return Db.queryAll(sql.toString(), args.toArray());
+        QueryWrapper<User> w = new QueryWrapper<>();
+        w.select("id", "username", "email", "role", "created_at");
+        appendUserFilter(w, q, role);
+        w.orderByAsc("id");
+        // 调用方 offset 恒为 (page-1)*limit；Page 不执行额外 COUNT（count 由 countUsersFiltered 单独提供）
+        Page<User> page = new Page<>(offset / limit + 1, limit, false);
+        return RowUtil.rows(DaoSupport.user().selectPage(page, w).getRecords(), LIST_COLS);
     }
 
     public static long countUsersFiltered(String q, String role) {
-        StringBuilder sql = new StringBuilder("SELECT COUNT(*) AS n FROM users");
-        List<Object> args = new java.util.ArrayList<>();
-        appendUserFilter(sql, args, q, role);
-        Map<String, Object> r = Db.queryOne(sql.toString(), args.toArray());
-        return r == null ? 0 : ((Number) r.get("n")).longValue();
+        QueryWrapper<User> w = new QueryWrapper<>();
+        appendUserFilter(w, q, role);
+        Long n = DaoSupport.user().selectCount(w);
+        return n == null ? 0 : n;
     }
 
-    private static void appendUserFilter(StringBuilder sql, List<Object> args, String q, String role) {
-        List<String> conds = new java.util.ArrayList<>();
+    private static void appendUserFilter(QueryWrapper<User> w, String q, String role) {
         if (q != null && !q.isBlank()) {
-            conds.add("(username LIKE ? OR email LIKE ?)");
-            String like = "%" + q.trim() + "%";
-            args.add(like);
-            args.add(like);
+            String kw = q.trim();
+            w.and(x -> x.like("username", kw).or().like("email", kw));
         }
         if (role != null && !role.isBlank()) {
-            conds.add("role = ?");
-            args.add(role.trim());
+            w.eq("role", role.trim());
         }
-        if (!conds.isEmpty()) sql.append(" WHERE ").append(String.join(" AND ", conds));
     }
 
     public static void setUserRole(long uid, String role) {
-        Db.exec("UPDATE users SET role=? WHERE id=?", role, uid);
+        DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
+                .eq(User::getId, uid)
+                .set(User::getRole, role));
     }
 
     public static void setUserPassword(long uid, String passwordHash) {
-        Db.exec("UPDATE users SET password_hash=? WHERE id=?", passwordHash, uid);
+        DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
+                .eq(User::getId, uid)
+                .set(User::getPasswordHash, passwordHash));
     }
 
     public static long countSuperAdmins() {
-        try (Connection c = Db.conn();
-             PreparedStatement ps = c.prepareStatement("SELECT COUNT(*) AS n FROM users WHERE role='super_admin'")) {
-            try (ResultSet rs = ps.executeQuery()) {
-                return rs.next() ? rs.getLong(1) : 0;
-            }
-        } catch (SQLException e) {
+        try {
+            return DaoSupport.user().selectCount(
+                    Wrappers.lambdaQuery(User.class).eq(User::getRole, "super_admin"));
+        } catch (DataAccessException e) {
             return 0;
         }
     }
 
-    /** 首次自举：若尚无超级管理员，把最早注册的用户提升为超级管理员 */
+    /** 首次自举：若尚无超级管理员，把最早注册的用户提升为超级管理员（原 SQL 由 Mapper 注解保留） */
     public static void promoteFirstUserToAdmin() {
-        Db.exec("UPDATE users SET role='super_admin' WHERE id=(SELECT id FROM (SELECT MIN(id) AS id FROM users) t)");
+        DaoSupport.user().promoteFirstUserToAdmin();
     }
 
     public static long createUserWithRole(String username, String passwordHash, String email, String role) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO users (username,password_hash,email,role) VALUES (?,?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setString(1, username);
-            ps.setString(2, passwordHash);
-            ps.setString(3, email);
-            ps.setString(4, role);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                return rs.next() ? rs.getLong(1) : -1;
-            }
-        } catch (SQLException e) {
-            if ("23000".equals(e.getSQLState())) throw new Db.UniqueViolation(e);
-            throw new RuntimeException(e);
+        User u = new User();
+        u.setUsername(username);
+        u.setPasswordHash(passwordHash);
+        u.setEmail(email);
+        u.setRole(role);
+        try {
+            DaoSupport.user().insert(u);
+        } catch (DuplicateKeyException e) {
+            throw new Db.UniqueViolation(e);
         }
+        return u.getId() == null ? -1 : u.getId();
     }
 
     public static long countUsersByRole(String role) {
-        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS n FROM users WHERE role=?", role);
-        return r == null ? 0 : ((Number) r.get("n")).longValue();
+        Long n = DaoSupport.user().selectCount(
+                Wrappers.lambdaQuery(User.class).eq(User::getRole, role));
+        return n == null ? 0 : n;
     }
 
     public static void migrateUsersToRole(String fromRole, String toRole) {
-        Db.exec("UPDATE users SET role=? WHERE role=?", toRole, fromRole);
+        DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
+                .eq(User::getRole, fromRole)
+                .set(User::getRole, toRole));
     }
 
     public static void updateUserInfo(long id, String username, String email) {
-        Db.exec("UPDATE users SET username=?, email=? WHERE id=?", username, email, id);
+        DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
+                .eq(User::getId, id)
+                .set(User::getUsername, username)
+                .set(User::getEmail, email));
     }
 
     public static void deleteUser(long id) {
-        Db.exec("DELETE FROM users WHERE id=?", id);
+        DaoSupport.user().deleteById(id);
     }
 }

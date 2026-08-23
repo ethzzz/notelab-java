@@ -1,61 +1,81 @@
 package com.notelab.dao;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.notelab.common.RowUtil;
+import com.notelab.model.entity.EnglishConversation;
+import com.notelab.model.entity.EnglishMessage;
+
 import java.util.List;
 import java.util.Map;
 
-/** 英语学习域 DAO：english_conversations + english_messages 表访问。 */
+/** 英语学习域 DAO：english_conversations + english_messages 表访问（静态签名不变，内部委托 MyBatis-Plus）。 */
 public final class EnglishDao {
 
     private EnglishDao() {}
 
+    /** 原列表 SQL 投影列序 */
+    private static final String[] LIST_COLS = {"id", "title", "scenario", "created_at", "updated_at"};
+    /** 原 SELECT * 列序（表列序） */
+    private static final String[] ALL_COLS = {"id", "user_id", "title", "scenario", "created_at", "updated_at"};
+    /** 原消息 SQL 投影列序 */
+    private static final String[] MSG_COLS = {"role", "content", "correction", "error_note", "created_at"};
+
     public static List<Map<String, Object>> enListConversations(long userId) {
-        return Db.queryAll("SELECT id,title,scenario,created_at,updated_at FROM english_conversations WHERE user_id=? ORDER BY updated_at DESC", userId);
+        return RowUtil.rows(DaoSupport.englishConversation().selectList(
+                Wrappers.lambdaQuery(EnglishConversation.class)
+                        .eq(EnglishConversation::getUserId, userId)
+                        .orderByDesc(EnglishConversation::getUpdatedAt)), LIST_COLS);
     }
 
     public static long enCreateConversation(long userId, String title, String scenario) {
-        try (Connection c = Db.conn(); PreparedStatement ps = c.prepareStatement(
-                "INSERT INTO english_conversations (user_id,title,scenario) VALUES (?,?,?)",
-                Statement.RETURN_GENERATED_KEYS)) {
-            ps.setLong(1, userId);
-            ps.setString(2, title);
-            ps.setString(3, scenario);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                return rs.next() ? rs.getLong(1) : -1;
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        EnglishConversation c = new EnglishConversation();
+        c.setUserId(userId);
+        c.setTitle(title);
+        c.setScenario(scenario);
+        DaoSupport.englishConversation().insert(c);
+        return c.getId() == null ? -1 : c.getId();
     }
 
     public static Map<String, Object> enGetConversation(long cid, long userId) {
-        return Db.queryOne("SELECT * FROM english_conversations WHERE id=? AND user_id=?", cid, userId);
+        return RowUtil.row(DaoSupport.englishConversation().selectOne(
+                Wrappers.lambdaQuery(EnglishConversation.class)
+                        .eq(EnglishConversation::getId, cid)
+                        .eq(EnglishConversation::getUserId, userId)), ALL_COLS);
     }
 
     /** 与 db.py 一致：仅删会话行，消息由外键级联删除。 */
     public static void enDeleteConversation(long cid, long userId) {
-        Db.exec("DELETE FROM english_conversations WHERE id=? AND user_id=?", cid, userId);
+        DaoSupport.englishConversation().delete(
+                Wrappers.lambdaQuery(EnglishConversation.class)
+                        .eq(EnglishConversation::getId, cid)
+                        .eq(EnglishConversation::getUserId, userId));
     }
 
     public static void enSetTitle(long cid, String title) {
-        Db.exec("UPDATE english_conversations SET title=? WHERE id=?", title, cid);
+        DaoSupport.englishConversation().update(Wrappers.lambdaUpdate(EnglishConversation.class)
+                .eq(EnglishConversation::getId, cid)
+                .set(EnglishConversation::getTitle, title));
     }
 
+    /** updated_at=CURRENT_TIMESTAMP（原 SQL 由 Mapper 注解保留，不用实体值覆盖） */
     public static void enTouch(long cid) {
-        Db.exec("UPDATE english_conversations SET updated_at=CURRENT_TIMESTAMP WHERE id=?", cid);
+        DaoSupport.englishConversation().enTouch(cid);
     }
 
     public static List<Map<String, Object>> enListMessages(long cid) {
-        return Db.queryAll("SELECT role,content,correction,error_note,created_at FROM english_messages WHERE conversation_id=? ORDER BY id ASC", cid);
+        return RowUtil.rows(DaoSupport.englishMessage().selectList(
+                Wrappers.lambdaQuery(EnglishMessage.class)
+                        .eq(EnglishMessage::getConversationId, cid)
+                        .orderByAsc(EnglishMessage::getId)), MSG_COLS);
     }
 
     public static void enAddMessage(long cid, String role, String content, String correction, String errorNote) {
-        Db.exec("INSERT INTO english_messages (conversation_id,role,content,correction,error_note) VALUES (?,?,?,?,?)",
-                cid, role, content, correction, errorNote);
+        EnglishMessage m = new EnglishMessage();
+        m.setConversationId(cid);
+        m.setRole(role);
+        m.setContent(content);
+        m.setCorrection(correction);
+        m.setErrorNote(errorNote);
+        DaoSupport.englishMessage().insert(m);
     }
 }
