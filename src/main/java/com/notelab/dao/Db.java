@@ -1,8 +1,6 @@
 package com.notelab.dao;
 
-import com.notelab.common.AppConfig;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
+import javax.sql.DataSource;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -18,31 +16,24 @@ import java.util.Map;
 
 /**
  * 数据层基座：直连 Python 版同一个 MySQL 库（notelab），两服务共享数据。
- * 连接池：HikariCP，最大 10 连接（与 Python 侧 pymysql 短连接并发读写兼容）。
+ * 连接池：Spring 托管的唯一 HikariCP Bean（common/DataSourceConfig，poolName=notelab-mysql，
+ * max=10 / minIdle=1 / connectionTimeout=5000），本类经 init(DataSource) 持有，不再自建池。
  * 配置来自 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DB
  * （进程环境变量 → ./.env → /root/notelab/.env，见 AppConfig）。
- * 建表 DDL 见 DbSchema；各领域 SQL 见 UserDao / ConversationDao / EnglishDao /
- * UiConfigDao / PermDao / ToolDao / TrpgDao（均复用本类的 conn/exec/queryOne/queryAll）。
+ * 建表 DDL 见 DbSchema；本类的 conn/exec/queryOne/queryAll 现仅供 DbSchema 建表/种子使用，
+ * 业务数据访问已全量迁移到 MyBatis-Plus（mapper/ + 各静态 DAO 门面）。
  */
 public final class Db {
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static volatile HikariDataSource ds;
+    private static volatile DataSource ds;
 
     private Db() {}
 
-    public static synchronized void init() {
+    /** 持有 Spring 托管的唯一连接池并执行建表（由 Bootstrap 在启动时调用） */
+    public static synchronized void init(DataSource dataSource) {
         if (ds != null) return;
-        HikariConfig cfg = new HikariConfig();
-        cfg.setPoolName("notelab-mysql");
-        cfg.setJdbcUrl("jdbc:mysql://" + AppConfig.mysqlHost() + ":" + AppConfig.mysqlPort() + "/"
-                + AppConfig.mysqlDb() + "?useUnicode=true&characterEncoding=UTF-8&allowPublicKeyRetrieval=true");
-        cfg.setUsername(AppConfig.mysqlUser());
-        cfg.setPassword(AppConfig.mysqlPassword());
-        cfg.setMaximumPoolSize(10);
-        cfg.setMinimumIdle(1);
-        cfg.setConnectionTimeout(5000);
-        ds = new HikariDataSource(cfg);
+        ds = dataSource;
         try {
             DbSchema.initSchema();
         } catch (RuntimeException e) {
@@ -53,11 +44,13 @@ public final class Db {
     /** 模拟 Python pymysql.err.IntegrityError（唯一键冲突） */
     public static final class UniqueViolation extends RuntimeException {
         public UniqueViolation(SQLException cause) { super(cause); }
+        /** MyBatis-Plus 路径：Spring 把 SQLState 23000 翻译成 DuplicateKeyException 等 RuntimeException */
+        public UniqueViolation(RuntimeException cause) { super(cause); }
     }
 
     // ---------- 内部工具（dao 包内共享） ----------
     static Connection conn() throws SQLException {
-        HikariDataSource d = ds;
+        DataSource d = ds;
         if (d == null) throw new SQLException("Db.init() 尚未调用");
         return d.getConnection();
     }

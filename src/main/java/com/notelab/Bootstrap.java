@@ -1,5 +1,7 @@
 package com.notelab;
 
+import javax.sql.DataSource;
+
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.dao.PermDao;
@@ -21,9 +23,12 @@ public class Bootstrap implements CommandLineRunner {
     @Autowired
     private RequestMappingHandlerMapping handlerMapping;
 
+    @Autowired
+    private DataSource dataSource;
+
     @Override
     public void run(String... args) {
-        Db.init();
+        Db.init(dataSource);
         PermService.registerAllRoutes(handlerMapping);
         RagService.init();
         log.info("NoteLab-Java 启动完成：port=8001, mysql={}:{}/{}, user={}, base_url={}, model={}, key={}, secret_key={}, data_dir={}, perm_routes={}",
