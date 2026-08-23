@@ -35,11 +35,14 @@ public final class PermDao {
         return DaoSupport.permRoleRoute().roleRouteCodes(roleCode);
     }
 
+    /** DELETE + 批量 INSERT 为原子操作：事务包裹（静态方法不能用 @Transactional，走 TransactionTemplate） */
     public static void setRoleRoutes(String roleCode, List<String> codes) {
-        DaoSupport.permRoleRoute().deleteByRoleCode(roleCode);
-        if (!codes.isEmpty()) {
-            DaoSupport.permRoleRoute().insertIgnoreBatch(roleCode, codes);
-        }
+        DaoSupport.tx().executeWithoutResult(status -> {
+            DaoSupport.permRoleRoute().deleteByRoleCode(roleCode);
+            if (!codes.isEmpty()) {
+                DaoSupport.permRoleRoute().insertIgnoreBatch(roleCode, codes);
+            }
+        });
     }
 
     public static List<Map<String, Object>> listRoles() {
@@ -71,8 +74,11 @@ public final class PermDao {
                 .set(PermRole::getName, name));
     }
 
+    /** 两条 DELETE 原子执行：事务包裹 */
     public static void deleteRole(String code) {
-        DaoSupport.permRoleRoute().deleteByRoleCode(code);
-        DaoSupport.permRole().deleteById(code);
+        DaoSupport.tx().executeWithoutResult(status -> {
+            DaoSupport.permRoleRoute().deleteByRoleCode(code);
+            DaoSupport.permRole().deleteById(code);
+        });
     }
 }

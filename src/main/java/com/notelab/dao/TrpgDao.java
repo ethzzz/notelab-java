@@ -48,15 +48,18 @@ public final class TrpgDao {
         return RowUtil.row(DaoSupport.trpgScenario().selectById(id), SCEN_ALL_COLS);
     }
 
+    /** 两条 DELETE（对局 + 剧本）原子执行：事务包裹 */
     public static void deleteTrpgScenario(long id, long userId) {
-        DaoSupport.trpgPlaythrough().delete(
-                Wrappers.lambdaQuery(TrpgPlaythrough.class)
-                        .eq(TrpgPlaythrough::getScenarioId, id)
-                        .eq(TrpgPlaythrough::getUserId, userId));
-        DaoSupport.trpgScenario().delete(
-                Wrappers.lambdaQuery(TrpgScenario.class)
-                        .eq(TrpgScenario::getId, id)
-                        .eq(TrpgScenario::getUserId, userId));
+        DaoSupport.tx().executeWithoutResult(status -> {
+            DaoSupport.trpgPlaythrough().delete(
+                    Wrappers.lambdaQuery(TrpgPlaythrough.class)
+                            .eq(TrpgPlaythrough::getScenarioId, id)
+                            .eq(TrpgPlaythrough::getUserId, userId));
+            DaoSupport.trpgScenario().delete(
+                    Wrappers.lambdaQuery(TrpgScenario.class)
+                            .eq(TrpgScenario::getId, id)
+                            .eq(TrpgScenario::getUserId, userId));
+        });
     }
 
     public static long createTrpgPlay(long scenarioId, long userId, String startNode) {
