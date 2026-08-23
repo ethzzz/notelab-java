@@ -46,6 +46,40 @@ public final class UserDao {
         return Db.queryAll("SELECT id,username,email,role,created_at FROM users ORDER BY id");
     }
 
+    /** 分页 + 可选关键字（用户名/邮箱模糊）与角色筛选 */
+    public static List<Map<String, Object>> listUsersPaged(String q, String role, int limit, long offset) {
+        StringBuilder sql = new StringBuilder("SELECT id,username,email,role,created_at FROM users");
+        List<Object> args = new java.util.ArrayList<>();
+        appendUserFilter(sql, args, q, role);
+        sql.append(" ORDER BY id LIMIT ? OFFSET ?");
+        args.add(limit);
+        args.add(offset);
+        return Db.queryAll(sql.toString(), args.toArray());
+    }
+
+    public static long countUsersFiltered(String q, String role) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) AS n FROM users");
+        List<Object> args = new java.util.ArrayList<>();
+        appendUserFilter(sql, args, q, role);
+        Map<String, Object> r = Db.queryOne(sql.toString(), args.toArray());
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    private static void appendUserFilter(StringBuilder sql, List<Object> args, String q, String role) {
+        List<String> conds = new java.util.ArrayList<>();
+        if (q != null && !q.isBlank()) {
+            conds.add("(username LIKE ? OR email LIKE ?)");
+            String like = "%" + q.trim() + "%";
+            args.add(like);
+            args.add(like);
+        }
+        if (role != null && !role.isBlank()) {
+            conds.add("role = ?");
+            args.add(role.trim());
+        }
+        if (!conds.isEmpty()) sql.append(" WHERE ").append(String.join(" AND ", conds));
+    }
+
     public static void setUserRole(long uid, String role) {
         Db.exec("UPDATE users SET role=? WHERE id=?", role, uid);
     }

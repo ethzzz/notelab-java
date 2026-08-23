@@ -26,6 +26,7 @@ public final class PageRoutes {
             new String[]{"/trpg/gen", "生成剧本"},
             new String[]{"/vs", "吸血鬼幸存者"},
             new String[]{"/spire", "爬塔尖塔"},
+            new String[]{"/spire-editor", "爬塔尖塔工坊"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
             new String[]{"/ui", "界面配置"},

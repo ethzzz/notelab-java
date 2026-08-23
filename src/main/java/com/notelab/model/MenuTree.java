@@ -25,6 +25,8 @@ public final class MenuTree {
                             menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
                     menu("vs", "吸血鬼幸存者", "🧛", "/vs", true),
                     menu("spire", "爬塔尖塔", "🗼", "/spire", true))),
+            group("g_gamecfg", "游戏配置", "🎛️", List.of(
+                    menu("spire-editor", "爬塔尖塔", "🗼", "/spire-editor", true))),
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),

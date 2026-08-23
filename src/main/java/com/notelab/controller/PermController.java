@@ -24,6 +24,7 @@ import com.notelab.dao.PermDao;
  *  POST   /api/perm/roles/{code}/name     重命名角色组
  *  DELETE /api/perm/roles/{code}          删除角色组（成员并入普通用户）
  *  POST   /api/perm/roles/{code}/routes   给角色组分配路由组（权限码集合）
+ *  GET    /api/perm/users                 账户分页列表（page/size/q/role）
  *  POST   /api/perm/users                 创建账户
  *  POST   /api/perm/users/{id}/info       修改账户信息（用户名/邮箱）
  *  POST   /api/perm/users/{id}/role       把角色赋给账户
@@ -155,6 +156,28 @@ public class PermController {
     }
 
     // ================= 账户 =================
+
+    /** 账户分页列表：q 模糊匹配用户名/邮箱，role 精确筛选 */
+    @GetMapping("/users")
+    public ResponseEntity<Map<String, Object>> listUsers(@RequestParam(defaultValue = "1") int page,
+                                                         @RequestParam(defaultValue = "10") int size,
+                                                         @RequestParam(required = false) String q,
+                                                         @RequestParam(required = false) String role,
+                                                         HttpServletRequest request) {
+        Map<String, Object> me = guard(request);
+        if (me == null) return AuthUtil.unauth();
+        if (!PermService.isSuperAdmin(me)) return forbidden();
+        int p = Math.max(page, 1);
+        int s = Math.min(Math.max(size, 1), 100);
+        long total = UserDao.countUsersFiltered(q, role);
+        List<Map<String, Object>> items = UserDao.listUsersPaged(q, role, s, (long) (p - 1) * s);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", items);
+        body.put("total", total);
+        body.put("page", p);
+        body.put("size", s);
+        return ResponseEntity.ok(body);
+    }
 
     @PostMapping("/users")
     public ResponseEntity<Map<String, Object>> createUser(@RequestBody(required = false) CreateUserReq req,

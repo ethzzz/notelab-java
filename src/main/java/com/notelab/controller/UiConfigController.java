@@ -46,7 +46,8 @@ public class UiConfigController {
             return ResponseEntity.status(400).body(Map.of("error", "config 必须是对象"));
         }
         Map<String, Object> defaults = UiConfigService.defaultConfig();
-        Map<String, Object> clean = new LinkedHashMap<>();
+        // 保留额外顶层键（如 spire 工坊内容），只覆盖 background/menus
+        Map<String, Object> clean = new LinkedHashMap<>(UiConfigService.getConfig());
         clean.put("background", cfgNode.has("background")
                 ? JsonUtil.MAPPER.convertValue(cfgNode.get("background"), LinkedHashMap.class)
                 : defaults.get("background"));
