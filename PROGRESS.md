@@ -281,3 +281,51 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 - `C_REGISTER_OPEN=true` 开启注册时暂无图形化管理入口，靠环境变量/`.env`。
 - perm_routes 中同路径多方法路由的 name 字段在每次重启时可能变化（putIfAbsent 遍历顺序），展示性字段，无功能影响（既有行为，非本阶段引入）。
 - 测试数据：保留 `ctest1`（密码已重置为 newpass888）作为验收证据；组表仅剩种子组 default。
+
+## 2026-08-24 B/C 拆分阶段2：C 端数据域（scope/发布标记）+ /api/c/trpg 游玩接口 + /api/c/config 背景与 Spire 发布
+### 前置
+- 开工备份：`mysqldump notelab > data/bc-p2-dump.sql`（76KB）。
+- 基线：perm_routes=74，pm2 notelab-java 在线；trpg_scenarios 2 行 / trpg_playthroughs 2 行（均属 B 端 admin）。
+
+### 改动清单（仅 /root/notelab-java 内）
+- `dao/DbSchema.java`：migrateSchema 末尾新增阶段2补列——`trpg_playthroughs.scope CHAR(1) NOT NULL DEFAULT 'b'` + 索引 `idx_trpg_p_scope_user(scope,user_id)`、`trpg_scenarios.published TINYINT NOT NULL DEFAULT 0`；
+  新增私有守护 `hasColumn/hasIndex`（information_schema 探测，MySQL 无 ADD COLUMN IF NOT EXISTS），重启幂等。
+- `model/entity/TrpgPlaythrough.java`（+scope）、`model/entity/TrpgScenario.java`（+published）。
+- `mapper/TrpgPlaythroughMapper.java`：`listPlaysJoined` 增加 scope 参数（`WHERE p.scope=#{scope} AND p.user_id=#{userId}`，投影列不变）。
+- `dao/TrpgDao.java`：剧本列表/详情投影尾部新增 `published`；对局行投影新增 `scope`（仅内部使用，响应经 playPayload 选键，对外契约不变）；
+  新增 `listPublishedTrpgScenarios`、`setTrpgScenarioPublished`、`createTrpgPlay(.., scope)` 重载、`listTrpgPlays(scope,userId)` 重载（原 `listTrpgPlays(userId)` 内部固定 'b'，B 端签名不变）。
+- `service/TrpgService.java`：`playPayload` / `scenarioOfPlay` 自 TrpgController 原样迁入；新增 `applyChoice`（choose 推进引擎：校验选项→服务端掷骰→日志→更新存档）+ `ChooseException`（携带状态码）。
+- `controller/TrpgController.java`：新增 `POST /scenarios/{id}/publish|unpublish`（登录态即可，不存在 404）；
+  plays 详情/choose/删除补 `scope='b'` 守护；choose 委托 `TrpgService.applyChoice`（检查顺序与原实现逐条一致）；响应键集合不变。
+- `controller/SpireContentController.java`：新增 `POST /publish`（spire 键整体快照 → 顶层键 `spire_published`，合并写保留 background/menus/spire）、`POST /unpublish`（删除该键）。
+- `controller/CTrpgController.java`（新，/api/c/trpg，CAuthUtil 守卫）：
+  `GET /scenarios`（仅 published=1，RowUtil 同 B 端风格）、`GET /scenarios/{id}`（未发布/不存在 404）、`POST /scenarios/{id}/play`（scope='c'、user_id=C uid）、
+  `GET /plays`、`GET /plays/{id}`、`POST /plays/{id}/choose`、`DELETE /plays/{id}`（一律 `scope='c' AND user_id=当前C用户`，他人存档 404；剧本下架后存量存档可继续）。
+- `controller/CConfigController.java`（新，匿名）：`GET /api/c/config/background`（ui_config.background，空时回退 UiConfigService 默认）、`GET /api/c/spire/content`（spire_published，未发布返回空三数组，键序 cards/characters/skills 与 B 端一致）。
+
+### 验证（127.0.0.1:8001 直连，全部实测；脚本 tmp-bc-p2/verify.sh，测后已删）
+1. ✅ 构建 + `pm2 restart` 启动日志无 ERROR，perm_routes 74→86（+12：trpg 发布/下架 2、spire 发布/下架 2、c/trpg 6 路径、c 配置 2）；
+   SHOW CREATE TABLE 确认 `scope char(1) NOT NULL DEFAULT 'b'`、`KEY idx_trpg_p_scope_user (scope,user_id)`、`published tinyint NOT NULL DEFAULT '0'`；
+   再次重启（幂等性）启动正常、列/索引不重复、接口健康。
+2. ✅ 发布流：SQL 建测试剧本 A（owner=超管）默认 unpublished → C 列表空、C 详情 404、C 开局 404 → B publish → B 列表 published=1、C 列表可见、C 详情 200（含 scenario 与 published）→
+   C 开局（start/playing）→ choose c1 到 n2（steps=1）→ B unpublish → C 列表空、新开 404，**存量存档继续 choose 到结局（steps=2、state=ended、ending_title 正确）**；
+   publish 不存在剧本 404；未登录 publish 401。
+3. ✅ 隔离性（对抗用例：构造 B 用户 uid=4 恰等于 C 测试用户 uid=4）：
+   B4 的 /api/trpg/plays 只见自己的 scope='b' 存档、C-A 的 /api/c/trpg/plays 只见自己的 scope='c' 存档、另一 C 用户列表为空；
+   B4 看/choose/删 C 存档均 404，C-A 看/choose B 存档均 404，C-B 看 C-A 存档 404，未登录 401。
+   DB 核对：同一 uid=4 下 scope='c' 与 scope='b' 存档并存互不串。
+4. ✅ 背景：匿名 `GET /api/c/config/background` 200，内容与 B 端 /api/ui-config 的 config.background（`{"theme":"tech"}`）逐字节一致。
+5. ✅ Spire：发布前匿名 `GET /api/c/spire/content` 空三数组 → B 端写入非空测试内容后 publish → C 端返回与 B 工坊当前内容逐字节一致 →
+   ui_config 键保留（background,menus,spire,spire_published）且 B 端 GET /api/spire-content 不受影响 → unpublish → C 端回空、键删除。
+6. ✅ 回归：B 端 /api/trpg/scenarios 键序 `id,user_id,title,genre,summary,created_at,updated_at,published`（新增字段在尾部）；
+   /api/trpg/plays 存量存档（2,5）仍全部可见、存档响应键集合 `play_id,scenario_id,scenario_title,state,steps,ending_title,node,history` 不变；
+   /api/menu、/api/ui-config 逻辑零改动（与 :8000 的差异仅为 Java 版 MenuTree/defaults 页面更多，属既有差异，非本阶段引入；两端 config 段一致）；
+   Python :8000 正常（/api/models、/api/menu 带 Cookie 200，ui_config 同表读取一致）。
+7. ✅ 清理：删除测试剧本 8/9、测试存档 10/11、测试 C 用户 ctest_p2_a/ctest_p2_b（经 /api/c-admin 删除）、B 端对抗用户 ctest_b4（uid=4）；
+   ui_config 恢复开工前快照（Java/Python 双端校验与快照逐字节一致）；c_users 仅剩阶段1 保留的 ctest1。
+
+### 遗留事项 / 下一步
+- 阶段3（待排期）：C 端菜单/模型范围按用户组控制、其余 C 端业务域（对话等）拆分。
+- `POST /api/trpg/scenarios/{id}/publish|unpublish` 按任务约定为「登录态即可」，未做剧本归属校验（任意 B 端登录用户可发布他人剧本，属内容运营场景设计）；如需仅属主/管理员可发布，后续加守卫即可。
+- /vs（吸血鬼幸存者）纯前端无后端接口，本阶段零改动（符合预期）。
+- C 端剧本列表未分页（与 B 端现状一致，LIMIT 未设）；内容量增大后再议。

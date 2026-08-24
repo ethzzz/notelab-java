@@ -131,6 +131,28 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
+        // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
+        if (!hasColumn("trpg_playthroughs", "scope")) {
+            Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");
+        }
+        if (!hasIndex("trpg_playthroughs", "idx_trpg_p_scope_user")) {
+            Db.exec("ALTER TABLE trpg_playthroughs ADD KEY idx_trpg_p_scope_user (scope, user_id)");
+        }
+        if (!hasColumn("trpg_scenarios", "published")) {
+            Db.exec("ALTER TABLE trpg_scenarios ADD COLUMN published TINYINT NOT NULL DEFAULT 0");
+        }
+    }
+
+    /** 列存在守护（information_schema）：存在返回 true */
+    private static boolean hasColumn(String table, String column) {
+        return Db.queryOne("SELECT 1 AS x FROM information_schema.columns "
+                + "WHERE table_schema=DATABASE() AND table_name=? AND column_name=?", table, column) != null;
+    }
+
+    /** 索引存在守护（information_schema）：存在返回 true */
+    private static boolean hasIndex(String table, String index) {
+        return Db.queryOne("SELECT 1 AS x FROM information_schema.statistics "
+                + "WHERE table_schema=DATABASE() AND table_name=? AND index_name=?", table, index) != null;
     }
 
     // 建表语句与 /root/notelab/db.py 的 SCHEMA / ENGLISH_SCHEMA 逐条一致（仅 CREATE TABLE IF NOT EXISTS）。

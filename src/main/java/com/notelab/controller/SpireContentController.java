@@ -60,6 +60,39 @@ public class SpireContentController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    /**
+     * B/C 拆分阶段2：发布——把当前 spire 工坊内容整体快照写入顶层键 spire_published
+     * （合并写，保留 background/menus/spire 等其它键，写法同 save）。
+     */
+    @PostMapping("/publish")
+    public ResponseEntity<Map<String, Object>> publish(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
+        cfg.put("spire_published", spireOf(cfg));
+        try {
+            UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
+        }
+        UiConfigService.invalidate();
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** B/C 拆分阶段2：下架——删除 spire_published 键（合并写，保留其它键） */
+    @PostMapping("/unpublish")
+    public ResponseEntity<Map<String, Object>> unpublish(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
+        cfg.remove("spire_published");
+        try {
+            UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
+        }
+        UiConfigService.invalidate();
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> spireOf(Map<String, Object> cfg) {
         Object o = cfg.get("spire");

@@ -19,6 +19,8 @@ public class TrpgPlaythrough {
     private String endingTitle;
     private Integer steps;
     private String historyJson;
+    /** B/C 拆分阶段2：数据归属 'b'=B端 / 'c'=C端（DB 默认 'b'，存量零迁移） */
+    private String scope;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -51,5 +53,8 @@ public class TrpgPlaythrough {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getScope() { return scope; }
+    public void setScope(String scope) { this.scope = scope; }
 
 }

@@ -18,6 +18,8 @@ public class TrpgScenario {
     private String summary;
     private String configJson;
     private String scenarioJson;
+    /** B/C 拆分阶段2：发布标记（1=已发布到 C 端，DB 默认 0） */
+    private Integer published;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -47,5 +49,8 @@ public class TrpgScenario {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public Integer getPublished() { return published; }
+    public void setPublished(Integer published) { this.published = published; }
 
 }

@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import com.notelab.common.JsonUtil;
+import com.notelab.dao.TrpgDao;
 
 /**
  * TRPG 跑团服务：
@@ -149,6 +152,122 @@ public final class TrpgService {
     /** d100：1-100 */
     public static int rollD100() {
         return ThreadLocalRandom.current().nextInt(1, 101);
+    }
+
+    // ---------- B/C 拆分阶段2：B/C 共用逻辑（自 TrpgController 原样迁入，行为不变） ----------
+
+    /** choose 业务错误：携带 HTTP 状态码，由 Controller 原样映射为 {"error": ...} 响应 */
+    public static final class ChooseException extends RuntimeException {
+        public final int status;
+        public ChooseException(int status, String message) {
+            super(message);
+            this.status = status;
+        }
+    }
+
+    /** 对局所属剧本的解析（scenario_json → ObjectNode），损坏/缺失返回 empty */
+    public static Optional<ObjectNode> scenarioOfPlay(Map<String, Object> play) {
+        try {
+            Map<String, Object> row = TrpgDao.getTrpgScenario(((Number) play.get("scenario_id")).longValue());
+            return Optional.of((ObjectNode) JsonUtil.parse(String.valueOf(row.get("scenario_json"))));
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    /** 对局响应：当前节点全文 + 历史 + 状态（响应键集合与原 TrpgController.playPayload 完全一致） */
+    public static Map<String, Object> playPayload(Map<String, Object> play, ObjectNode sc) {
+        ObjectNode node = findNode(sc, String.valueOf(play.get("current_node")));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("play_id", play.get("id"));
+        out.put("scenario_id", play.get("scenario_id"));
+        out.put("scenario_title", play.get("scenario_title"));
+        out.put("state", play.get("state"));
+        out.put("steps", play.get("steps"));
+        out.put("ending_title", play.get("ending_title"));
+        out.put("node", node == null ? null : toMap(node));
+        // 历史条目附带所属节点全文（剧情文本+全部选项），回忆翻阅用；旧数据无 node_id 时按标题匹配
+        try {
+            JsonNode h = JsonUtil.parse(String.valueOf(play.get("history_json")));
+            List<Map<String, Object>> hist = new ArrayList<>();
+            if (h.isArray()) {
+                for (JsonNode e : h) {
+                    Map<String, Object> em = JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class);
+                    ObjectNode en = null;
+                    Object nid = em.get("node_id");
+                    if (nid != null && !String.valueOf(nid).isEmpty()) en = findNode(sc, String.valueOf(nid));
+                    if (en == null && em.get("node_title") != null) {
+                        for (JsonNode nj : sc.path("nodes")) {
+                            if (String.valueOf(em.get("node_title")).equals(nj.path("title").asText(""))) {
+                                en = (ObjectNode) nj;
+                                break;
+                            }
+                        }
+                    }
+                    if (en != null) em.put("node", toMap(en));
+                    hist.add(em);
+                }
+            }
+            out.put("history", hist);
+        } catch (Exception e) {
+            out.put("history", List.of());
+        }
+        return out;
+    }
+
+    /**
+     * 执行一次 choose 推进（B/C 共用引擎）：校验选项 → 掷骰判定 → 追加冒险日志 → 更新存档，
+     * 返回最新存档 payload。业务错误抛 ChooseException（400 已结束/选项不存在、422 choice_id 必填、500 场景损坏）。
+     */
+    public static Map<String, Object> applyChoice(Map<String, Object> play, ObjectNode sc, String choiceId) {
+        if ("ended".equals(play.get("state"))) throw new ChooseException(400, "该对局已结束");
+        if (choiceId == null || choiceId.trim().isEmpty()) throw new ChooseException(422, "choice_id 必填");
+        ObjectNode cur = findNode(sc, String.valueOf(play.get("current_node")));
+        if (cur == null) throw new ChooseException(500, "当前场景损坏");
+
+        ObjectNode choice = null;
+        for (JsonNode cj : cur.path("choices")) {
+            if (choiceId.equals(cj.path("id").asText(""))) { choice = (ObjectNode) cj; break; }
+        }
+        if (choice == null) throw new ChooseException(400, "选项不存在");
+
+        // 掷骰判定（服务端权威掷骰）
+        Map<String, Object> diceResult = null;
+        String nextId;
+        if (choice.has("dice")) {
+            int target = choice.path("dice").path("target").asInt(50);
+            int roll = rollD100();
+            boolean success = roll <= target;
+            diceResult = new LinkedHashMap<>();
+            diceResult.put("roll", roll);
+            diceResult.put("target", target);
+            diceResult.put("success", success);
+            nextId = success ? choice.path("next").asText() : choice.path("fail_next").asText(choice.path("next").asText());
+        } else {
+            nextId = choice.path("next").asText();
+        }
+        ObjectNode next = findNode(sc, nextId);
+        if (next == null) next = findNode(sc, startNodeId(sc));
+
+        // 追加冒险日志
+        List<Map<String, Object>> history = new ArrayList<>();
+        try {
+            JsonNode h = JsonUtil.parse(String.valueOf(play.get("history_json")));
+            if (h.isArray()) for (JsonNode e : h) history.add(JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class));
+        } catch (Exception ignored) {}
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("node_id", cur.path("id").asText(""));
+        entry.put("node_title", cur.path("title").asText(""));
+        entry.put("choice", choice.path("text").asText(""));
+        if (diceResult != null) entry.put("dice", diceResult);
+        history.add(entry);
+
+        boolean ended = next.path("ending").asBoolean(false);
+        int steps = ((Number) play.get("steps")).intValue() + 1;
+        long playId = ((Number) play.get("id")).longValue();
+        TrpgDao.updateTrpgPlay(playId, next.path("id").asText(), ended ? "ended" : "playing",
+                ended ? next.path("title").asText("") : "", steps, JsonUtil.write(history));
+        return playPayload(TrpgDao.getTrpgPlay(playId), sc);
     }
 
     private static String str(Object v, String def) {

@@ -19,6 +19,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 界面配置 | /api/ui-config | ✅ 已完成（30s 缓存+保存失效） |
 | 权限管理 RBAC | /api/perm/*（overview/角色路由组/账户角色/建号/重置密码） | ✅ 已完成（users.role + 权限路由表 + 启动自动注册路由 + 菜单按角色过滤） |
 | C 端身份体系（B/C 拆分阶段1） | /api/c/auth/*（login/me/logout/register）+ /api/c-admin/*（用户/用户组管理） | ✅ 已完成（c_users/c_user_groups 新表 + 4 段 c. token 与 B 端隔离 + 注册开关默认关闭） |
+| C 端游玩与内容发布（B/C 拆分阶段2） | /api/c/trpg/*（已发布剧本游玩）+ /api/c/config/background、/api/c/spire/content（匿名）+ B 端 publish/unpublish | ✅ 已完成（trpg_playthroughs.scope + trpg_scenarios.published 补列，存量默认 B 归属零迁移） |
 
 ## 项目简介
 
@@ -135,4 +136,19 @@ mvn -DskipTests package && pm2 restart notelab-java
   登录限流与 B 端同语义（10 次/300s，独立桶 `c-login:<ip>`）；`status='disabled'` 的账号登录 403、已有会话即时失效。
 - **B 端管理 C 用户**：`/api/c-admin/users*`（列表 q/group_code/limit/offset、建号 409 去重、改资料/状态、重置密码、删除）、
   `/api/c-admin/groups*`（增删改查，删组校验无成员，默认组 `default` 不可删）。全部要求 B 端登录，路由自动登记进 `perm_routes`（74 条）。
-- 验证记录见 PROGRESS.md 末节；阶段2（C 端业务接口与数据隔离）未开始。
+- 验证记录见 PROGRESS.md 末节。
+
+**阶段2：C 端游玩数据域与内容发布（✅ 已完成，2026-08-24）**
+
+- **数据归属（只增不改）**：`trpg_playthroughs` 补 `scope CHAR(1) NOT NULL DEFAULT 'b'` + 索引 `(scope,user_id)`，
+  `trpg_scenarios` 补 `published TINYINT NOT NULL DEFAULT 0`；DbSchema 先查 information_schema 再 ALTER，重启幂等；存量数据默认 B 归属，零迁移。改前备份 `data/bc-p2-dump.sql`。
+- **B 端发布接口**（登录态即可，路由自动进 perm_routes）：`POST /api/trpg/scenarios/{id}/publish|unpublish`（剧本不存在 404）、
+  `POST /api/spire-content/publish|unpublish`（spire 工坊内容快照 ↔ ui_config 顶层键 `spire_published`，合并写保留其它键）。
+  B 端剧本列表/详情响应新增 `published` 字段（原有字段与键序不变）。
+- **C 端游玩接口** `/api/c/trpg/*`（CAuthUtil 守卫，复用 TrpgService 引擎）：仅 `published=1` 的剧本可列表/详情/开局；
+  存档一律 `scope='c' AND user_id=当前C用户`，他人存档 404；剧本下架后存量存档可继续游玩，仅新开局受限。
+  B 端 `/api/trpg/plays` 系列同步补 `scope='b'` 过滤（存量默认 'b'，行为等价）。
+- **C 端配置接口（匿名）**：`GET /api/c/config/background`（ui_config 的 background 节点，空时回退默认）、
+  `GET /api/c/spire/content`（已发布内容，未发布返回空三数组）——C 端外壳首屏与登录页免登录可用。
+- **隔离性实测**：构造 B 用户 uid 恰等于 C 用户 uid 的对抗用例，两端列表/详情/choose/删除互不串（详见 PROGRESS.md）。
+- 验证记录见 PROGRESS.md 末节；/vs（吸血鬼幸存者）为纯前端，本阶段零改动。

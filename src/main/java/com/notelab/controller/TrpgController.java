@@ -1,6 +1,5 @@
 package com.notelab.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
@@ -11,9 +10,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -177,6 +174,28 @@ public class TrpgController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    // ================= 发布（B/C 拆分阶段2） =================
+
+    /** 发布剧本到 C 端：published=1（登录态即可，路由启动时自动进 perm_routes） */
+    @PostMapping("/scenarios/{id}/publish")
+    public ResponseEntity<?> publish(@PathVariable long id, HttpServletRequest request) {
+        Map<String, Object> user = AuthUtil.user(request);
+        if (user == null) return AuthUtil.unauth();
+        if (TrpgDao.getTrpgScenario(id) == null) return ResponseEntity.status(404).body(Map.of("error", "剧本不存在"));
+        TrpgDao.setTrpgScenarioPublished(id, 1);
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** 下架剧本：published=0（已开局的 C 端存档不受影响，仅限制新开局） */
+    @PostMapping("/scenarios/{id}/unpublish")
+    public ResponseEntity<?> unpublish(@PathVariable long id, HttpServletRequest request) {
+        Map<String, Object> user = AuthUtil.user(request);
+        if (user == null) return AuthUtil.unauth();
+        if (TrpgDao.getTrpgScenario(id) == null) return ResponseEntity.status(404).body(Map.of("error", "剧本不存在"));
+        TrpgDao.setTrpgScenarioPublished(id, 0);
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
     // ================= 游玩 =================
 
     @PostMapping("/scenarios/{id}/play")
@@ -188,7 +207,7 @@ public class TrpgController {
         try {
             ObjectNode sc = (ObjectNode) JsonUtil.parse(String.valueOf(row.get("scenario_json")));
             long pid = TrpgDao.createTrpgPlay(id, AuthUtil.userId(user), TrpgService.startNodeId(sc));
-            return ResponseEntity.ok(playPayload(TrpgDao.getTrpgPlay(pid), sc));
+            return ResponseEntity.ok(TrpgService.playPayload(TrpgDao.getTrpgPlay(pid), sc));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "开局失败"));
         }
@@ -206,9 +225,10 @@ public class TrpgController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         Map<String, Object> play = TrpgDao.getTrpgPlay(id);
-        if (play == null || !ownedPlay(play, user)) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
-        return scenarioOfPlay(play)
-                .map(sc -> ResponseEntity.ok((Object) playPayload(play, sc)))
+        // B/C 拆分阶段2：B 端只见 scope='b' 存档（同 uid 对抗用例下与 C 端互不串）
+        if (play == null || !ownedPlay(play, user) || !"b".equals(play.get("scope"))) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
+        return TrpgService.scenarioOfPlay(play)
+                .map(sc -> ResponseEntity.ok((Object) TrpgService.playPayload(play, sc)))
                 .orElseGet(() -> ResponseEntity.status(500).body(Map.of("error", "剧本数据损坏")));
     }
 
@@ -217,57 +237,17 @@ public class TrpgController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         Map<String, Object> play = TrpgDao.getTrpgPlay(id);
-        if (play == null || !ownedPlay(play, user)) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
+        // B/C 拆分阶段2：B 端只操作 scope='b' 存档
+        if (play == null || !ownedPlay(play, user) || !"b".equals(play.get("scope"))) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
         if ("ended".equals(play.get("state"))) return ResponseEntity.status(400).body(Map.of("error", "该对局已结束"));
         if (req == null || isBlank(req.choice_id)) return ResponseEntity.status(422).body(Map.of("error", "choice_id 必填"));
-        java.util.Optional<ObjectNode> optSc = scenarioOfPlay(play);
+        java.util.Optional<ObjectNode> optSc = TrpgService.scenarioOfPlay(play);
         if (optSc.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "剧本数据损坏"));
-        ObjectNode sc = optSc.get();
-        ObjectNode cur = TrpgService.findNode(sc, String.valueOf(play.get("current_node")));
-        if (cur == null) return ResponseEntity.status(500).body(Map.of("error", "当前场景损坏"));
-
-        ObjectNode choice = null;
-        for (JsonNode cj : cur.path("choices")) {
-            if (req.choice_id.equals(cj.path("id").asText(""))) { choice = (ObjectNode) cj; break; }
-        }
-        if (choice == null) return ResponseEntity.status(400).body(Map.of("error", "选项不存在"));
-
-        // 掷骰判定（服务端权威掷骰）
-        Map<String, Object> diceResult = null;
-        String nextId;
-        if (choice.has("dice")) {
-            int target = choice.path("dice").path("target").asInt(50);
-            int roll = TrpgService.rollD100();
-            boolean success = roll <= target;
-            diceResult = new LinkedHashMap<>();
-            diceResult.put("roll", roll);
-            diceResult.put("target", target);
-            diceResult.put("success", success);
-            nextId = success ? choice.path("next").asText() : choice.path("fail_next").asText(choice.path("next").asText());
-        } else {
-            nextId = choice.path("next").asText();
-        }
-        ObjectNode next = TrpgService.findNode(sc, nextId);
-        if (next == null) next = TrpgService.findNode(sc, TrpgService.startNodeId(sc));
-
-        // 追加冒险日志
-        List<Map<String, Object>> history = new ArrayList<>();
         try {
-            JsonNode h = JsonUtil.parse(String.valueOf(play.get("history_json")));
-            if (h.isArray()) for (JsonNode e : h) history.add(JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class));
-        } catch (Exception ignored) {}
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("node_id", cur.path("id").asText(""));
-        entry.put("node_title", cur.path("title").asText(""));
-        entry.put("choice", choice.path("text").asText(""));
-        if (diceResult != null) entry.put("dice", diceResult);
-        history.add(entry);
-
-        boolean ended = next.path("ending").asBoolean(false);
-        int steps = ((Number) play.get("steps")).intValue() + 1;
-        TrpgDao.updateTrpgPlay(id, next.path("id").asText(), ended ? "ended" : "playing",
-                ended ? next.path("title").asText("") : "", steps, JsonUtil.write(history));
-        return ResponseEntity.ok(playPayload(TrpgDao.getTrpgPlay(id), sc));
+            return ResponseEntity.ok(TrpgService.applyChoice(play, optSc.get(), req.choice_id));
+        } catch (TrpgService.ChooseException e) {
+            return ResponseEntity.status(e.status).body(Map.of("error", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/plays/{id}")
@@ -275,61 +255,12 @@ public class TrpgController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         Map<String, Object> play = TrpgDao.getTrpgPlay(id);
-        if (play == null || !ownedPlay(play, user)) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
+        if (play == null || !ownedPlay(play, user) || !"b".equals(play.get("scope"))) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
         TrpgDao.deleteTrpgPlay(id, AuthUtil.userId(user));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
     // ================= 工具 =================
-
-    private static java.util.Optional<ObjectNode> scenarioOfPlay(Map<String, Object> play) {
-        try {
-            Map<String, Object> row = TrpgDao.getTrpgScenario(((Number) play.get("scenario_id")).longValue());
-            return java.util.Optional.of((ObjectNode) JsonUtil.parse(String.valueOf(row.get("scenario_json"))));
-        } catch (Exception e) {
-            return java.util.Optional.empty();
-        }
-    }
-
-    /** 对局响应：当前节点全文 + 历史 + 状态 */
-    private static Map<String, Object> playPayload(Map<String, Object> play, ObjectNode sc) {
-        ObjectNode node = TrpgService.findNode(sc, String.valueOf(play.get("current_node")));
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("play_id", play.get("id"));
-        out.put("scenario_id", play.get("scenario_id"));
-        out.put("scenario_title", play.get("scenario_title"));
-        out.put("state", play.get("state"));
-        out.put("steps", play.get("steps"));
-        out.put("ending_title", play.get("ending_title"));
-        out.put("node", node == null ? null : TrpgService.toMap(node));
-        // 历史条目附带所属节点全文（剧情文本+全部选项），回忆翻阅用；旧数据无 node_id 时按标题匹配
-        try {
-            JsonNode h = JsonUtil.parse(String.valueOf(play.get("history_json")));
-            List<Map<String, Object>> hist = new ArrayList<>();
-            if (h.isArray()) {
-                for (JsonNode e : h) {
-                    Map<String, Object> em = JsonUtil.MAPPER.convertValue(e, LinkedHashMap.class);
-                    ObjectNode en = null;
-                    Object nid = em.get("node_id");
-                    if (nid != null && !String.valueOf(nid).isEmpty()) en = TrpgService.findNode(sc, String.valueOf(nid));
-                    if (en == null && em.get("node_title") != null) {
-                        for (JsonNode nj : sc.path("nodes")) {
-                            if (String.valueOf(em.get("node_title")).equals(nj.path("title").asText(""))) {
-                                en = (ObjectNode) nj;
-                                break;
-                            }
-                        }
-                    }
-                    if (en != null) em.put("node", TrpgService.toMap(en));
-                    hist.add(em);
-                }
-            }
-            out.put("history", hist);
-        } catch (Exception e) {
-            out.put("history", List.of());
-        }
-        return out;
-    }
 
     private static boolean owned(Map<String, Object> row, Map<String, Object> user) {
         Object uid = row.get("user_id");
