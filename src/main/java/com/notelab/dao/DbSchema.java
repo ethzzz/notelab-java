@@ -113,6 +113,24 @@ final class DbSchema {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         seedToolsIfEmpty();
+        // ---- B/C 拆分阶段1：C 端用户体系（c_users / c_user_groups，只增不改） ----
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS c_users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                nickname VARCHAR(50) NOT NULL DEFAULT '',
+                group_code VARCHAR(50) NOT NULL DEFAULT 'default',
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS c_user_groups (
+                code VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(50) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
     }
 
     // 建表语句与 /root/notelab/db.py 的 SCHEMA / ENGLISH_SCHEMA 逐条一致（仅 CREATE TABLE IF NOT EXISTS）。

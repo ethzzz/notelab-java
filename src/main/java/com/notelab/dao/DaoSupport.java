@@ -1,6 +1,8 @@
 package com.notelab.dao;
 
 import com.notelab.mapper.ConversationMapper;
+import com.notelab.mapper.CUserGroupMapper;
+import com.notelab.mapper.CUserMapper;
 import com.notelab.mapper.EnglishConversationMapper;
 import com.notelab.mapper.EnglishMessageMapper;
 import com.notelab.mapper.MessageMapper;
@@ -41,6 +43,8 @@ public class DaoSupport {
     private static TrpgPlaythroughMapper trpgPlaythroughMapper;
     private static TrpgGenTaskMapper trpgGenTaskMapper;
     private static UiConfigMapper uiConfigMapper;
+    private static CUserMapper cUserMapper;
+    private static CUserGroupMapper cUserGroupMapper;
 
     public DaoSupport(PlatformTransactionManager txManager,
                       UserMapper userMapper,
@@ -55,7 +59,9 @@ public class DaoSupport {
                       TrpgScenarioMapper trpgScenarioMapper,
                       TrpgPlaythroughMapper trpgPlaythroughMapper,
                       TrpgGenTaskMapper trpgGenTaskMapper,
-                      UiConfigMapper uiConfigMapper) {
+                      UiConfigMapper uiConfigMapper,
+                      CUserMapper cUserMapper,
+                      CUserGroupMapper cUserGroupMapper) {
         DaoSupport.tx = new TransactionTemplate(txManager);
         DaoSupport.userMapper = userMapper;
         DaoSupport.conversationMapper = conversationMapper;
@@ -70,6 +76,8 @@ public class DaoSupport {
         DaoSupport.trpgPlaythroughMapper = trpgPlaythroughMapper;
         DaoSupport.trpgGenTaskMapper = trpgGenTaskMapper;
         DaoSupport.uiConfigMapper = uiConfigMapper;
+        DaoSupport.cUserMapper = cUserMapper;
+        DaoSupport.cUserGroupMapper = cUserGroupMapper;
         DaoSupport.ready = true;
     }
 
@@ -96,4 +104,6 @@ public class DaoSupport {
     public static TrpgPlaythroughMapper trpgPlaythrough() { return trpgPlaythroughMapper; }
     public static TrpgGenTaskMapper trpgGenTask() { return trpgGenTaskMapper; }
     public static UiConfigMapper uiConfig() { return uiConfigMapper; }
+    public static CUserMapper cUser() { return cUserMapper; }
+    public static CUserGroupMapper cUserGroup() { return cUserGroupMapper; }
 }

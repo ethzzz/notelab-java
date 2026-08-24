@@ -18,6 +18,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 模型竞技场 | /api/arena (并行 SSE+心跳) | ✅ 已完成（10s 心跳实测生效） |
 | 界面配置 | /api/ui-config | ✅ 已完成（30s 缓存+保存失效） |
 | 权限管理 RBAC | /api/perm/*（overview/角色路由组/账户角色/建号/重置密码） | ✅ 已完成（users.role + 权限路由表 + 启动自动注册路由 + 菜单按角色过滤） |
+| C 端身份体系（B/C 拆分阶段1） | /api/c/auth/*（login/me/logout/register）+ /api/c-admin/*（用户/用户组管理） | ✅ 已完成（c_users/c_user_groups 新表 + 4 段 c. token 与 B 端隔离 + 注册开关默认关闭） |
 
 ## 项目简介
 
@@ -120,3 +121,18 @@ mvn -DskipTests package && pm2 restart notelab-java
 - **管理接口（仅超级管理员，403 守卫）**：GET /api/perm/overview、POST /api/perm/roles/{code}/routes、POST /api/perm/users、POST /api/perm/users/{id}/role、POST /api/perm/users/{id}/password。
 - **前端**：新增 /perm 权限管理页（路由表/角色授权/账户管理/建号）；登录页移除注册入口，/register 显示关闭提示；侧边栏菜单由后端按角色过滤。
 - 改库前备份：data/backup-before-rbac.sql。
+## B/C 拆分（进行中）
+
+阶段0（nginx :80 前缀代理 + :3010/:3020 壳应用）已完成并归档于 [ops/BC-SPLIT-P0.md](ops/BC-SPLIT-P0.md)。
+
+**阶段1：C 端独立身份体系（✅ 已完成，2026-08-24）**
+
+- 新表 `c_users` / `c_user_groups`（仅 CREATE TABLE IF NOT EXISTS + 默认组种子，现有表零改动；改前备份 `data/bc-p1-dump.sql`）。
+- **Token 隔离**：C 端会话 Cookie `notelab_c_session`，token = base64url(`c.<uid>.<exp>.<hmac>`)，**4 段**；
+  B 端 `notelab_session` 保持 3 段格式不变，`parseToken` 只认 3 段、`parseCToken` 只认 4 段且首段为 `c`，
+  两端即使 uid 数字相同也互不认（已实测）。签名算法与密钥同 B 端（HMAC-SHA256，SECRET_KEY 复用）。
+- **C 端认证**：`/api/c/auth/login|me|logout|register`。register 受开关 `C_REGISTER_OPEN` 控制，默认关闭（403「注册未开放」）；
+  登录限流与 B 端同语义（10 次/300s，独立桶 `c-login:<ip>`）；`status='disabled'` 的账号登录 403、已有会话即时失效。
+- **B 端管理 C 用户**：`/api/c-admin/users*`（列表 q/group_code/limit/offset、建号 409 去重、改资料/状态、重置密码、删除）、
+  `/api/c-admin/groups*`（增删改查，删组校验无成员，默认组 `default` 不可删）。全部要求 B 端登录，路由自动登记进 `perm_routes`（74 条）。
+- 验证记录见 PROGRESS.md 末节；阶段2（C 端业务接口与数据隔离）未开始。

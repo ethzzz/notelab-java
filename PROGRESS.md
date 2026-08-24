@@ -245,3 +245,39 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 ### 备注
 - Python 版 8000 的 register 仍在（内网不可达，前端流量只到 Java），退役 Python 时一并消失
 - API 级权限码已登记备用，当前仅页面路由参与菜单过滤；后续可做接口级拦截
+## 2026-08-24 B/C 拆分阶段1：C 端独立身份体系
+### 前置
+- 开工备份：`mysqldump notelab > data/bc-p1-dump.sql`（74KB）。
+- 基线：perm_routes=65，pm2 notelab-java 在线。
+
+### 改动清单（仅 /root/notelab-java 内）
+- `dao/DbSchema.java`：migrateSchema 末尾新增 c_users / c_user_groups 建表（CREATE TABLE IF NOT EXISTS）+ `INSERT IGNORE` 默认组种子。
+- `model/entity/CUser.java`、`model/entity/CUserGroup.java`（新）、`mapper/CUserMapper.java`、`mapper/CUserGroupMapper.java`（新，后者含注解 SQL：组列表+成员数）。
+- `dao/DaoSupport.java`：注入 CUserMapper / CUserGroupMapper（构造器 + 静态 accessor）。
+- `dao/CUserDao.java`（新）：静态门面，Map 出口（RowUtil 键序），用户分页/筛选/改密/删除 + 用户组 CRUD。
+- `common/AppConfig.java`：新增常量 `SESSION_COOKIE_C = "notelab_c_session"`。
+- `common/Session.java`：**原方法零改动**；新增 `makeCToken`（4 段 `c.<uid>.<exp>.<sig>` 的 base64url）、`parseCToken`（恰好 4 段且首段 `c` 才认）、`currentUserC`（查 c_users 且要求 status='active'）、`setCookieC/deleteCookieC`。
+- `controller/CAuthUtil.java`（新）、`controller/CAuthController.java`（新，/api/c/auth：login/me/logout/register，register 受 `C_REGISTER_OPEN` 开关控制默认关闭）、`controller/CAdminController.java`（新，/api/c-admin：users + groups 全套，全部 B 端登录守卫）。
+
+### 验证（127.0.0.1:8001 直连，全部实测）
+1. ✅ `mvn -DskipTests package` 通过；`pm2 restart notelab-java` 后启动日志无 ERROR，perm_routes 65→74（+9：c-auth 4 条 + c-admin 5 条）。
+2. ✅ 超管 Cookie（按 Session.java 签发逻辑的一次性脚本，SECRET_KEY 取自 /root/notelab/.env，uid=18/admin）
+   经 POST /api/c-admin/users 建 `ctest1`（组 default，昵称「C测试一」）→ 列表可见（含 created_at 格式 `yyyy-MM-dd HH:mm:ss`）→ 重复建 409「用户名已存在」。
+3. ✅ POST /api/c/auth/login ctest1 → 200 `{"ok":true,"id":1,"username":"ctest1","nickname":"C测试一","group_code":"default"}` + Set-Cookie notelab_c_session（4 段 c. token）；
+   GET /api/c/auth/me（C Cookie）→ 200；**同一 C Cookie 打 B 端 /api/menu → 401**；**B Cookie 打 /api/c/auth/me → 401**（双端互不认）。
+4. ✅ 错密码 → 401「用户名或密码错误」；连打 20 次 → 前 8 次 401（桶内余量，此前登录已计数 2 次）后全部 429「尝试过于频繁，请 5 分钟后再试」，语义与 B 端一致（10 次/300s，Redis 桶 `rl:c-login:<ip>`）。
+5. ✅ POST /api/c/auth/register → 403「注册未开放」（开关默认关闭）；另临时 `C_REGISTER_OPEN=true` 重启验证开启路径：
+   注册成功自动登录（Set-Cookie + me 200，默认入 default 组），测毕删除该行并重启恢复 403。
+6. ✅ 回归：B 端错密码登录 401、/api/me、/api/menu、/api/perm/users 分页行为不变；Python :8000 可达，
+   /api/login 错密码仍 401「用户名或密码错误」、/api/models 未登录 401（原有行为）。
+   前后 mysqldump diff：现有表结构/数据零变化（唯一差异为 perm_routes 数据行——重启自动 upsert 时同路径多方法路由的 name 取值变化，属既有行为）。
+7. ✅ 用户组：建组 vip → 重复建 409 → 改名 200 → ctest1 移入后删组 409「该用户组下仍有 1 名成员，不可删除」→
+   移回 default 后删空组 200 → 删 default 组 400「默认组 default 不可删除」（保护）→ 删不存在组 404。
+8. ✅ 附加：重置密码后新密码可登录/旧密码 401；禁用账号后登录 403「账号已被禁用」、其已发 Cookie 即时视同未登录（me 401）；
+   重新启用恢复；/api/c-admin/* 未登录 → 401「请先登录」；无效 status 400；删用户后重复删 404。
+
+### 遗留事项 / 下一步
+- 阶段2：C 端业务接口（对话等）与数据隔离；C 端菜单/模型范围按组控制。
+- `C_REGISTER_OPEN=true` 开启注册时暂无图形化管理入口，靠环境变量/`.env`。
+- perm_routes 中同路径多方法路由的 name 字段在每次重启时可能变化（putIfAbsent 遍历顺序），展示性字段，无功能影响（既有行为，非本阶段引入）。
+- 测试数据：保留 `ctest1`（密码已重置为 newpass888）作为验收证据；组表仅剩种子组 default。

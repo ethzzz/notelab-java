@@ -17,6 +17,8 @@ public final class AppConfig {
 
     public static final String SESSION_COOKIE = "notelab_session";
     public static final int SESSION_TTL = 30 * 86400;
+    /** B/C 拆分阶段1：C 端独立会话 Cookie 名（与 B 端 notelab_session 隔离） */
+    public static final String SESSION_COOKIE_C = "notelab_c_session";
 
     private static final Map<String, String> FILE_ENV = new LinkedHashMap<>();
     private static volatile boolean loaded = false;
