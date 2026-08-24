@@ -123,9 +123,9 @@ public final class TrpgDao {
     }
 
     /**
-     * 启动时把残留的 running 任务标记为中断。
-     * 注意：迁移前该调用发生在 TrpgController 的 @PostConstruct（早于 Db.init），实际总是静默跳过；
-     * 这里以 DaoSupport.ready() 保持同样语义——上下文未就绪时安全跳过。
+     * 启动时把残留的 running 任务标记为中断，由 Bootstrap.run() 在 Db.init 之后调用。
+     * （历史上该调用在 TrpgController 的 @PostConstruct 中，早于 Db.init 从未生效；已于 2026-08-24 修复。）
+     * DaoSupport.ready() 仅作守护，正常启动路径下恒为就绪。
      */
     public static void abortStaleTrpgGenTasks() {
         if (!DaoSupport.ready()) return;

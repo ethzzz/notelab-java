@@ -5,6 +5,7 @@ import javax.sql.DataSource;
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.dao.PermDao;
+import com.notelab.dao.TrpgDao;
 import com.notelab.service.PermService;
 import com.notelab.service.RagService;
 import org.slf4j.Logger;
@@ -29,6 +30,8 @@ public class Bootstrap implements CommandLineRunner {
     @Override
     public void run(String... args) {
         Db.init(dataSource);
+        // TRPG 生成任务清残：必须在 Db.init 之后执行（原在 TrpgController @PostConstruct 中早于建库，从未生效）
+        TrpgDao.abortStaleTrpgGenTasks();
         PermService.registerAllRoutes(handlerMapping);
         RagService.init();
         log.info("NoteLab-Java 启动完成：port=8001, mysql={}:{}/{}, user={}, base_url={}, model={}, key={}, secret_key={}, data_dir={}, perm_routes={}",

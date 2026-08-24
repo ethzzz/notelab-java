@@ -3,13 +3,11 @@ package com.notelab.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
-import com.notelab.dao.Db;
 import com.notelab.common.JsonUtil;
 import com.notelab.infra.QwenClient;
 import com.notelab.service.RateLimit;
 import com.notelab.service.TrpgService;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.annotation.PostConstruct;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -46,12 +44,6 @@ public class TrpgController {
         t.setDaemon(true);
         return t;
     });
-
-    /** 启动时把上次进程遗留的 running 任务标记为中断 */
-    @PostConstruct
-    void abortStaleTasks() {
-        try { TrpgDao.abortStaleTrpgGenTasks(); } catch (Exception ignored) {}
-    }
 
     // ================= 剧本 =================
 
