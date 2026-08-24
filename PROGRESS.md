@@ -329,3 +329,88 @@ bash /tmp/cmp_stage1.sh                      # 对比脚本（内容见下）
 - `POST /api/trpg/scenarios/{id}/publish|unpublish` 按任务约定为「登录态即可」，未做剧本归属校验（任意 B 端登录用户可发布他人剧本，属内容运营场景设计）；如需仅属主/管理员可发布，后续加守卫即可。
 - /vs（吸血鬼幸存者）纯前端无后端接口，本阶段零改动（符合预期）。
 - C 端剧本列表未分页（与 B 端现状一致，LIMIT 未设）；内容量增大后再议。
+
+## 2026-08-25 B/C 端拆分（阶段 0-5）总结
+### 架构总览
+
+```
+                     公网/内网用户
+                          │ :80（唯一推荐入口）
+                       ┌──▼────────────── nginx ──────────────┐
+                       │ /api/*（含 SSE 直通配置）  ──────────► 127.0.0.1:8001  notelab-java（Spring Boot，API 主后端）
+                       │ ^~ /admin（前缀保留，含 _next 静态） ► 127.0.0.1:3020  notelab-b（B 端 antd 管理后台，basePath=/admin）
+                       │ /（其余全部）              ──────────► 127.0.0.1:3010  notelab-c（C 端游戏中心）
+                       └──────────────────────────────────────┘
+旧链路（观察期保留，回滚依赖）：
+  :3000 myapp（旧 Next 站，/api rewrites → 8001）；:3001 myapp-dev；:8000 Python FastAPI（pm2 notelab）
+数据库：共享 MySQL notelab 库（notelab-java 连接池 + Python pymysql 短连接并存；ui_config 等表双端同读）
+```
+
+| 进程 (pm2)   | 端口 | 角色                                   | 状态（阶段5 回归确认） |
+|--------------|------|----------------------------------------|------------------------|
+| notelab      | 8000 | Python FastAPI（旧，观察期，未动）      | online |
+| notelab-java | 8001 | Spring Boot API 主后端                  | online |
+| myapp        | 3000 | 旧 Next 生产站（观察期，回滚依赖）      | online |
+| myapp-dev    | 3001 | 旧 Next dev（观察期，回滚依赖）         | online |
+| notelab-c    | 3010 | C 端游戏中心（新）                      | online |
+| notelab-b    | 3020 | B 端 antd 管理后台（新，/admin）        | online |
+| nginx        | 80   | 统一入口（systemd，非 pm2）             | active |
+
+pm2 dump（`pm2 save`）已含全部 6 进程（阶段5 复核：notelab-c/notelab-b 均在 dump 内）。
+
+### 各阶段 commit 清单
+
+| 阶段 | 仓库 | commit | 内容 |
+|------|------|--------|------|
+| 0 | notelab-java | `3acaec2` | nginx 前缀代理与双前端壳（运维归档，无 Java 代码改动）；服务器侧装 nginx 1.24 + 建 notelab-c/notelab-b 两个 Next 16.2.12 壳 + pm2 登记 |
+| 1 | notelab-java | `15df99c` | C 端身份体系：c_users/c_user_groups 表、4 段 `c.` token 隔离、/api/c/auth（login/me/logout/register 受 C_REGISTER_OPEN 开关）、/api/c-admin（users/groups 全套） |
+| 2 | notelab-java | `1cfb02b` | C 端数据域：trpg_playthroughs.scope + trpg_scenarios.published（只增不改）、/api/c/trpg 游玩全套、/api/c/config 匿名接口、剧本与 Spire 内容 publish/unpublish |
+| 3 | notelab-c | `3eda8c5` | C 端前端：游戏中心外壳（顶部导航+移动端 Tab+登录守卫）+ 落地页 + TRPG/爬塔/VS 三游戏页（引擎零改动，接口改 /api/c/*） |
+| 3 | notelab-java | `cee707a` | 阶段3 记录与任务简报归档 |
+| 4 | notelab-b | `ac181cb` | B 端前端：antd 管理后台（21 路由，myapp 19 页 1:1 + trpg 旧跳转 + 新增 /c-users）、SSE 代码与 myapp 逐字节一致、/admin/api/tts 保留、localStorage b_ 前缀 |
+| 5 | notelab-java | 本次提交 | 全量回归 + 测试数据清理 + 文档收尾（PROGRESS 本章节 + ops/BC-SPLIT-SUMMARY.md） |
+
+### 阶段5 全量回归结论（2026-08-25，经 nginx :80 实测）
+
+**B 端**：登录错密码/无此用户 401 ✅；/api/me、/api/menu（7 项）、/api/models、/api/conversations、/api/tools、
+/api/toolbox（summarize 真实调用 200）、/api/extract（结构化抽取正确）、/api/rag/docs、/api/english/scenarios（8 场景）、
+/api/perm/overview（roles=super_admin/user）、/api/perm/users、/api/ui-config、/api/c-admin/users、/api/c-admin/groups、
+/api/trpg/scenarios（含 published 字段）全部 200 ✅；/admin 307→dashboard、/admin/login 200、_next 静态 200 ✅；
+POST /admin/api/tts → 200 audio/mpeg 11KB（Kokoro 本地合成）✅；:8001 直连对照一致 ✅。
+SSE：/api/chat 分块渐进（ttfb 0.42s → done）✅；/api/arena 双模型并行（started/双 content/done，keepalive 代码在位、
+模型响应快未触发，P4 已长跑实测）✅；/api/english/chat 含语法纠错 correction 事件 ✅。
+trpg-gen 轮询：POST /api/trpg/scenarios → 202 task_id → GET tasks/{id} state=done 产出剧本 ✅（测试剧本已清理）。
+spire-editor 发布闭环：写测试草稿→publish→C 端匿名可见→unpublish→恢复原草稿逐字节一致 ✅。
+
+**C 端**：登录 ctest1 200 ✅、错密码 401 ✅、me ✅、发布前剧本列表空 ✅、临时发布剧本 3 后列表/详情可见 ✅、
+开局（play_id 分配、state=playing）✅、choose 推进（steps=1）✅、存档列表/详情 ✅、删除存档 ✅、下架后列表归空 ✅、
+匿名 /api/c/spire/content 空三数组 ✅、匿名 /api/c/config/background ✅、登出后（浏览器语义）me 401 ✅。
+
+**隔离对抗**：B Cookie → /api/c/auth/me 401 ✅；C Cookie → /api/menu、/api/me 401 ✅；
+C 活跃存档对 B 不可见（列表不含、详情 404、choose 404）✅。
+
+**旧链路**：:3000 / 307、:3000/api/menu 401 ✅；:8000 /docs 200、登录错密码 401、未登录 /api/menu 401 ✅；:8001 直连 ✅。
+**进程**：pm2 六进程全 online，notelab-c/notelab-b 在 dump ✅。
+
+**测试数据清理**（清理前 SELECT 展示、清理后复验归零）：
+- 删：会话 23（本阶段 chat SSE 测试）、剧本 10「bctest_p5_temp」（本阶段 trpg-gen 测试）及其 gen task 4、
+  回归过程中产生的 C 端存档（play 13/14，随测随删）。
+- 恢复：剧本 3「雾港惊魂」的临时发布已下架复位；ui_config 与回归前快照一致（spire_published 键已随 unpublish 移除）。
+- 保留：c_users 仅剩 **ctest1**（阶段1 建、阶段3/4/5 回归 fixture，任务矩阵依赖；是否删除由用户决定）；
+  正式数据（admin/user/11 及全部真实内容）零触碰。
+- 另发现旧系列遗留（不在本系列清理范围，未动）：trpg_gen_tasks id=2（MP 迁移系列测试任务，剧本 6 已不存在）、
+  users 表 crosstest*/dup*/s5* 旧测试账号（数据层迁移系列遗留）。
+
+### 回滚方法汇总（自下而上，均不删数据）
+
+1. **C 端前端**：改 nginx `^~ /admin` / `/` 的 proxy_pass 目标后 `systemctl reload nginx`（秒级止血）；
+   或代码级回退（notelab-b 占位壳备份在 /root/.notelab-b-p0-backup；notelab-c 见 ops/BC-SPLIT-P3.md 回滚节）。
+2. **B 端前端**：同上；如需回到旧 myapp 单站入口，把 nginx `/` 指向 :3000 并保留 `/api` → :8001 即可。
+3. **Java 后端 C 端接口**：接口为纯增量（新表/新列/新路由），无需回滚；如必须撤销，停 notelab-java 回退到
+   `1cfb02b` 之前的构建（`3acaec2` 及以前不含 C 接口）再重启，新表新列保留无害。
+4. **nginx 整体**：`systemctl stop nginx && systemctl disable nginx` → 流量入口回到原状（用户直连 :3000）。
+5. **Python 版**：保持运行未动，:8000 随时可作为后端兜底（myapp 的 next.config 备份 next.config.ts.bak-8000 仍在）。
+
+### 遗留事项（详见 ops/BC-SPLIT-SUMMARY.md）
+Python 版与旧 myapp 的退役决定权在用户（观察期建议见 SUMMARY）；C_REGISTER_OPEN 开放方式、公网安全组 :80 确认、
+/c-users 菜单项、/api/c-admin 超管限制等事项均已记录。

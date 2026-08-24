@@ -122,7 +122,7 @@ mvn -DskipTests package && pm2 restart notelab-java
 - **管理接口（仅超级管理员，403 守卫）**：GET /api/perm/overview、POST /api/perm/roles/{code}/routes、POST /api/perm/users、POST /api/perm/users/{id}/role、POST /api/perm/users/{id}/password。
 - **前端**：新增 /perm 权限管理页（路由表/角色授权/账户管理/建号）；登录页移除注册入口，/register 显示关闭提示；侧边栏菜单由后端按角色过滤。
 - 改库前备份：data/backup-before-rbac.sql。
-## B/C 拆分（进行中）
+## B/C 拆分（✅ 阶段 0-5 全部完成，2026-08-25）
 
 阶段0（nginx :80 前缀代理 + :3010/:3020 壳应用）已完成并归档于 [ops/BC-SPLIT-P0.md](ops/BC-SPLIT-P0.md)。
 
@@ -152,3 +152,25 @@ mvn -DskipTests package && pm2 restart notelab-java
   `GET /api/c/spire/content`（已发布内容，未发布返回空三数组）——C 端外壳首屏与登录页免登录可用。
 - **隔离性实测**：构造 B 用户 uid 恰等于 C 用户 uid 的对抗用例，两端列表/详情/choose/删除互不串（详见 PROGRESS.md）。
 - 验证记录见 PROGRESS.md 末节；/vs（吸血鬼幸存者）为纯前端，本阶段零改动。
+
+**阶段3：C 端前端 notelab-c（✅ 已完成，2026-08-25）**
+
+- /root/notelab-c（:3010，pm2 `notelab-c`）：消费级「NoteLab 游戏中心」——新外壳（顶部导航 + 移动端底部 Tab +
+  登录态下拉）+ 落地页 + 登录页 + TRPG/爬塔/吸血鬼幸存者三游戏（引擎与 myapp 零改动，接口改 /api/c/*）。
+- 登录守卫 RequireAuth：401 → 记路径 → /login → 登录回跳；C 端背景匿名拉取 /api/c/config/background。
+- 详见 [ops/BC-SPLIT-P3.md](ops/BC-SPLIT-P3.md)。
+
+**阶段4：B 端前端 notelab-b（✅ 已完成，2026-08-25）**
+
+- /root/notelab-b（:3020，pm2 `notelab-b`，basePath=/admin）：antd 管理后台，21 路由（myapp 19 页 1:1 + 旧跳转 +
+  新增 /c-users C 端用户管理）；SSE 消费代码与 myapp 逐字节一致；英语发音保留 /admin/api/tts（Kokoro+edge-tts）。
+- trpg-gen 列表新增发布/取消发布列；spire-editor 新增「发布到 C 端」；/ui 页新增 C 端背景说明。
+- 详见 [ops/BC-SPLIT-P4.md](ops/BC-SPLIT-P4.md)。
+
+**阶段5：全量回归与收尾（✅ 已完成，2026-08-25）**
+
+- 全量回归矩阵（B 端 21 项 / C 端 18 项 / 隔离对抗 / 旧链路 / 进程）全部通过，见 PROGRESS.md 末章。
+- 测试数据清理归零（本系列 ctest/bctest 前缀；ctest1 作为回归 fixture 保留）。
+- 一页纸总览：[ops/BC-SPLIT-SUMMARY.md](ops/BC-SPLIT-SUMMARY.md)（入口、端口、DB 变更、接口清单、遗留事项、回滚速查）。
+- **入口**：`http://117.72.32.87/`（C 端）与 `http://117.72.32.87/admin`（B 端），:80 为唯一推荐入口。
+- Python 版（:8000）与旧 myapp（:3000/:3001）观察期保留，退役/停用由用户决定（见 SUMMARY 遗留事项）。
