@@ -440,3 +440,30 @@ Python 版与旧 myapp 的退役决定权在用户（观察期建议见 SUMMARY�
 
 ### 提交
 notelab-java `b183951`；notelab-b `4cf3b38`（A）、`f1151ad`（B1）、`23243a1`（B2）。
+
+---
+
+## 2026-08-25 · BC 拆分 P7：B 端 light/dark 双主题切换
+
+详见 `ops/BC-SPLIT-P7.md`（含改动清单、自检清单、验证输出、提交号）。
+
+### 实现
+- 主题状态：localStorage `notelab_b_theme`（light|dark，默认 light）；`AntdProvider` 内 ThemeContext + `useTheme()`，
+  ConfigProvider `algorithm` 动态切换 `darkAlgorithm`/`defaultAlgorithm`（AntdRegistry SSR 样式收集保持不变）。
+- 防闪烁：根 layout `<body>` 顶部内联脚本，首帧前按 localStorage 给 `<html>` 加/去 `.dark`（App Router 中 `<head>` 由框架托管，此为官方等效写法）；`<html suppressHydrationWarning>`。
+- Tailwind v4：globals.css `@custom-variant dark (&:where(.dark, .dark *));` + `.dark` 深色 CSS 变量（#141414/#e4e4e7）；
+  speak-btn/tts 流光/骨架等自定义件加 `.dark` 覆盖。
+- 切换入口：Header 右侧（用户信息左边）antd Button(type=text) + lucide Sun/Moon（目标模式图标），点击即持久化。
+- 深色适配 24 文件 230 处 `dark:` 变体：外壳（Sider/Header/内容区/Drawer）、登录/注册、15 业务页残留浅色
+  （chat/english 气泡与侧栏选中态、lowcode 画布节点、spire-editor 弹窗块、ui/rag/arena 等）；
+  SpireCardView 卡面美术为固定设计不反转；themes.ts 属 C 端背景数据未动。**交互逻辑零改动。**
+
+### 验证
+- `npm run build` ✅（0 错）；`pm2 restart notelab-b` 后 `/admin/login` 200、`/admin/register` 200、
+  `/admin/dashboard` 未登录 200+客户端守卫跳登录（与 P6 契约一致）、`/admin/trpg` 307→/admin/trpg/gen。
+- 超管 Cookie：16 个 (admin) 页全 200；`:8001/api/me` 返回 super_admin（会话机制未受影响）。
+- SSR HTML 含首帧脚本；编译 CSS 含 `.dark{--background:#141414}` 与全系 `dark:` 选择器。
+- 自检：裸 `bg-white`/`bg-[#f0f2f5]` 均 0 残留；仅存预期例外（亮色模式专属 Moon 图标、卡面美术、C 端背景数据）。
+
+### 提交
+notelab-b `f15a058`（主题本体）、`d89402f`（gitignore）；本记录归档于 notelab-java。
