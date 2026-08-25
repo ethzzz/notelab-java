@@ -414,3 +414,29 @@ C 活跃存档对 B 不可见（列表不含、详情 404、choose 404）✅。
 ### 遗留事项（详见 ops/BC-SPLIT-SUMMARY.md）
 Python 版与旧 myapp 的退役决定权在用户（观察期建议见 SUMMARY）；C_REGISTER_OPEN 开放方式、公网安全组 :80 确认、
 /c-users 菜单项、/api/c-admin 超管限制等事项均已记录。
+
+---
+
+## 2026-08-25 · BC 拆分 P6：B 端移除游玩功能 + 传统管理系统样式改造
+
+详见 `ops/BC-SPLIT-P6.md`（含 /api/menu 前后对比、构建输出、404/307 验证、备份与提交号）。
+
+### Part A：移除 B 端游玩功能
+- MenuTree 删除 `trpg-play`/`vs`/`spire` 三叶子（g_games 拍平为仅 `trpg-gen`）；PageRoutes 同步删除，
+  启动 upsert 不再重建（实测重启后 perm_routes 三行未复活，page 路由 20→17）。
+- 共享 MySQL 先 mysqldump 备份（/root/backups/notelab-before-p6-20260825-201209.sql）再删
+  perm_routes 3 行 + perm_role_routes 3 条悬空引用。
+- notelab-b 删除 vs/、spire/、trpg/play/ 页面与孤儿 vs-engine；`/trpg` 改 next.config 服务端 307 → `/trpg/gen`；
+  trpg/gen 移除跳转游玩页的两个按钮。玩法 API（/api/trpg/plays 等）保留未动。
+- 验证：/api/menu 无玩剧本/吸血鬼/爬塔 ✅；/admin/vs|/spire|/trpg/play 404 ✅；/admin/trpg 307 ✅（nginx 同）。
+
+### Part B：传统 antd 管理后台样式（功能与契约零变化）
+- 外壳：白底固定 Sider + 白底 Header（用户/超管 Tag/退出）+ #f0f2f5 内容区；移除主题背景铺底、毛玻璃、ThemePicker。
+- 登录/注册/仪表盘 antd 化；403 态改 antd Result；各 Table 去透明 hack。
+- chat/english（SSE/TTS/打字机逻辑保留，外壳与气泡中性化）、trpg/gen（antd Modal/Form）、
+  lowcode（Tabs/Card/antd 控件，逻辑不变）、tools（卡片网格→Table）、ui（antd 化，C 端背景管理保留）。
+- 删除 components/ui/{modal,confirm,select,form}、ThemePicker；globals.css 删毛玻璃/主题工具类（-51 行）。
+- 验证：`npm run build` ✅；16 个页面 curl 200 ✅；`/admin/api/tts` 200 audio/mpeg ✅；pm2 六进程 online。
+
+### 提交
+notelab-java `b183951`；notelab-b `4cf3b38`（A）、`f1151ad`（B1）、`23243a1`（B2）。
