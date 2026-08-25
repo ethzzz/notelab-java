@@ -19,12 +19,9 @@ public final class MenuTree {
                     menu("arena", "模型竞技场", "⚔️", "/arena", true),
                     menu("rag", "文档问答 RAG", "📚", "/rag", true),
                     menu("extract", "结构化抽取", "🧩", "/extract", true))),
+            // B/C 拆分 P6：游玩（玩剧本/吸血鬼幸存者/爬塔）已移至 C 端，B 端仅保留配置/生成能力
             group("g_games", "游戏中心", "🎮", List.of(
-                    group("trpg", "剧本跑团", "🎲", List.of(
-                            menu("trpg-play", "玩剧本", "🎮", "/trpg/play", true),
-                            menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
-                    menu("vs", "吸血鬼幸存者", "🧛", "/vs", true),
-                    menu("spire", "爬塔尖塔", "🗼", "/spire", true))),
+                    menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
             group("g_gamecfg", "游戏配置", "🎛️", List.of(
                     menu("spire-editor", "爬塔尖塔", "🗼", "/spire-editor", true))),
             group("g_tools", "工具箱", "🧰", List.of(

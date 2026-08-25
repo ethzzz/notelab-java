@@ -22,10 +22,8 @@ public final class PageRoutes {
             new String[]{"/extract", "结构化抽取"},
             new String[]{"/tools", "AI工具库"},
             new String[]{"/lowcode", "低代码平台"},
-            new String[]{"/trpg/play", "玩剧本"},
+            // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除
             new String[]{"/trpg/gen", "生成剧本"},
-            new String[]{"/vs", "吸血鬼幸存者"},
-            new String[]{"/spire", "爬塔尖塔"},
             new String[]{"/spire-editor", "爬塔尖塔工坊"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
