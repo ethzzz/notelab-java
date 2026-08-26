@@ -20,9 +20,10 @@ public final class MenuTree {
                     menu("rag", "文档问答 RAG", "📚", "/rag", true),
                     menu("extract", "结构化抽取", "🧩", "/extract", true))),
             // B/C 拆分 P6：游玩（玩剧本/吸血鬼幸存者/爬塔）已移至 C 端，B 端仅保留配置/生成能力
-            group("g_games", "游戏中心", "🎮", List.of(
-                    menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
+            // 剧本玩法：生成剧本从原“游戏中心”移入“游戏配置 → 剧本玩法”子菜单（游戏中心组因此为空被剪掉）
             group("g_gamecfg", "游戏配置", "🎛️", List.of(
+                    group("gc_trpg", "剧本玩法", "🎲", List.of(
+                            menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
                     menu("spire-editor", "爬塔尖塔", "🗼", "/spire-editor", true))),
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
