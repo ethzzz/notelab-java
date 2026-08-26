@@ -3,10 +3,13 @@ package com.notelab.controller;
 import com.notelab.common.Passwords;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
+import com.notelab.dao.InviteCodeDao;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +34,7 @@ public class CAdminController {
     public static class PasswordReq { public String password; }
     public static class GroupReq { public String code; public String name; }
     public static class GroupRenameReq { public String name; }
+    public static class CreateInviteReq { public Integer max_uses; public Integer count; public String remark = ""; }
 
     // ================= C 用户 =================
 
@@ -208,6 +212,88 @@ public class CAdminController {
             return ResponseEntity.status(409).body(Map.of("error", "该用户组下仍有 " + n + " 名成员，不可删除"));
         }
         CUserDao.deleteGroup(code);
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    // ================= C 端注册邀请码 =================
+
+    /** 码表：去掉易混淆字符（0/O/1/I/L） */
+    private static final char[] CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ".toCharArray();
+    private static final SecureRandom RND = new SecureRandom();
+
+    private static String randomCode() {
+        StringBuilder sb = new StringBuilder(8);
+        for (int i = 0; i < 8; i++) sb.append(CODE_ALPHABET[RND.nextInt(CODE_ALPHABET.length)]);
+        return sb.toString();
+    }
+
+    /** 列表：q 模糊匹配码/备注，limit/offset 分页 + total */
+    @GetMapping("/invite-codes")
+    public ResponseEntity<Map<String, Object>> listInviteCodes(@RequestParam(required = false) String q,
+                                                               @RequestParam(defaultValue = "20") int limit,
+                                                               @RequestParam(defaultValue = "0") long offset,
+                                                               HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        int l = Math.min(Math.max(limit, 1), 100);
+        long off = Math.max(offset, 0);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", InviteCodeDao.listPaged(q, l, off));
+        body.put("total", InviteCodeDao.countFiltered(q));
+        body.put("limit", l);
+        body.put("offset", off);
+        return ResponseEntity.ok(body);
+    }
+
+    /** 生成：max_uses（单码可注册次数，默认 1）、count（批量数量，默认 1，上限 50）、remark */
+    @PostMapping("/invite-codes")
+    public ResponseEntity<Map<String, Object>> createInviteCodes(@RequestBody(required = false) CreateInviteReq req,
+                                                                 HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        int maxUses = req != null && req.max_uses != null ? req.max_uses : 1;
+        int count = req != null && req.count != null ? req.count : 1;
+        String remark = req != null && req.remark != null ? req.remark.trim() : "";
+        if (maxUses < 1 || maxUses > 10000) {
+            return ResponseEntity.status(400).body(Map.of("error", "可注册次数需在 1-10000 之间"));
+        }
+        if (count < 1 || count > 50) {
+            return ResponseEntity.status(400).body(Map.of("error", "单次生成数量需在 1-50 之间"));
+        }
+        if (remark.length() > 100) {
+            return ResponseEntity.status(400).body(Map.of("error", "备注最长 100 字"));
+        }
+        Object idObj = me.get("id");
+        Long createdBy = idObj instanceof Number n ? n.longValue() : null;
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            // 唯一键碰撞（极低概率）时重摇，最多 5 次；仍失败则中止并返回已生成部分以外的错误
+            Map<String, Object> row = null;
+            for (int attempt = 0; attempt < 5; attempt++) {
+                String code = randomCode();
+                if (InviteCodeDao.create(code, maxUses, remark, createdBy)) {
+                    row = InviteCodeDao.getByCode(code);
+                    break;
+                }
+            }
+            if (row == null) {
+                return ResponseEntity.status(500).body(Map.of("error", "邀请码生成失败，请重试"));
+            }
+            items.add(row);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("items", items);
+        return ResponseEntity.ok(body);
+    }
+
+    /** 作废：已用次数保留，剩余次数立即不可再用 */
+    @PostMapping("/invite-codes/{id}/revoke")
+    public ResponseEntity<Map<String, Object>> revokeInviteCode(@PathVariable long id, HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (InviteCodeDao.getById(id) == null) return ResponseEntity.status(404).body(Map.of("error", "邀请码不存在"));
+        InviteCodeDao.revoke(id);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 }

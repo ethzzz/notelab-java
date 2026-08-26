@@ -5,6 +5,7 @@ import com.notelab.common.Passwords;
 import com.notelab.common.Session;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
+import com.notelab.dao.InviteCodeDao;
 import com.notelab.service.RateLimit;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -29,6 +30,8 @@ public class CAuthController {
         public String username;
         public String password;
         public String nickname = "";
+        /** 注册专用：B 端生成的邀请码（登录不校验） */
+        public String invite_code;
     }
 
     @PostMapping("/login")
@@ -92,11 +95,24 @@ public class CAuthController {
         if (CUserDao.getCUserByUsername(username) != null) {
             return ResponseEntity.status(409).body(Map.of("error", "用户名已存在"));
         }
+        // 邀请码：必填，存在且未作废、未达上限才可注册；原子核销防并发超用
+        String inviteCode = req.invite_code == null ? "" : req.invite_code.trim();
+        if (inviteCode.isEmpty()) {
+            return ResponseEntity.status(400).body(Map.of("error", "请输入邀请码"));
+        }
+        if (InviteCodeDao.getByCode(inviteCode) == null) {
+            return ResponseEntity.status(400).body(Map.of("error", "邀请码不存在"));
+        }
+        if (InviteCodeDao.consumeOne(inviteCode) != 1) {
+            return ResponseEntity.status(403).body(Map.of("error", "邀请码已用完或已作废"));
+        }
         String nickname = req.nickname == null ? "" : req.nickname.trim();
         long uid;
         try {
             uid = CUserDao.createCUser(username, Passwords.hash(req.password), nickname, "default");
         } catch (Db.UniqueViolation e) {
+            // 注册最终未成立：把刚核销的一次退回，避免占用名额
+            InviteCodeDao.releaseOne(inviteCode);
             return ResponseEntity.status(409).body(Map.of("error", "用户名已存在"));
         }
         Map<String, Object> u = CUserDao.getCUserById(uid);

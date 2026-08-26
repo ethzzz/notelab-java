@@ -131,6 +131,18 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
+        // ---- C 端注册邀请码（只增不改）：max_uses 为可注册次数上限，超出不可再用 ----
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS invite_codes (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                code VARCHAR(32) NOT NULL UNIQUE,
+                max_uses INT NOT NULL DEFAULT 1,
+                used_count INT NOT NULL DEFAULT 0,
+                revoked TINYINT NOT NULL DEFAULT 0,
+                remark VARCHAR(255) NOT NULL DEFAULT '',
+                created_by BIGINT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");

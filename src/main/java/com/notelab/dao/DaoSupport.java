@@ -5,6 +5,7 @@ import com.notelab.mapper.CUserGroupMapper;
 import com.notelab.mapper.CUserMapper;
 import com.notelab.mapper.EnglishConversationMapper;
 import com.notelab.mapper.EnglishMessageMapper;
+import com.notelab.mapper.InviteCodeMapper;
 import com.notelab.mapper.MessageMapper;
 import com.notelab.mapper.PermRoleMapper;
 import com.notelab.mapper.PermRoleRouteMapper;
@@ -45,6 +46,7 @@ public class DaoSupport {
     private static UiConfigMapper uiConfigMapper;
     private static CUserMapper cUserMapper;
     private static CUserGroupMapper cUserGroupMapper;
+    private static InviteCodeMapper inviteCodeMapper;
 
     public DaoSupport(PlatformTransactionManager txManager,
                       UserMapper userMapper,
@@ -61,7 +63,8 @@ public class DaoSupport {
                       TrpgGenTaskMapper trpgGenTaskMapper,
                       UiConfigMapper uiConfigMapper,
                       CUserMapper cUserMapper,
-                      CUserGroupMapper cUserGroupMapper) {
+                      CUserGroupMapper cUserGroupMapper,
+                      InviteCodeMapper inviteCodeMapper) {
         DaoSupport.tx = new TransactionTemplate(txManager);
         DaoSupport.userMapper = userMapper;
         DaoSupport.conversationMapper = conversationMapper;
@@ -78,6 +81,7 @@ public class DaoSupport {
         DaoSupport.uiConfigMapper = uiConfigMapper;
         DaoSupport.cUserMapper = cUserMapper;
         DaoSupport.cUserGroupMapper = cUserGroupMapper;
+        DaoSupport.inviteCodeMapper = inviteCodeMapper;
         DaoSupport.ready = true;
     }
 
@@ -106,4 +110,5 @@ public class DaoSupport {
     public static UiConfigMapper uiConfig() { return uiConfigMapper; }
     public static CUserMapper cUser() { return cUserMapper; }
     public static CUserGroupMapper cUserGroup() { return cUserGroupMapper; }
+    public static InviteCodeMapper inviteCode() { return inviteCodeMapper; }
 }
