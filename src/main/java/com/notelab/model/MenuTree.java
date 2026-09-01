@@ -28,6 +28,7 @@ public final class MenuTree {
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),
+                    menu("docs", "文档编辑", "📝", "/docs", true),
                     menu("tools", "AI工具库", "🔧", "/tools", true),
                     menu("lowcode", "低代码平台", "🧱", "/lowcode", true),
                     menu("image", "文生图", "🎨", "/image", false),

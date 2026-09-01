@@ -42,6 +42,12 @@
       <artifactId>mybatis-plus-jsqlparser</artifactId>
       <version>3.5.9</version>
     </dependency>
+    <!-- docx 解析（文档编辑功能导入 .docx 转 HTML） -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.2.5</version>
+    </dependency>
   </dependencies>
   <build>
     <finalName>notelab-java</finalName>
