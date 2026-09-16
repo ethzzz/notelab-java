@@ -8,6 +8,7 @@ import com.notelab.mapper.EnglishConversationMapper;
 import com.notelab.mapper.EnglishMessageMapper;
 import com.notelab.mapper.InviteCodeMapper;
 import com.notelab.mapper.MessageMapper;
+import com.notelab.mapper.NoteMapper;
 import com.notelab.mapper.PermRoleMapper;
 import com.notelab.mapper.PermRoleRouteMapper;
 import com.notelab.mapper.PermRouteMapper;
@@ -49,6 +50,7 @@ public class DaoSupport {
     private static CUserGroupMapper cUserGroupMapper;
     private static InviteCodeMapper inviteCodeMapper;
     private static DocumentMapper documentMapper;
+    private static NoteMapper noteMapper;
 
     public DaoSupport(PlatformTransactionManager txManager,
                       UserMapper userMapper,
@@ -67,7 +69,8 @@ public class DaoSupport {
                       CUserMapper cUserMapper,
                       CUserGroupMapper cUserGroupMapper,
                       InviteCodeMapper inviteCodeMapper,
-                      DocumentMapper documentMapper) {
+                      DocumentMapper documentMapper,
+                      NoteMapper noteMapper) {
         DaoSupport.tx = new TransactionTemplate(txManager);
         DaoSupport.userMapper = userMapper;
         DaoSupport.conversationMapper = conversationMapper;
@@ -86,6 +89,7 @@ public class DaoSupport {
         DaoSupport.cUserGroupMapper = cUserGroupMapper;
         DaoSupport.inviteCodeMapper = inviteCodeMapper;
         DaoSupport.documentMapper = documentMapper;
+        DaoSupport.noteMapper = noteMapper;
         DaoSupport.ready = true;
     }
 
@@ -116,4 +120,5 @@ public class DaoSupport {
     public static CUserGroupMapper cUserGroup() { return cUserGroupMapper; }
     public static InviteCodeMapper inviteCode() { return inviteCodeMapper; }
     public static DocumentMapper document() { return documentMapper; }
+    public static NoteMapper note() { return noteMapper; }
 }

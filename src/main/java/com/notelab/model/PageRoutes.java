@@ -24,6 +24,7 @@ public final class PageRoutes {
             new String[]{"/lowcode", "低代码平台"},
             // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除
             new String[]{"/trpg/gen", "生成剧本"},
+            new String[]{"/notes", "笔记"},
             new String[]{"/spire-editor", "爬塔尖塔工坊"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},

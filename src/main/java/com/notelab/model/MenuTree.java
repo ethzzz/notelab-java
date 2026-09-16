@@ -29,6 +29,7 @@ public final class MenuTree {
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),
                     menu("docs", "文档编辑", "📝", "/docs", true),
+                    menu("notes", "笔记", "🗒️", "/notes", true),
                     menu("tools", "AI工具库", "🔧", "/tools", true),
                     menu("lowcode", "低代码平台", "🧱", "/lowcode", true),
                     menu("image", "文生图", "🎨", "/image", false),
