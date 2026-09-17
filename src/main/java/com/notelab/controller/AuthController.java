@@ -73,6 +73,25 @@ public class AuthController {
         return ResponseEntity.ok(body);
     }
 
+    /**
+     * SSO 校验端点（nginx auth_request 子请求专用，ai-lab 等旁路服务门禁）：
+     * B 端会话优先、C 端会话也认；200 时通过 X-Auth-User 头透传 "b:<id>" / "c:<id>"，
+     * 供 nginx auth_request_set 注入上游（子请求响应体不可取，只能走头）。
+     */
+    @GetMapping("/auth/verify")
+    public ResponseEntity<Map<String, Object>> verify(HttpServletRequest request) {
+        Map<String, Object> user = AuthUtil.user(request);
+        String prefix = "b";
+        if (user == null) {
+            user = CAuthUtil.user(request);
+            prefix = "c";
+        }
+        if (user == null) return AuthUtil.unauth();
+        return ResponseEntity.ok()
+                .header("X-Auth-User", prefix + ":" + AuthUtil.userId(user))
+                .body(Map.of("ok", true, "scope", prefix, "id", user.get("id")));
+    }
+
     /** 对齐 FastAPI 缺字段时的 422 */
     private static ResponseEntity<Map<String, Object>> badField() {
         return ResponseEntity.status(422).body(Map.of("detail",
