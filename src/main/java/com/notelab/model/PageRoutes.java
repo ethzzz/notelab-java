@@ -17,6 +17,7 @@ public final class PageRoutes {
             new String[]{"/toolbox", "文本工具箱"},
             new String[]{"/rag", "文档问答 RAG"},
             new String[]{"/english", "英语学习"},
+            new String[]{"/translate", "翻译句子库"},
             new String[]{"/image", "文生图"},
             new String[]{"/audio", "语音转文字"},
             new String[]{"/extract", "结构化抽取"},

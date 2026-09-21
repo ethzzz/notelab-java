@@ -20,6 +20,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | 权限管理 RBAC | /api/perm/*（overview/角色路由组/账户角色/建号/重置密码） | ✅ 已完成（users.role + 权限路由表 + 启动自动注册路由 + 菜单按角色过滤） |
 | C 端身份体系（B/C 拆分阶段1） | /api/c/auth/*（login/me/logout/register）+ /api/c-admin/*（用户/用户组管理） | ✅ 已完成（c_users/c_user_groups 新表 + 4 段 c. token 与 B 端隔离 + 注册开关默认关闭） |
 | C 端游玩与内容发布（B/C 拆分阶段2） | /api/c/trpg/*（已发布剧本游玩）+ /api/c/config/background、/api/c/spire/content（匿名）+ B 端 publish/unpublish | ✅ 已完成（trpg_playthroughs.scope + trpg_scenarios.published 补列，存量默认 B 归属零迁移） |
+| 每日英语翻译练习 | C 端 /api/translate/*（today/submit/history）+ B 端 /api/admin/translate/*（句子组 CRUD/手动加句/批量导入/AI 生成/入队）+ 0 点定时激活 | ✅ 已完成（en_tr_groups/en_tr_sentences/en_tr_submissions 三张新表 + @EnableScheduling + 大模型判分/出题，同人同日同句 upsert 覆盖） |
 
 ## 项目简介
 
@@ -174,3 +175,75 @@ mvn -DskipTests package && pm2 restart notelab-java
 - 一页纸总览：[ops/BC-SPLIT-SUMMARY.md](ops/BC-SPLIT-SUMMARY.md)（入口、端口、DB 变更、接口清单、遗留事项、回滚速查）。
 - **入口**：`http://117.72.32.87/`（C 端）与 `http://117.72.32.87/admin`（B 端），:80 为唯一推荐入口。
 - Python 版（:8000）与旧 myapp（:3000/:3001）观察期保留，退役/停用由用户决定（见 SUMMARY 遗留事项）。
+
+## 每日英语翻译练习（✅ 2026-09-22 上线）
+
+三仓联动：本仓提供接口与调度，B 端 `/admin/translate` 管理句子库，C 端 `/games/translate` 供用户练习。
+
+### 玩法
+- 管理员在 B 端预建「句子组」并入队（`status=queued`）；**每天 0 点**定时任务取队首一组激活为当天内容（`status=used` + `activated_date=当天`）。
+- 句子分 **3 阶梯**（1 简单 / 2 中等 / 3 困难，建议每阶 3-5 句，中文原句 10-50 字）。
+- C 端用户逐句提交英文译文 → 大模型判分：**是否准确 + 0-100 分 + 修正译文 + 中文讲解 + 逐点错误标注**。
+- **去重覆盖**：同一 (C 端用户 + 日期 + 句子) 只保留一条记录，重复提交覆盖旧判分（`uk_user_sentence_date` 唯一键 + `INSERT ... ON DUPLICATE KEY UPDATE`）。
+- 句子入库三通道：手动加句 / 批量导入（按中文句末标点 `。！？；…!?;` 与换行切分，trim、去空、去重、过滤过短，超长仅提示仍入库）/ AI 批量生成（场景 + 提示词 + 每阶数量）。
+
+### 数据模型（三张新表，纯只增）
+`DbSchema.translateSchema()` 在启动时 `CREATE TABLE IF NOT EXISTS`，重启幂等，不改/删任何现有表：
+
+| 表 | 用途 | 关键约束 |
+|---|---|---|
+| `en_tr_groups` | 句子组（标题/状态/激活日期/来源/场景/备注） | `idx_status`、`idx_actdate` |
+| `en_tr_sentences` | 句子（group_id/tier/sort_order/zh_text/ref_en） | `idx_group(group_id,tier,sort_order)`、外键 `fk_entr_s_group ON DELETE CASCADE` |
+| `en_tr_submissions` | C 端提交 + 判分结果 | **`uk_user_sentence_date(c_user_id,sentence_id,submit_date)`**、`idx_user_date`；不对 c_users 建外键（避免耦合） |
+
+全部 `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`。持久层沿用既有范式：`model/entity/EnTr*` + `mapper/EnTr*Mapper` + `dao/TranslateDao`（静态门面、Map 出口）。
+
+### 接口清单
+**C 端**（`TranslateController`，前缀 `/api/translate`，`CAuthUtil` 认 `notelab_c_session`）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/translate/today` | 当天激活组 + 分阶句子 + 当前用户既有提交（回填）；当天无激活组时 `group:null`、`sentences:[]`（不报错） |
+| POST | `/api/translate/submit` | body `{sentence_id, en_text}`；校验登录/非空/≤2000 字/属于当天激活组 → 判分 → upsert → 返回判分 JSON；判分失败 502 `{error:"判分失败，请重试"}` |
+| GET | `/api/translate/history?date=YYYY-MM-DD` | 当前用户某天提交列表（date 缺省为今天，非法日期 400） |
+
+**B 端**（`TranslateAdminController`，前缀 `/api/admin/translate`，`AuthUtil` + RBAC 页面权限码 `page:/translate`，无权 403）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/groups` | 组列表（title/status/sentence_count/activated_date/source/created_at）+ tiers + queued + today |
+| POST | `/groups` | 新建组 `{title, scenario?, note?}` → `status=draft` |
+| GET | `/groups/{id}` | 组详情 + 分阶句子 + tier_counts |
+| PUT | `/groups/{id}` | 改元信息 / 改状态（draft↔queued）/ 手动设 `activated_date` 强制发布（传空串清空并退回草稿） |
+| DELETE | `/groups/{id}` | 删组（句子级联删；提交记录保留，JOIN 后 zh_text 为 null） |
+| POST | `/groups/{id}/sentences` | 手动加句 `{zh_text, tier, ref_en?, sort_order?}`（sort_order 缺省自动排到该阶梯末尾） |
+| PUT | `/sentences/{sid}` | 改单句（缺省字段不改） |
+| DELETE | `/sentences/{sid}` | 删单句 |
+| POST | `/groups/{id}/import` | 批量导入 `{text, tier}` → 返回 `{imported, skipped, long_count, sentences}` |
+| POST | `/groups/{id}/generate` | AI 生成 `{scenario, prompt, counts:{t1,t2,t3}}` → 返回 `{generated, skipped, sentences}`（限流 6 次/300s，同 IP） |
+| POST | `/groups/{id}/queue` | 置 `queued`（空组 400、已激活 400） |
+| POST | `/activate-today` | 手动补跑当日激活（与定时任务同一逻辑，幂等） |
+
+### 定时任务（本仓首次启用 Spring Scheduling）
+- `common/SchedulingConfig`：`@EnableScheduling`（此前全仓无 `@Scheduled`）。
+- `scheduler/TranslateScheduler`：`@Scheduled(cron = "0 0 0 * * ?")` 每天 0 点 → 取 `status='queued'` 中 `created_at` 最早的组置 `used` + `activated_date=CURDATE()`，打日志；无 queued 组则打日志跳过。
+- **幂等**：当天已有 `used` 组则跳过；激活走 CAS（`UPDATE ... WHERE id=? AND status='queued'`，受影响行数=1 才算成功），重复触发/手动补跑不会激活第二个组。
+- pm2 为 fork 单实例，`@Scheduled` 不会多实例重复触发。
+
+### 大模型（`QwenClient.complete`，非流式，只输出 JSON）
+- **判分**提示词要求只输出 `{"accurate","score","corrected","explanation","errors":[{"type","original","suggestion","note"}]}`；
+  明确「允许合理多样译法，`ref_en` 仅供参考不是唯一标准」；译文准确时 `accurate=true`、`errors=[]`、给高分。
+- **出题**提示词要求只输出 `[{"tier","zh_text","ref_en"}]`，按阶梯分难度、中文 10-50 字、贴近场景。
+- 解析走 `JsonUtil.parse`（容忍三反引号代码块围栏与前后赘述）；上游异常/解析失败一律捕获 → `{error:"判分失败，请重试"}` / `{error:"生成失败，请重试"}`（HTTP 502），不冒泡 500。
+- 密钥仅由 `AppConfig.qwenKey()/qwenApiKeys()` 从环境变量或 `.env` 读取，不硬编码、不打印。
+
+### 前端入口
+- B 端：`/admin/translate`（菜单「工具箱 → 翻译句子库」，`PageRoutes` 已登记 `page:/translate`，超管默认可见，可在 `/perm` 分配角色）。
+- C 端：`/games/translate`（`notelab-c` 的 `basePath=/games`；桌面导航「每日翻译」入口，未登录跳 `/login`）。
+
+### 验证（2026-09-22）
+`SHOW TABLES LIKE 'en_tr_%'` 三表已建；0 点定时任务实测触发（日志 `每日翻译练习激活任务：{... reason=队列为空（无 queued 组），跳过}`）；
+入队 → 激活变 `used` + `activated_date=当天` → 重复调用返回「当天已有激活组，跳过」；
+判分实测（准确 100 分 / 时态错误 60 分带逐点标注）；同句提交 3 次仅 1 行且被覆盖（`created_at` 不变、`updated_at` 刷新）；
+非超管 B 端账号 403；`mvn -DskipTests package` ✅、`notelab-b`/`notelab-c` `npm run build` ✅、页面 curl 200 ✅。
+验收测试数据已清理归零（备份 `data/backup/en_tr_acceptance_data_*.sql`）。详见 PROGRESS.md 末节。

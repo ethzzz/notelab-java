@@ -15,6 +15,61 @@ final class DbSchema {
         for (String s : SCHEMA) Db.exec(s);
         for (String s : ENGLISH_SCHEMA) Db.exec(s);
         migrateSchema();
+        translateSchema();
+    }
+
+    /**
+     * 每日英语翻译练习三张新表（en_tr_groups / en_tr_sentences / en_tr_submissions）。
+     * 纯只增：CREATE TABLE IF NOT EXISTS，重启幂等，不改/删任何现有表。
+     * submissions 的 uk_user_sentence_date 唯一键是「同人同日同句只留一条」去重覆盖的基础。
+     */
+    private static void translateSchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS en_tr_groups (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(120) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'draft',
+                activated_date DATE NULL,
+                source VARCHAR(20) NOT NULL DEFAULT 'manual',
+                scenario VARCHAR(60) DEFAULT '',
+                note VARCHAR(255) DEFAULT '',
+                created_by BIGINT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_status (status),
+                KEY idx_actdate (activated_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS en_tr_sentences (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                group_id BIGINT NOT NULL,
+                tier TINYINT NOT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                zh_text VARCHAR(255) NOT NULL,
+                ref_en VARCHAR(500) NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_group (group_id, tier, sort_order),
+                CONSTRAINT fk_entr_s_group FOREIGN KEY (group_id) REFERENCES en_tr_groups(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS en_tr_submissions (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                c_user_id INT NOT NULL,
+                sentence_id BIGINT NOT NULL,
+                group_id BIGINT NOT NULL,
+                submit_date DATE NOT NULL,
+                en_text TEXT NOT NULL,
+                accurate TINYINT NULL,
+                score INT NULL,
+                corrected VARCHAR(500) NULL,
+                explanation TEXT NULL,
+                errors_json TEXT NULL,
+                model VARCHAR(60) DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_user_sentence_date (c_user_id, sentence_id, submit_date),
+                KEY idx_user_date (c_user_id, submit_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /** 对应 db.py migrate_schema：users.email 补列 + ui_config 表（只增不改）。 */

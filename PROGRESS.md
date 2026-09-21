@@ -467,3 +467,78 @@ notelab-java `b183951`；notelab-b `4cf3b38`（A）、`f1151ad`（B1）、`23243
 
 ### 提交
 notelab-b `f15a058`（主题本体）、`d89402f`（gitignore）；本记录归档于 notelab-java。
+
+---
+
+## 2026-09-22 · 每日英语翻译练习（三仓联动：服务端 + B 端 + C 端）
+
+需求：每天 0 点自动激活一组中文句子（B 端预建 + 入队），句子分 3 阶梯（1 简单 / 2 中等 / 3 困难，每阶约 3-5 句，
+中文 10-50 字），C 端用户逐句提交英文译文 → 大模型判分（是否准确 + 0-100 分 + 修正译文 + 中文讲解 + 逐点错误标注），
+同一 (用户 + 日期 + 句子) 只留一条记录（重复提交覆盖）；B 端支持手动输入 / 批量导入（中文句末标点+换行切分）/ AI 批量生成。
+
+### 实现（本仓 notelab-java）
+- **建表（纯只增，重启幂等）**：`dao/DbSchema.translateSchema()` 新增 `en_tr_groups` / `en_tr_sentences` / `en_tr_submissions`
+  三表（`CREATE TABLE IF NOT EXISTS`，`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`），由 `initSchema()` 追加调用。
+  `en_tr_submissions` 的 `UNIQUE KEY uk_user_sentence_date (c_user_id, sentence_id, submit_date)` 是去重覆盖核心；
+  `en_tr_sentences` 带 `fk_entr_s_group ... ON DELETE CASCADE`；未对 `c_users` 建外键（避免耦合，仅索引）。
+  **不改/删任何现有表**；验收数据备份 `data/backup/en_tr_acceptance_data_*.sql`。
+- **持久层（照 EnglishDao/TrpgDao 范式）**：`model/entity/EnTrGroup|EnTrSentence|EnTrSubmission`、
+  `mapper/EnTrGroupMapper|EnTrSentenceMapper|EnTrSubmissionMapper`（含 `@Insert` upsert 与 JOIN 查询）、
+  `dao/TranslateDao`（静态门面 + RowUtil Map 出口）；`DaoSupport` 构造器注入三个新 Mapper。
+- **RowUtil 增强**：`norm()` 支持 `LocalDate` / `java.sql.Date` → `'yyyy-MM-dd'`（DATE 列出口字符串确定化，
+  DATETIME 仍为 `'yyyy-MM-dd HH:mm:ss'`，存量契约不变）。
+- **业务层** `service/TranslateService`：判分提示词（只输出 JSON 对象，明确「允许合理多样译法、ref_en 仅供参考」）、
+  出题提示词（只输出 JSON 数组 `[{tier,zh_text,ref_en}]`）、`splitZhText()` 中文切句（句末标点 `。！？；…!?;` + 换行，
+  trim/去空/去重/过滤 <4 字，>50 字仅提示仍入库）、`todayPayload()` 组装（组 + 阶梯元信息 + 句子 + 既有提交回填）、
+  `parseJsonObject/parseJsonArray`（容忍三反引号围栏）。上游异常/解析失败统一抛 `GradeException`/`GenerateException`，
+  Controller 转明确 error（502），不冒泡 500。
+- **C 端** `controller/TranslateController`（`/api/translate`，`CAuthUtil`）：`GET /today`、`POST /submit`（校验登录 /
+  非空 / ≤2000 字 / 句子属于当天激活组，判分后 upsert）、`GET /history?date=`。当天无激活组返回空态（不报错）。
+- **B 端** `controller/TranslateAdminController`（`/api/admin/translate`，`AuthUtil` + RBAC `page:/translate`，无权 403）：
+  组列表/新建/详情/改（含 draft↔queued、手动设 activated_date 强制发布、清空退草稿）/删、入队、手动加句、改删单句、
+  批量导入（返回 `{imported, skipped, long_count}`）、AI 生成（限流 `entr-gen:<ip>` 6 次/300s）、`POST /activate-today`（手动补跑）。
+- **定时任务（本仓首次启用 Spring Scheduling）**：`common/SchedulingConfig`（`@EnableScheduling`）+
+  `scheduler/TranslateScheduler`（`@Scheduled(cron = "0 0 0 * * ?")`）：取 `queued` 中 `created_at` 最早的组置 `used` +
+  `activated_date=CURDATE()`；幂等（当天已有 used 组则跳过）+ CAS（`WHERE status='queued'`，受影响行数=1 才算成功）；异常只记日志不影响存活。
+- **RBAC/菜单**：`PageRoutes` 加 `{"/translate", "翻译句子库"}`（启动自动 upsert 进 `perm_routes`），
+  `MenuTree` 在「工具箱」组加菜单项（超管默认可见，可在 `/perm` 分配角色）。
+
+### 验证（自验命令与结果）
+```bash
+cd /root/notelab-java && mvn -DskipTests package     # BUILD SUCCESS，产物 target/notelab-java.jar
+pm2 restart notelab-java && pm2 logs notelab-java --lines 25 --nostream
+```
+- 启动日志无错，`Started NoteLabApplication in 4.7s`；`Bootstrap` 输出 `perm_routes=104`（含 11 条 translate 相关路由）。
+- `SHOW TABLES LIKE 'en_tr_%'` → `en_tr_groups` / `en_tr_sentences` / `en_tr_submissions` ✅；
+  `SHOW CREATE TABLE en_tr_submissions` 确认 `uk_user_sentence_date` 与 `idx_user_date` 均建成 ✅。
+- `perm_routes` 自动登记：`page:/translate` + `api:/api/translate/{today,submit,history}` +
+  `api:/api/admin/translate/{groups,groups/{id},groups/{id}/sentences,groups/{id}/import,groups/{id}/generate,groups/{id}/queue,sentences/{sid},activate-today}` ✅。
+- **定时激活实测**：0 点整真实触发并打日志
+  `每日翻译练习激活任务：{date=2026-09-22, activated=false, group_id=null, title=null, reason=队列为空（无 queued 组），跳过}`；
+  随后建组 → 导入句子 → `POST /queue`（status=queued, queued=1）→ `POST /activate-today`
+  返回 `{activated:true, group_id:3, date:"2026-09-22"}`，组变 `used` + `activated_date=2026-09-22` ✅；
+  **再次调用**返回 `{activated:false, reason:"当天已有激活组，跳过"}`（幂等）✅。
+- **B 端接口 curl**（超管 Cookie）：组列表/新建/详情/改标题+强制发布日期/清空日期退草稿/入队/空组入队 400/删组（级联）/
+  手动加句/改 sort_order/删句/404 组与句 — 全部符合预期；批量导入 `{"imported":5,"skipped":2}`
+  （跳过项 = 文本内重复 1 + 过短「好。」1），切分保留句末标点 ✅；AI 生成（机场出行，t1=3/t2=3/t3=2）
+  返回 `{"generated":8,"skipped":0,"requested":8}`，含分阶 zh_text + ref_en，耗时约 78s ✅。
+- **C 端接口 curl**（`notelab_c_session`）：`GET /today` 返回 group/date/tiers/sentences（submission 初始 null）；
+  `POST /submit` 准确译文 → `{"accurate":true,"score":100,"errors":[]}`；错误译文 `He buy a book yesterday.` →
+  `{"accurate":false,"score":60,"corrected":"He bought a book yesterday.","errors":[{"type":"时态","original":"buy","suggestion":"bought","note":"…"}]}` ✅；
+  `GET /today` 二次拉取正确回填 submission（含 errors 数组与 updated_at）✅；`GET /history?date=` 正常、非法日期 400 ✅。
+- **去重覆盖实测**：同一句（sentence_id=13）连续提交 3 次，`SELECT * FROM en_tr_submissions` 仅 **1 行**（id=2），
+  `en_text/accurate/score/corrected/explanation/errors_json` 全部为最后一次结果，`created_at` 不变、`updated_at` 刷新 ✅。
+- **优雅降级**：无激活组时 submit → `400 {"error":"今日暂无练习内容"}`；句子不属于今日 → `400 {"error":"该句子不属于今日练习"}`；
+  空译文 → 400；缺 sentence_id → 422；未登录 → 401；非超管 B 端账号 → `403 {"error":"无「翻译句子库」页面权限"}` ✅（无 500 冒泡）。
+- **经 nginx（:80）全链路**：`/api/translate/today`、`/api/translate/submit`、`/api/translate/history`、
+  `/api/admin/translate/groups`、`/admin/translate`（B 端页 200）、`/games/translate`（C 端页 200）全部正常 ✅。
+- 前端构建：`cd /root/notelab-b && npm run build` ✅（路由表含 `/translate`）→ `pm2 restart notelab-b` →
+  `curl -o /dev/null -w %{http_code} http://127.0.0.1:3020/admin/translate` = **200**（经 nginx `/admin/translate` 亦 200）；
+  `cd /root/notelab-c && npm run build` ✅（路由表含 `/translate`）→ `pm2 restart notelab-c` →
+  `curl -o /dev/null -w %{http_code} http://127.0.0.1:3010/games/translate` = **200**
+  （C 端 `basePath=/games`，故对外为 `/games/translate`；裸 `/translate` 属 basePath 外，404 符合既有 `/trpg` 同款行为）。
+- 收尾：验收用的 4 组 / 16 句 / 3 条提交已删除归零（先 `mysqldump` 备份到 `data/backup/`），生产库无残留测试数据。
+
+### 下一步（可选，未做）
+- 0 点激活依赖服务在线；若需停机维护后补跑，可在 B 端点「立即激活今日」（同一幂等逻辑）。
+- C 端练习统计（连续打卡 / 平均分）与 B 端答题情况看板尚未做，需求未提出。

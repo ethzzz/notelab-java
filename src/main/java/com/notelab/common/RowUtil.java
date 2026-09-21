@@ -3,6 +3,7 @@ package com.notelab.common;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.sql.Timestamp;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -23,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class RowUtil {
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DS = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final Map<Class<?>, Map<String, Field>> FIELD_CACHE = new ConcurrentHashMap<>();
 
     private RowUtil() {}
@@ -75,10 +77,12 @@ public final class RowUtil {
         return out;
     }
 
-    /** datetime → 'yyyy-MM-dd HH:mm:ss' 字符串；其余原样返回 */
+    /** datetime → 'yyyy-MM-dd HH:mm:ss' 字符串；date → 'yyyy-MM-dd'；其余原样返回 */
     public static Object norm(Object v) {
         if (v instanceof LocalDateTime l) return l.format(TS);
         if (v instanceof Timestamp t) return t.toLocalDateTime().format(TS);
+        if (v instanceof LocalDate d) return d.format(DS);
+        if (v instanceof java.sql.Date d) return d.toLocalDate().format(DS);
         return v;
     }
 

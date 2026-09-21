@@ -27,6 +27,7 @@ public final class MenuTree {
                     menu("spire-editor", "爬塔尖塔", "🗼", "/spire-editor", true))),
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
+                    menu("translate", "翻译句子库", "🌐", "/translate", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),
                     menu("docs", "文档编辑", "📝", "/docs", true),
                     menu("notes", "笔记", "🗒️", "/notes", true),

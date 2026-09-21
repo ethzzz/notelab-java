@@ -4,6 +4,9 @@ import com.notelab.mapper.ConversationMapper;
 import com.notelab.mapper.CUserGroupMapper;
 import com.notelab.mapper.CUserMapper;
 import com.notelab.mapper.DocumentMapper;
+import com.notelab.mapper.EnTrGroupMapper;
+import com.notelab.mapper.EnTrSentenceMapper;
+import com.notelab.mapper.EnTrSubmissionMapper;
 import com.notelab.mapper.EnglishConversationMapper;
 import com.notelab.mapper.EnglishMessageMapper;
 import com.notelab.mapper.InviteCodeMapper;
@@ -51,6 +54,9 @@ public class DaoSupport {
     private static InviteCodeMapper inviteCodeMapper;
     private static DocumentMapper documentMapper;
     private static NoteMapper noteMapper;
+    private static EnTrGroupMapper enTrGroupMapper;
+    private static EnTrSentenceMapper enTrSentenceMapper;
+    private static EnTrSubmissionMapper enTrSubmissionMapper;
 
     public DaoSupport(PlatformTransactionManager txManager,
                       UserMapper userMapper,
@@ -70,7 +76,10 @@ public class DaoSupport {
                       CUserGroupMapper cUserGroupMapper,
                       InviteCodeMapper inviteCodeMapper,
                       DocumentMapper documentMapper,
-                      NoteMapper noteMapper) {
+                      NoteMapper noteMapper,
+                      EnTrGroupMapper enTrGroupMapper,
+                      EnTrSentenceMapper enTrSentenceMapper,
+                      EnTrSubmissionMapper enTrSubmissionMapper) {
         DaoSupport.tx = new TransactionTemplate(txManager);
         DaoSupport.userMapper = userMapper;
         DaoSupport.conversationMapper = conversationMapper;
@@ -90,6 +99,9 @@ public class DaoSupport {
         DaoSupport.inviteCodeMapper = inviteCodeMapper;
         DaoSupport.documentMapper = documentMapper;
         DaoSupport.noteMapper = noteMapper;
+        DaoSupport.enTrGroupMapper = enTrGroupMapper;
+        DaoSupport.enTrSentenceMapper = enTrSentenceMapper;
+        DaoSupport.enTrSubmissionMapper = enTrSubmissionMapper;
         DaoSupport.ready = true;
     }
 
@@ -121,4 +133,7 @@ public class DaoSupport {
     public static InviteCodeMapper inviteCode() { return inviteCodeMapper; }
     public static DocumentMapper document() { return documentMapper; }
     public static NoteMapper note() { return noteMapper; }
+    public static EnTrGroupMapper enTrGroup() { return enTrGroupMapper; }
+    public static EnTrSentenceMapper enTrSentence() { return enTrSentenceMapper; }
+    public static EnTrSubmissionMapper enTrSubmission() { return enTrSubmissionMapper; }
 }
