@@ -186,6 +186,8 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
+        // 爬塔角色授权（spire.charAccess）：VIP 组种子——INSERT IGNORE 幂等，已存在则不动（不改现有组名）
+        Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('vip','VIP用户')");
         // ---- C 端注册邀请码（只增不改）：max_uses 为可注册次数上限，超出不可再用 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS invite_codes (
