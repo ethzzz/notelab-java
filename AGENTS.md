@@ -63,8 +63,15 @@ src/main/java/com/notelab/
 
 两端**互不互认**（已对抗验证）。同名数字 uid 在两端的数据必须隔离（`trpg_playthroughs.scope` 区分 `b`/`c`）。C 端用户由 B 端通过 `/api/c-admin/*` 管理。另有一个旁路端点 `GET /api/auth/verify`（供 nginx `auth_request` 给 ai-lab 做 SSO 门禁，200 时透传 `X-Auth-User`）。
 
-## 已知未修缺陷（改到这里时顺手修掉）
-- `ArenaController` 第 98 行用 `e.getMessage()`，但 `ModelHttpException` **没有覆写 `getMessage()`**（只有 `messageFull()` / `messageShort()`）→ 竞技场遇到模型 HTTP 错误时前端显示 `null`。需等有可用 key 能实测时再动手。
+## 一个容易「误修」的约定
+`QwenClient.ModelHttpException` **故意不覆写 `getMessage()`**，只提供 `messageFull()`（完整响应体）与 `messageShort()`（精简原因）。所有捕获点都必须显式选一个并注意语义差异：
+
+| 捕获点 | 用法 |
+|---|---|
+| `ArenaController` | `messageShort()` |
+| `ExtractController` / `RagController` / `ToolboxController` / `TrpgController` | `messageFull()` |
+
+若改用它继承来的 `getMessage()`，前端会拿到 `null`。（2026-09-25 已逐处核对：现有 5 个捕获点全部正确，此处记录是为了避免后人把它当缺陷去"修"。）
 
 ## 纪律与禁区
 - **共享 MySQL = 生产数据**：任何 DROP / DELETE / 改表结构前先 `mysqldump` 备份。对共享表（尤其 `ui_config`）的写操作就是生产操作。
