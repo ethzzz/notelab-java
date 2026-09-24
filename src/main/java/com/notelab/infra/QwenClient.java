@@ -15,13 +15,18 @@ import java.util.List;
 import java.util.Map;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 阿里云 token-plan 网关（OpenAI 兼容协议）调用封装。
  * 超时/错误语义与 Python 版 httpx 调用一致。
- * 多 Key 轮换：某把 key 配额耗尽（429 insufficient_quota）时自动切换下一把（见 QwenKeys）。
+ * 多 Key 轮换：某把 key 不可用时自动切换下一把（见 QwenKeys.unusableReason）——
+ * 覆盖 401 key 无效 / 429 配额耗尽 / 403 无该模型权限三类，避免首把 key 失效就短路整条链路。
  */
 public final class QwenClient {
+
+    private static final Logger log = LoggerFactory.getLogger(QwenClient.class);
 
     /** 上游非 200 响应（消息格式与 Python 版一致，分两种风格） */
     public static final class ModelHttpException extends RuntimeException {
@@ -75,23 +80,29 @@ public final class QwenClient {
     }
 
     /** 非流式 chat completion，返回 content；非 200 抛 ModelHttpException，超时抛 HttpTimeoutException。
-     *  入参 key 仅作首选：配额耗尽时自动轮换到下一把候选 key。 */
+     *  入参 key 仅作首选：key 不可用（失效 / 欠费 / 无模型权限）时自动轮换到下一把候选 key。 */
     public static String complete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
             throws Exception {
         ModelHttpException last = null;
-        for (String k : QwenKeys.candidates()) {
+        List<String> tried = QwenKeys.candidates();
+        for (String k : tried) {
             try {
                 String r = doComplete(model, messages, k, timeoutSec);
                 QwenKeys.markWorking(k);
                 return r;
             } catch (ModelHttpException e) {
-                if (QwenKeys.isQuotaExhausted(e.status, e.body)) {
-                    QwenKeys.markExhausted(k);
+                String reason = QwenKeys.unusableReason(e.status, e.body);
+                if (reason != null) {
+                    QwenKeys.markUnusable(k, reason);
                     last = e;
                     continue;
                 }
                 throw e;
             }
+        }
+        if (last != null) {
+            log.warn("Qwen 非流式调用失败：{} 把候选 key 全部不可用，最后错误 HTTP {}（model={}）",
+                    tried.size(), last.status, model);
         }
         throw last != null ? last : new ModelHttpException(429, "no usable qwen api key");
     }
@@ -126,13 +137,14 @@ public final class QwenClient {
     }
 
     /** 流式 chat completion（disableThinking=true 时关闭 qwen3 思考链，结构化长输出场景显著提速）。
-     *  入参 key 仅作首选：仅当尚未向下游吐出任何内容时，配额耗尽才轮换重试（避免重复输出）。 */
+     *  入参 key 仅作首选：仅当尚未向下游吐出任何内容时，key 不可用才轮换重试（避免重复输出）。 */
     public static String streamChat(String model, List<Map<String, String>> messages, String key,
                                     int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
         int[] emitted = {0};
         StreamHandler wrapped = d -> { emitted[0]++; handler.onDelta(d); };
         String lastErr = null;
-        for (String k : QwenKeys.candidates()) {
+        List<String> tried = QwenKeys.candidates();
+        for (String k : tried) {
             emitted[0] = 0;
             String err = doStreamChat(model, messages, k, timeoutSec, disableThinking, wrapped);
             if (err == null) {
@@ -142,13 +154,17 @@ public final class QwenClient {
             if (emitted[0] == 0) {
                 int status = statusOf(err);
                 String body = bodyOf(err);
-                if (QwenKeys.isQuotaExhausted(status, body)) {
-                    QwenKeys.markExhausted(k);
+                String reason = QwenKeys.unusableReason(status, body);
+                if (reason != null) {
+                    QwenKeys.markUnusable(k, reason);
                     lastErr = err;
                     continue;
                 }
             }
             return err;
+        }
+        if (lastErr != null) {
+            log.warn("Qwen 流式调用失败：{} 把候选 key 全部不可用，最后错误：{}", tried.size(), lastErr);
         }
         return lastErr;
     }
