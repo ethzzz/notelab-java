@@ -1,48 +1,81 @@
-# notelab-java 任务简报（AGENTS.md）
+# notelab-java —— 后端（Spring Boot）
 
-## 任务
-把 `/root/notelab` 的 Python FastAPI 后端用 Spring Boot（Java 17+）**一模一样地重写**到本目录（/root/notelab-java），API 契约完全兼容，端口 **8001** 并行运行，最终由人工把前端流量从 8000 切到 8001。
+> 本文件描述**当前状态**。功能清单、接口契约、验收记录见本仓 `README.md` 与 `PROGRESS.md`；全局信息见根 `../AGENTS.md`。
+> 历史任务简报（2026-08「把 Python 版重写成 Spring Boot」）已归档到 `ops/ARCHIVE-java-rewrite-brief-2026-08.md`——**那是历史，任务早已完成，不要照它去重写任何东西。**
 
-## 背景
-- 前端是 Next.js 应用（/root/myapp，生产端口 3000），其 next.config 把 `/api/*` 同源代理到 `http://127.0.0.1:8000/api/*`。
-- 现后端是 FastAPI（/root/notelab），uvicorn 端口 8000，pm2 进程名 `notelab`，已开 watch。
-- **严禁修改 /root/notelab 与 /root/myapp 的任何文件**，只读参考。
+## 定位
+NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 :8000）已于 2026-08-07 完成切流、2026-08-25 停用。
 
-## 接口范围（前端实际调用，请求/响应契约以 /root/notelab/main.py 源码为准）
-- 认证：POST /api/register、POST /api/login、POST /api/logout、GET /api/me
-- 菜单：GET /api/menu
-- 模型：GET /api/models
-- 智能对话：GET|POST /api/conversations、GET /api/conversations/{cid}/messages、DELETE /api/conversations/{cid}、POST /api/conversations/{cid}/model、POST /api/chat（SSE 流式）
-- 文本工具箱：POST /api/toolbox
-- 文档问答 RAG：POST /api/rag/upload（multipart）、GET /api/rag/docs、POST /api/rag/ask
-- 英语学习：GET /api/english/scenarios、GET|POST /api/english/conversations、GET /api/english/conversations/{cid}/messages、DELETE /api/english/conversations/{cid}、POST /api/english/chat（SSE 流式）
-- 结构化抽取：POST /api/extract
-- 模型竞技场：POST /api/arena（并行多模型 SSE 流式，必须带心跳保活，参考 Python 实现的 10s 心跳）
-- 界面配置：GET|POST /api/ui-config
+| 项 | 值 |
+|---|---|
+| 服务器目录 | `/root/notelab-java`（含 git 历史） |
+| pm2 进程 | `notelab-java` |
+| 端口 | **127.0.0.1:8001**（只绑本地，写死在 `src/main/resources/application.properties`） |
+| nginx | `location /api/` 与 `location = /api` 直达本服务；SSE 已配 `proxy_buffering off` |
+| 线上入口 | http://117.72.32.87/api/* |
+| GitHub | `git@github.com:ethzzz/notelab-java.git`（main） |
+| 技术栈 | Spring Boot 3.4.5 / Java 17 / MyBatis-Plus 3.5.9 / poi-ooxml 5.2.5（jar 名 `target/notelab-java.jar`） |
 
-## 关键技术约定
-1. 模型调用走阿里云 token-plan 网关（OpenAI 兼容协议）：
-   - base_url: `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
-   - api key 从环境变量 `QWEN_API_KEY` 读取（系统已注入 /etc/environment）；**严禁硬编码或提交 key**。
-   - 注意 Python 源码里模型清单与参数（temperature 等）保持一致。
-2. 存储：参考 /root/notelab/db.py 的表结构与行为。Java 侧使用**独立的新 SQLite 数据文件**（如 data/notelab-java.db），不得读写 Python 服务正在用的数据文件，避免并发写坏；数据迁移是后续单独步骤。
-3. 认证：HMAC 会话 Cookie 机制与 Python 版保持一致（密钥来源、签名算法、有效期见 main.py），目标是切流后登录态兼容；若确实无法完全兼容，至少保证新登录可用，并在 README 说明差异。
-4. 端口 8001；绑定地址参考 /root/notelab/ecosystem.config.cjs 里 uvicorn 的 host 参数。
-5. 进程管理用 pm2：`pm2 start "java -jar target/<jar名>.jar" --name notelab-java`，不得影响现有 pm2 进程（notelab、myapp、myapp-dev）。
-6. Maven 已配置阿里云镜像（/root/.m2/settings.xml），不要改镜像；构建用 `mvn -DskipTests package`。
+## 构建与发布
+```bash
+ssh myapp
+cd /root/notelab-java && /usr/bin/mvn -B -DskipTests package 2>&1 | tail -30
+pm2 restart notelab-java
+curl -i http://127.0.0.1:8001/api/health        # 探活
+```
+- Maven 镜像已配在 `/root/.m2/settings.xml`，**不要改镜像**。
+- 本机（Windows）不要指望 `mvn` 能跑：shell 环境不完整，构建统一在服务器执行。
+- 改完必须 curl 自验并把结果记进 `PROGRESS.md`。
 
-## 阶段计划
-- **阶段1**：Spring Boot 骨架（端口 8001、读 QWEN_API_KEY）+ GET /api/models + GET /api/menu + 认证四接口（register/login/logout/me）+ README 初版 + pm2 启动 notelab-java。验收：curl 逐接口对比 Python 版返回结构一致。
-- **阶段2**：conversations 全套 + POST /api/chat（SSE 流式）+ /api/toolbox + /api/extract。验收：流式输出正常、多轮对话历史生效。
-- **阶段3**：RAG（upload/docs/ask）+ 英语全套（scenarios/conversations/chat SSE，含语法纠错提示词逻辑，照抄 Python 版提示词）。
-- **阶段4**：arena（并行流式+心跳）+ ui-config；全量回归所有接口。
-- 每完成一个阶段：更新 README.md、git commit、在 PROGRESS.md 记录验证结果。
+## 代码结构与约定
+```
+src/main/java/com/notelab/
+├── common/   10 个（含 RowUtil、AppConfig）
+├── controller/ 26 个
+├── dao/      15 个（静态门面 DAO：全部 public static 方法）
+├── infra/     2 个（QwenClient、QwenKeys）
+├── mapper/   21 个（MyBatis-Plus Mapper）
+├── model/    23 个（含 model/entity）
+├── scheduler/ 1 个（TranslateScheduler —— 每日翻译 0 点激活）
+└── service/   6 个
+```
 
-## README.md 要求（必须持续维护）
-包含：项目简介、功能清单（逐模块标 ✅已完成 / 🚧进行中 / ⬜未开始）、环境依赖（JDK、Maven、环境变量）、构建命令、启动命令（含 pm2 方式）、端口说明、与 Python 版的关系及切流方法。每完成功能就同步更新，不要等全部做完。
+- **持久层契约（改动时的硬约束）**：MyBatis-Plus + **静态门面 DAO + `RowUtil` 的 Map 出口**。上游（controller/service）拿到的始终是 `Map<String,Object>`，不是实体对象。当初从手写 JDBC 迁移时就是靠这条「上游零改动」完成的，**不要顺手把它重构成返回实体的风格**。
+- `application.properties` 关了静态资源映射并开了 `throw-exception-if-no-handler-found`，为的是让未匹配路径返回与 FastAPI 一致的 `{"detail":"Not Found"}`——**别关掉**。
+- 错误响应格式、字段命名一律对齐 FastAPI 原版（`@RestControllerAdvice` 统一处理）。
 
-## 纪律
-- 只改本目录（/root/notelab-java）内的文件。
-- 每阶段完成必须自验（构建 + pm2 重启 + curl 对比），把自验命令与结果写入 PROGRESS.md。
-- 无法一次做完时，在阶段边界停止：保证当前代码可构建可启动，PROGRESS.md 写清已完成内容与下一步。
-- 遇到不确定的契约细节，以 /root/notelab/main.py 的实际行为为准（可直接 curl 8000 端口对比真实响应）。
+## 配置加载顺序（排查配置问题先看这里）
+`AppConfig` 的优先序：**进程环境变量 > 本目录 `.env` > `/root/notelab/.env` > 代码默认值**。
+
+⚠️ `.env` 是按**进程 cwd** 相对加载的（`Paths.get(".env")`）。所以用 jshell 之类的方式直连测试时，**必须先 `cd /root/notelab-java`**，否则只会加载到 Python 版那份 `.env`（典型症状：候选 key 数量不对）。
+
+## LLM 调用
+- `infra/QwenClient`（`complete` 非流式 / `streamChat` 流式）+ `infra/QwenKeys`（多 key 轮换）。
+- 网关为 OpenAI 兼容协议，靠 `QWEN_BASE_URL` / `QWEN_MODEL` / `QWEN_API_KEYS`（逗号分隔）三个环境变量定位。
+- key 失效判定在 `QwenKeys.unusableReason(status, body)`：**401 无效 / 429 配额耗尽 / 403 无该模型权限**，命中即 `markUnusable` 换下一把；标记 30 分钟后自动重试。新增判定请扩展这个方法，不要在调用方散写判断。
+- 换 key **无需改代码**：改 `/root/notelab-java/.env` 的三个变量 → `pm2 restart notelab-java`（进程内的不可用标记随重启清空）。
+
+## 双身份体系（别混淆）
+| 端 | 用户表 | 会话机制 |
+|---|---|---|
+| B 端（管理台） | `users` | Cookie `notelab_session`（HMAC，与 Python 版兼容） |
+| C 端（玩家端） | `c_users` / `c_user_groups` | 4 段 token `c.<uid>.<exp>.<sig>`，Cookie `notelab_c_session` |
+
+两端**互不互认**（已对抗验证）。同名数字 uid 在两端的数据必须隔离（`trpg_playthroughs.scope` 区分 `b`/`c`）。C 端用户由 B 端通过 `/api/c-admin/*` 管理。另有一个旁路端点 `GET /api/auth/verify`（供 nginx `auth_request` 给 ai-lab 做 SSO 门禁，200 时透传 `X-Auth-User`）。
+
+## 已知未修缺陷（改到这里时顺手修掉）
+- `ArenaController` 第 98 行用 `e.getMessage()`，但 `ModelHttpException` **没有覆写 `getMessage()`**（只有 `messageFull()` / `messageShort()`）→ 竞技场遇到模型 HTTP 错误时前端显示 `null`。需等有可用 key 能实测时再动手。
+
+## 纪律与禁区
+- **共享 MySQL = 生产数据**：任何 DROP / DELETE / 改表结构前先 `mysqldump` 备份。对共享表（尤其 `ui_config`）的写操作就是生产操作。
+- 密钥只在服务器 `/etc/environment` 与 `/root/notelab-java/.env`，**严禁硬编码或提交**。`.env` 已在 `.gitignore`；含密钥的备份文件要放到仓库外（如 `/root/env-backups/`，chmod 600）。
+- **不动** `/root/notelab`（Python 版源码，只作历史参考）、`/root/myapp`（旧前端）。
+- `ops/daily-iteration/` 下的巡检与备份脚本是每日机制的**权威副本**，cron 直接执行仓内脚本，改脚本即改生产行为。
+
+## 相关文档
+- `README.md` —— 项目说明与接口清单
+- `PROGRESS.md` —— 各阶段验收记录（含 RBAC、切流）
+- `ops/BC-SPLIT-SUMMARY.md`、`ops/BC-SPLIT-P6.md`、`ops/BC-SPLIT-P7.md` —— B/C 拆分与后续改造
+- `ops/LOCAL-SYNC-GUIDE.md` —— 本地镜像同步说明
+- `ops/daily-iteration/` —— 每日巡检 + 数据库备份脚本与说明
+- `ops/nginx-notelab.conf` —— nginx 站点配置备份
