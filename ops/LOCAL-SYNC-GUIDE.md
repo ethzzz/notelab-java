@@ -1,5 +1,10 @@
 # 本地同步指引（B/C 拆分后，2026-08-25）
 
+> **⛔ 已废弃（2026-09-25）：本文描述的「服务器 → 本地」反向同步已停用，不要按本文操作。**
+> 现行流程是 **本地改 → commit/push → 服务器执行 `/root/notelab-java/ops/sync-deploy.sh <仓>` 从 git 同步**
+> （见根 `AGENTS.md`「开发流程」）。不再使用 `docs\sync-from-server.ps1`，也不再 scp 覆盖本地目录。
+> 保留本文仅为历史参考；其中「`/root/myapp` 在服务器上不是 git 仓库」这一事实仍然成立——它不在这套 git 同步范围内。
+
 本地镜像（Windows）通过 `docs\sync-from-server.ps1` 从服务器 117.72.32.87 同步。
 **该脚本当前只同步 `myapp` 与 `notelab-java` 两个目录**；B/C 拆分新增了
 `/root/notelab-c` 与 `/root/notelab-b` 两个仓库（均为独立 git 仓库，各 1 个提交），需要补进同步范围。

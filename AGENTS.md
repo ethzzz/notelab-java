@@ -16,15 +16,18 @@ NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 
 | GitHub | `git@github.com:ethzzz/notelab-java.git`（main） |
 | 技术栈 | Spring Boot 3.4.5 / Java 17 / MyBatis-Plus 3.5.9 / poi-ooxml 5.2.5（jar 名 `target/notelab-java.jar`） |
 
-## 构建与发布
+## 构建与发布（本地改 → 服务器从 git 同步）
 ```bash
-ssh myapp
-cd /root/notelab-java && /usr/bin/mvn -B -DskipTests package 2>&1 | tail -30
-pm2 restart notelab-java
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/api/menu   # 探活
+# 本地：改完提交推送
+git push origin main
+# 服务器：同步 + mvn package + 重启 + 探活一条命令搞定
+ssh myapp "/root/notelab-java/ops/sync-deploy.sh notelab-java"
 ```
+- **不要在 `/root/notelab-java` 里手改代码**——服务器是只读部署目标；脚本发现工作区脏会直接拒绝执行。完整行为与参数见根 `AGENTS.md`「开发流程」。
+- **`ops/sync-deploy.sh` 这个脚本本身就在本仓**（`E:\code\NoteLab\notelab-java\ops\sync-deploy.sh`），服务器执行的是仓内副本；改它要走「本地改 → push → 对 `notelab-java` 同步」自己这套流程。
+- 脚本只在**有变更**时构建；仅文档变更自动跳过（强制构建加 `--build`）；**构建失败不会重启服务**，老进程继续服务。
 - Maven 镜像已配在 `/root/.m2/settings.xml`，**不要改镜像**。
-- 本机（Windows）不要指望 `mvn` 能跑：shell 环境不完整，构建统一在服务器执行。
+- 本机（Windows）不要指望 `mvn` 能跑：shell 环境不完整，构建统一在服务器执行（由上述同步脚本代劳）。
 - 改完必须 curl 自验并把结果记进 `PROGRESS.md`。
 - ⚠️ **本服务没有 `/api/health`**（`src/` 全量检索无此端点，请求它只会拿到 `{"detail":"Not Found"}`，别据此误判服务未启动）。探活用 `/api/menu`，**返回 401 即正常**（未带会话）；`ops/daily-iteration/daily-check.py` 也是这么探的（接受 200/401/403）。
 
@@ -99,6 +102,6 @@ src/main/java/com/notelab/
 - `README.md` —— 项目说明与接口清单
 - `PROGRESS.md` —— 各阶段验收记录（含 RBAC、切流）
 - `ops/BC-SPLIT-SUMMARY.md`、`ops/BC-SPLIT-P6.md`、`ops/BC-SPLIT-P7.md` —— B/C 拆分与后续改造
-- `ops/LOCAL-SYNC-GUIDE.md` —— 本地镜像同步说明
+- `ops/LOCAL-SYNC-GUIDE.md` —— **已废弃**（旧的反向同步说明，仅历史参考；现行流程见根 `AGENTS.md`）
 - `ops/daily-iteration/` —— 每日巡检 + 数据库备份脚本与说明
 - `ops/nginx-notelab.conf` —— nginx 站点配置备份
