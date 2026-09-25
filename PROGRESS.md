@@ -572,3 +572,28 @@ B 端 `/admin/c-users`（C 端用户管理）**不在左侧菜单里**，只能�
   `INSERT IGNORE INTO perm_role_routes (role_code,route_code) VALUES ('user','page:/c-users');`（回滚：`DELETE FROM perm_role_routes WHERE role_code='user' AND route_code='page:/c-users';`）。
 - **超管可见性**待用户在 `/admin` 页面刷新后目视确认（超管 `allowed==null` 不过滤，按逻辑必然出现）。
 - ⚠️ **文档纠错**：`AGENTS.md` 原「构建与发布」里的探活命令 `curl -i http://127.0.0.1:8001/api/health` **是错的**——本服务**没有 `/api/health`** 端点（`src/` 全量检索零命中），请求只会返回 `{"detail":"Not Found"}`，易被误判为服务未启动。已改为 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/api/menu`（401 即正常），与 `ops/daily-iteration/daily-check.py` 的探法一致（该脚本本就用 `/api/menu` + 接受 200/401/403，未受影响）。
+
+## 2026-09-25 · 新增批量设置账户用户组接口 `POST /api/perm/users/batch-role`
+
+### 背景
+B 端「用户组 → 路由菜单」的绑定此前已通（角色组分配路由 → 成员菜单即时生效 → 页面守卫按同一份授权拦直接敲 URL），但**把账户放进组只能一个一个改**：`POST /api/perm/users/{id}/role` 是单账户接口，账户管理页也只有行内单选下拉。批量授权是日常动作，缺入口就只能靠人重复点。
+
+### 改动（提交 `4711aaf`）
+- `controller/PermController.java`：新增 `POST /api/perm/users/batch-role`（仅超管），body `{ids:[], role}`，把一批账户的 `role` 直接设为目标角色组。
+- `dao/UserDao.java`：新增 `setUsersRole(ids, role)`（一条 `UPDATE ... WHERE id IN`）与 `listUsersByIds(ids)`（一次查完核对存在性与当前角色，避免 N+1）。
+
+### 语义与守护（都在服务端，不依赖前端）
+- **语义**：`users.role` 是单值、一个账户只属于一个用户组，所以这是「**改属**」而非「追加」，与单人接口一致。
+- 目标角色组必须已存在（防脏 `role` 值写进 `users` 表造成悬空账户）；
+- 单批上限 200；不存在的 id 剔除后返回实际生效数量（前端已删账户时仍可提交）；
+- **超管归零保护**：按「**本次降级了几个超管**」计算，若剩余超管为 0 则整批拒绝。这里不能照抄单人接口的 `countSuperAdmins() <= 1`——单人接口只降一个所以够用，批量场景下「一次把仅剩的 2 个超管都改走」会被漏判。
+
+### 验收（服务器实测）
+- 编译预检：先 scp 两个文件到服务器 `mvn -B -DskipTests -q package` → **MVN_EXIT=0**，随后 `git checkout --` 还原工作区（避免推编译不过的提交）。
+- 部署：`git pull --ff-only` → `mvn package` → `pm2 restart notelab-java` → `online`。
+- **挂载验证（401 vs 404 有区分度）**：`POST /api/perm/users/batch-role` = **401**（路由存在、需鉴权）；对照 `POST /api/perm/definitely-not-here` = **404**。
+- **权限码自动登记**：重启后 `perm_routes` 出现 `api:/api/perm/users/batch-role`，`method=POST`，`kind=api` ✅（证明 PermService 启动时采集到了新端点）。
+
+### 边界
+`api:*` 权限码**只登记、不强制校验**——接口实际防护仍靠各 Controller 自己的登录/超管判断，勾掉某个 `api:*` 不会让接口拒绝访问。本次新接口自身做了 `isSuperAdmin` 校验，故不依赖该机制。
+
