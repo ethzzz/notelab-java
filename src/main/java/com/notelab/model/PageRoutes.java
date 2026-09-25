@@ -25,10 +25,13 @@ public final class PageRoutes {
             new String[]{"/lowcode", "低代码平台"},
             // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除
             new String[]{"/trpg/gen", "生成剧本"},
+            new String[]{"/docs", "文档编辑"},
             new String[]{"/notes", "笔记"},
             new String[]{"/spire-editor", "爬塔尖塔工坊"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
+            new String[]{"/user/invites", "邀请码"},
+            new String[]{"/c-users", "C端用户管理"},
             new String[]{"/ui", "界面配置"},
             new String[]{"/perm", "权限管理"}
     );

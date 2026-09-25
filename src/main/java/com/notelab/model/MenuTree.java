@@ -38,7 +38,8 @@ public final class MenuTree {
             group("g_users", "用户管理", "👥", List.of(
                     menu("user-accounts", "账户管理", "👤", "/user/accounts", true),
                     menu("user-roles", "角色组管理", "🗂️", "/user/roles", true),
-                    menu("user-invites", "邀请码", "🎟️", "/user/invites", true))),
+                    menu("user-invites", "邀请码", "🎟️", "/user/invites", true),
+                    menu("c-users", "C端用户管理", "🙋", "/c-users", true))),
             group("g_system", "系统管理", "⚙️", List.of(
                     menu("ui", "界面配置", "🎛️", "/ui", true),
                     menu("perm", "权限管理", "🔐", "/perm", true))));
