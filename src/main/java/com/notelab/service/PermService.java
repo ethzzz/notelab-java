@@ -94,4 +94,31 @@ public final class PermService {
         Object role = user.get("role");
         return role != null && PermDao.roleRouteCodes(role.toString()).contains("page:" + path);
     }
+
+    /**
+     * 当前用户可进入的页面路径清单（不含 "page:" 前缀）——「下发的路由」，供 B 端前端做页面级守卫：
+     * 无论点菜单还是直接敲 URL，不在本清单内的页面一律跳无权限页。
+     *
+     * 取值方式：**以 PageRoutes.PAGE_ROUTES 为准遍历、再看角色是否持有对应权限码**，
+     * 而不是直接回吐 perm_role_routes 里的 page:* 行——这样数据库里的历史/脏权限码
+     * （比如早已下线的页面）不会凭空开通任何路径，清单永远只包含当前代码里真实存在的页面。
+     *
+     * super_admin：全部页面（与 MenuTree 一致），不受 role_routes 影响；
+     * 未登录 / 无 role：空清单（调用方 /api/menu 本身要求登录，此处只作兜底）。
+     */
+    public static List<String> allowedPagePaths(Map<String, Object> user) {
+        List<String> out = new ArrayList<>();
+        if (user == null) return out;
+        if (isSuperAdmin(user)) {
+            for (String[] p : PageRoutes.PAGE_ROUTES) out.add(p[0]);
+            return out;
+        }
+        Object role = user.get("role");
+        if (role == null) return out;
+        List<String> codes = PermDao.roleRouteCodes(role.toString());
+        for (String[] p : PageRoutes.PAGE_ROUTES) {
+            if (codes.contains("page:" + p[0])) out.add(p[0]);
+        }
+        return out;
+    }
 }
