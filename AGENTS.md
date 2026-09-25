@@ -73,6 +73,8 @@ src/main/java/com/notelab/
 | 只加 `PageRoutes` | **谁都看不到**（`perm_routes` 里有权限码，但没有菜单节点可渲染） |
 | 两处都加 | 正确。但**现有 `user` 角色不会自动获得**——`PermService` 的普通角色默认权限只在 `roleRouteCodes(ROLE_USER)` 为空时写入一次，需去 `/user/roles` 手动勾选 |
 
+`GET /api/menu` 除了 `menu`（菜单树）还下发 **`pages`**（= `PermService.allowedPagePaths(user)`，该账户可进入的页面路径清单，超管为全部），供 notelab-b 的 `(admin)/layout.tsx` 做**页面级守卫**——菜单只负责「看不见」，拦住「直接敲 URL」靠的就是这份清单。`allowedPagePaths` **以 `PageRoutes.PAGE_ROUTES` 为准遍历**再比对权限码，所以数据库里的历史/脏 `page:*` 行不会凭空开通任何路径。改权限逻辑时，两个消费方（菜单可见性、页面守卫）要一起想。
+
 2026-09-25 的实例：`/c-users` 两处都缺（只能靠 `/perm` 页一张 Card 手工跳转）、`/docs` 与 `/user/invites` 只有菜单节点缺页面路由（普通角色永久不可见）；三者已在同轮补齐（`1934629`）。
 
 ⚠️ B 端**没有页面级守卫**（`src/` 下无 middleware，`(admin)/layout.tsx` 只守登录）——页面权限是**展示级**的，直接敲 URL 可绕过；`/api/c-admin/*` 也只要求 B 端登录、不要求超管。需要真正的边界时得在服务端加校验。
