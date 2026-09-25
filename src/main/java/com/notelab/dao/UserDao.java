@@ -53,6 +53,13 @@ public final class UserDao {
                 Wrappers.lambdaQuery(User.class).orderByAsc(User::getId)), LIST_COLS);
     }
 
+    /** 按 id 批量取账户：批量改角色前一次性核对「哪些存在、哪些当前是超管」，避免逐条查询的 N+1 */
+    public static List<Map<String, Object>> listUsersByIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return RowUtil.rows(DaoSupport.user().selectList(
+                Wrappers.lambdaQuery(User.class).in(User::getId, ids).orderByAsc(User::getId)), LIST_COLS);
+    }
+
     /** 分页 + 可选关键字（用户名/邮箱模糊）与角色筛选（selectMaps 改走 Page + select 指定列，输出 key 集合与原 SQL 一致） */
     public static List<Map<String, Object>> listUsersPaged(String q, String role, int limit, long offset) {
         QueryWrapper<User> w = new QueryWrapper<>();
@@ -84,6 +91,14 @@ public final class UserDao {
     public static void setUserRole(long uid, String role) {
         DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
                 .eq(User::getId, uid)
+                .set(User::getRole, role));
+    }
+
+    /** 批量把账户的角色组设为同一值（一条 UPDATE ... WHERE id IN (...)，供「批量加入用户组」用） */
+    public static void setUsersRole(List<Long> ids, String role) {
+        if (ids == null || ids.isEmpty()) return;
+        DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
+                .in(User::getId, ids)
                 .set(User::getRole, role));
     }
 

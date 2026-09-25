@@ -28,6 +28,7 @@ import com.notelab.dao.PermDao;
  *  POST   /api/perm/users                 创建账户
  *  POST   /api/perm/users/{id}/info       修改账户信息（用户名/邮箱）
  *  POST   /api/perm/users/{id}/role       把角色赋给账户
+ *  POST   /api/perm/users/batch-role      批量把账户加入某个角色组（B 端用户组）
  *  POST   /api/perm/users/{id}/password   重置账户密码
  *  DELETE /api/perm/users/{id}            删除账户
  */
@@ -43,6 +44,7 @@ public class PermController {
     public static class CreateUserReq { public String username; public String password; public String email = ""; public String role = "user"; }
     public static class UserInfoReq { public String username; public String email; }
     public static class RoleReq { public String role; }
+    public static class BatchRoleReq { public List<Long> ids; public String role; }
     public static class PasswordReq { public String password; }
     public static class CreateRoleReq { public String code; public String name; }
     public static class RenameRoleReq { public String name; }
@@ -269,6 +271,58 @@ public class PermController {
         }
         UserDao.setUserRole(id, req.role);
         return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /**
+     * 批量把账户加入某个角色组（B 端「用户组」）。仅超管。
+     *
+     * 语义：把选中账户的 role **直接设为目标角色组**——一个账户只属于一个组，所以这是「改属」而非「追加」。
+     * 因此「批量加入 A 组」等价于「把这批人从各自原组移到 A 组」，与单人接口 POST /users/{id}/role 语义一致。
+     *
+     * 守护（都在服务端做，不依赖前端）：
+     *  - 目标角色组必须已存在（防脏 role 值写进 users 表造成悬空账户）；
+     *  - 单批上限 200，防止误选全表；
+     *  - **超管归零保护**：若本次会把所有超管都降走，则整批拒绝——批量场景下必须按「本次降级了几个超管」计算，
+     *    只比 countSuperAdmins()<=1 会漏判（例如一次把仅剩的 2 个超管都改走）；
+     *  - 不存在的 id 不报错，剔除后返回实际生效数量与 missing 列表（前端已删账户时仍然可提交）。
+     */
+    @PostMapping("/users/batch-role")
+    public ResponseEntity<Map<String, Object>> batchSetUserRole(@RequestBody(required = false) BatchRoleReq req,
+                                                               HttpServletRequest request) {
+        Map<String, Object> me = guard(request);
+        if (me == null) return AuthUtil.unauth();
+        if (!PermService.isSuperAdmin(me)) return forbidden();
+        if (req == null || req.ids == null || req.ids.isEmpty()) {
+            return ResponseEntity.status(400).body(Map.of("error", "请选择要操作的账户"));
+        }
+        if (!PermService.isValidRole(req.role)) {
+            return ResponseEntity.status(400).body(Map.of("error", "目标用户组不存在"));
+        }
+        LinkedHashSet<Long> want = new LinkedHashSet<>();
+        for (Long id : req.ids) if (id != null) want.add(id);
+        if (want.size() > 200) {
+            return ResponseEntity.status(400).body(Map.of("error", "单次最多操作 200 个账户"));
+        }
+        List<Map<String, Object>> found = UserDao.listUsersByIds(new ArrayList<>(want));
+        List<Long> valid = new ArrayList<>();
+        long demotingAdmins = 0;
+        for (Map<String, Object> u : found) {
+            valid.add(((Number) u.get("id")).longValue());
+            if (PermService.ROLE_ADMIN.equals(u.get("role"))) demotingAdmins++;
+        }
+        if (valid.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "所选账户均已不存在"));
+        }
+        if (!PermService.ROLE_ADMIN.equals(req.role)
+                && UserDao.countSuperAdmins() - demotingAdmins < 1) {
+            return ResponseEntity.status(400).body(Map.of("error", "至少需要保留一名超级管理员"));
+        }
+        UserDao.setUsersRole(valid, req.role);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("updated", valid.size());
+        body.put("role", req.role);
+        return ResponseEntity.ok(body);
     }
 
     @PostMapping("/users/{id}/password")
