@@ -21,11 +21,12 @@ NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 
 ssh myapp
 cd /root/notelab-java && /usr/bin/mvn -B -DskipTests package 2>&1 | tail -30
 pm2 restart notelab-java
-curl -i http://127.0.0.1:8001/api/health        # 探活
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/api/menu   # 探活
 ```
 - Maven 镜像已配在 `/root/.m2/settings.xml`，**不要改镜像**。
 - 本机（Windows）不要指望 `mvn` 能跑：shell 环境不完整，构建统一在服务器执行。
 - 改完必须 curl 自验并把结果记进 `PROGRESS.md`。
+- ⚠️ **本服务没有 `/api/health`**（`src/` 全量检索无此端点，请求它只会拿到 `{"detail":"Not Found"}`，别据此误判服务未启动）。探活用 `/api/menu`，**返回 401 即正常**（未带会话）；`ops/daily-iteration/daily-check.py` 也是这么探的（接受 200/401/403）。
 
 ## 代码结构与约定
 ```
@@ -62,6 +63,19 @@ src/main/java/com/notelab/
 | C 端（玩家端） | `c_users` / `c_user_groups` | 4 段 token `c.<uid>.<exp>.<sig>`，Cookie `notelab_c_session` |
 
 两端**互不互认**（已对抗验证）。同名数字 uid 在两端的数据必须隔离（`trpg_playthroughs.scope` 区分 `b`/`c`）。C 端用户由 B 端通过 `/api/c-admin/*` 管理。另有一个旁路端点 `GET /api/auth/verify`（供 nginx `auth_request` 给 ai-lab 做 SSO 门禁，200 时透传 `X-Auth-User`）。
+
+## 新增后台页面：必须同时改两处常量（否则菜单不出现）
+菜单**不来自前端页面目录、不来自数据库**，B 端侧边栏的唯一来源是 Java 硬编码常量树 `model/MenuTree.java` 的 `MENUS`；`/ui` 界面配置只能覆盖**已有 key** 的 name/icon，**没有新增菜单节点的能力**。而"能否分配给角色"由另一份常量决定：`model/PageRoutes.java` 的 `PAGE_ROUTES` → `PermService.registerAllRoutes` 启动时 upsert 成 `page:<path>` 进 `perm_routes` → `/api/menu` 的 `buildNodes` 按 `allowed` 过滤叶子、剪掉空分组。
+
+| 只改哪一处 | 结果 |
+|---|---|
+| 只加 `MenuTree` | 超管可见（`allowed==null` 不过滤），**普通角色仍看不到**（叶子被 RBAC 过滤掉） |
+| 只加 `PageRoutes` | **谁都看不到**（`perm_routes` 里有权限码，但没有菜单节点可渲染） |
+| 两处都加 | 正确。但**现有 `user` 角色不会自动获得**——`PermService` 的普通角色默认权限只在 `roleRouteCodes(ROLE_USER)` 为空时写入一次，需去 `/user/roles` 手动勾选 |
+
+2026-09-25 的实例：`/c-users` 两处都缺（只能靠 `/perm` 页一张 Card 手工跳转）、`/docs` 与 `/user/invites` 只有菜单节点缺页面路由（普通角色永久不可见）；三者已在同轮补齐（`1934629`）。
+
+⚠️ B 端**没有页面级守卫**（`src/` 下无 middleware，`(admin)/layout.tsx` 只守登录）——页面权限是**展示级**的，直接敲 URL 可绕过；`/api/c-admin/*` 也只要求 B 端登录、不要求超管。需要真正的边界时得在服务端加校验。
 
 ## 一个容易「误修」的约定
 `QwenClient.ModelHttpException` **故意不覆写 `getMessage()`**，只提供 `messageFull()`（完整响应体）与 `messageShort()`（精简原因）。所有捕获点都必须显式选一个并注意语义差异：

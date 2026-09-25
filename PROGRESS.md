@@ -542,3 +542,33 @@ pm2 restart notelab-java && pm2 logs notelab-java --lines 25 --nostream
 ### 下一步（可选，未做）
 - 0 点激活依赖服务在线；若需停机维护后补跑，可在 B 端点「立即激活今日」（同一幂等逻辑）。
 - C 端练习统计（连续打卡 / 平均分）与 B 端答题情况看板尚未做，需求未提出。
+
+## 2026-09-25 · 补齐 `/c-users` 菜单节点与 3 条缺失的页面路由
+
+### 问题
+B 端 `/admin/c-users`（C 端用户管理）**不在左侧菜单里**，只能从 `/perm` 页的一张 Card 手工跳转。
+
+根因：菜单显示的唯一起点是硬编码常量 `model/MenuTree.java` 的 `MENUS`（不来自页面目录、不来自数据库，`/ui` 界面配置只能覆盖**已有 key** 的 name/icon）；能否分配给角色则由另一份常量 `model/PageRoutes.java` 的 `PAGE_ROUTES` 决定（启动时 upsert 成 `page:*` 进 `perm_routes`）。`/c-users` **两处都没有登记**，所以菜单不显示（任何角色都看不到），且 `page:/c-users` 从未进 `perm_routes`——连「角色组管理」的「📦 未挂菜单的页面」分组都进不去，无法分配给任何角色。
+
+顺带发现两处同类偏差：`/docs`（文档编辑）、`/user/invites`（邀请码）**只有菜单节点、缺页面路由**。超管因 `allowed==null` 不过滤而可见，普通角色却因 `page:/docs` 不在 `perm_routes` 里而永久看不到。
+
+### 改动（提交 `1934629`）
+- `model/MenuTree.java`：`g_users` 组追加 `menu("c-users", "C端用户管理", "🙋", "/c-users", true)`。
+- `model/PageRoutes.java`：补齐 `/c-users`、`/docs`、`/user/invites` 三条页面路由。
+
+### 验收（服务器实测）
+- 构建：`cd /root/notelab-java && git pull --ff-only && /usr/bin/mvn -B -DskipTests -q package` ✅（jar 重新生成 11:51:29，46.5 MB）→ `pm2 restart notelab-java` → `online`。
+- 探活：`curl http://127.0.0.1:8001/api/menu` = **401** ✅；经 nginx `http://127.0.0.1/api/menu` 亦 **401** ✅；`/api/c-admin/groups` = **401** ✅（未登录即正常）。
+- 路由登记：重启后 `perm_routes` 新增三行 ✅
+  | code | path | name |
+  |---|---|---|
+  | `page:/c-users` | `/c-users` | C端用户管理 |
+  | `page:/docs` | `/docs` | 文档编辑 |
+  | `page:/user/invites` | `/user/invites` | 邀请码 |
+- 影响面：只增菜单节点与权限码，无接口行为、无数据变更。
+
+### 待人工确认 / 未做
+- **普通角色尚未授权**：`perm_role_routes` 里 `user` 角色当前只有 `page:/`、`page:/trpg/gen` 两条，**不会**自动获得新页面（`PermService` 的普通角色默认权限仅在 `roleRouteCodes(ROLE_USER)` 为空时写入一次）。需在 B 端 `/user/roles` 勾选，或执行
+  `INSERT IGNORE INTO perm_role_routes (role_code,route_code) VALUES ('user','page:/c-users');`（回滚：`DELETE FROM perm_role_routes WHERE role_code='user' AND route_code='page:/c-users';`）。
+- **超管可见性**待用户在 `/admin` 页面刷新后目视确认（超管 `allowed==null` 不过滤，按逻辑必然出现）。
+- ⚠️ **文档纠错**：`AGENTS.md` 原「构建与发布」里的探活命令 `curl -i http://127.0.0.1:8001/api/health` **是错的**——本服务**没有 `/api/health`** 端点（`src/` 全量检索零命中），请求只会返回 `{"detail":"Not Found"}`，易被误判为服务未启动。已改为 `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8001/api/menu`（401 即正常），与 `ops/daily-iteration/daily-check.py` 的探法一致（该脚本本就用 `/api/menu` + 接受 200/401/403，未受影响）。
