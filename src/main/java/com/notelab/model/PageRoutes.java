@@ -27,7 +27,16 @@ public final class PageRoutes {
             new String[]{"/trpg/gen", "生成剧本"},
             new String[]{"/docs", "文档编辑"},
             new String[]{"/notes", "笔记"},
-            new String[]{"/spire-editor", "爬塔尖塔工坊"},
+            // 爬塔工坊由单页 4 个 Tab 拆成 6 个子页（原 /spire-editor 现为 307 重定向，见 notelab-b/next.config.ts）。
+            // ⚠️ 这里与 MenuTree.gc_spire 必须一一对应：只加菜单不加路由 → 叶子被 RBAC 过滤，谁都看不到；
+            //    只加路由不加菜单 → 没有入口。历史 role 里的 page:/spire-editor 行会自然失效（不在本表 → 不再开通任何路径），
+            //    非超管角色需要在「角色组管理」里重新勾选下面这 6 条。
+            new String[]{"/spire-editor/cards", "爬塔·卡片制作"},
+            new String[]{"/spire-editor/chars", "爬塔·角色制作"},
+            new String[]{"/spire-editor/skills", "爬塔·技能制作"},
+            new String[]{"/spire-editor/assets", "爬塔·素材资源"},
+            new String[]{"/spire-editor/map", "爬塔·地图生成"},
+            new String[]{"/spire-editor/access", "爬塔·角色授权"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
             new String[]{"/user/invites", "邀请码"},

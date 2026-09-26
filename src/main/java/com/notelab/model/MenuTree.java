@@ -21,10 +21,18 @@ public final class MenuTree {
                     menu("extract", "结构化抽取", "🧩", "/extract", true))),
             // B/C 拆分 P6：游玩（玩剧本/吸血鬼幸存者/爬塔）已移至 C 端，B 端仅保留配置/生成能力
             // 剧本玩法：生成剧本从原“游戏中心”移入“游戏配置 → 剧本玩法”子菜单（游戏中心组因此为空被剪掉）
+            // 爬塔尖塔：原为单个叶子（页内 4 个 Tab 挤在一起），按功能拆成 6 个子页，
+            // 各子页路由必须同时登记在 PageRoutes.PAGE_ROUTES，否则普通角色看不到（叶子被 RBAC 过滤）。
             group("g_gamecfg", "游戏配置", "🎛️", List.of(
                     group("gc_trpg", "剧本玩法", "🎲", List.of(
                             menu("trpg-gen", "生成剧本", "📜", "/trpg/gen", true))),
-                    menu("spire-editor", "爬塔尖塔", "🗼", "/spire-editor", true))),
+                    group("gc_spire", "爬塔尖塔", "🗼", List.of(
+                            menu("spire-cards", "卡片制作", "🎴", "/spire-editor/cards", true),
+                            menu("spire-chars", "角色制作", "🧙", "/spire-editor/chars", true),
+                            menu("spire-skills", "技能制作", "⚡", "/spire-editor/skills", true),
+                            menu("spire-assets", "素材资源", "🧩", "/spire-editor/assets", true),
+                            menu("spire-map", "地图生成", "🗺️", "/spire-editor/map", true),
+                            menu("spire-access", "角色授权", "👥", "/spire-editor/access", true))))),
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("translate", "翻译句子库", "🌐", "/translate", true),

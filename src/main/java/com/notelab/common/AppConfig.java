@@ -143,4 +143,22 @@ public final class AppConfig {
         }
         return p;
     }
+
+    // ---------- 爬塔素材清单（B 端「素材资源」页的候选池） ----------
+    /**
+     * C 端爬塔素材所在目录。B 端浏览器**读不到 C 端仓库**，所以素材候选清单由后端直接扫盘下发；
+     * 后端与 C 端同机部署，默认指向 C 端仓的 public/spire（即线上 /games/spire 的真实来源）。
+     * 目录不存在时接口返回 available=false，不抛错（本地开发/未部署 C 端时不该把 B 端页面打挂）。
+     */
+    public static String spireAssetRoot() {
+        return get("SPIRE_ASSET_ROOT", "/root/notelab-c/public/spire");
+    }
+
+    /**
+     * 素材 URL 前缀：C 端 basePath（next.config.ts 写死 /games），
+     * 与 C 端 NODE_META.art 的 `/games/spire/...` 同一套约定。
+     */
+    public static String spireAssetUrlPrefix() {
+        return get("SPIRE_ASSET_URL_PREFIX", "/games");
+    }
 }
