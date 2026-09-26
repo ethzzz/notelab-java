@@ -1,12 +1,16 @@
 package com.notelab.service;
 
+import com.notelab.common.PermGuard;
 import com.notelab.model.PageRoutes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +28,10 @@ import com.notelab.dao.PermDao;
  *  - 页面路由  code = "page:<path>"（如 page:/chat），驱动菜单可见性
  *  - API 路由  code = "api:<path>"（如 api:/api/chat），启动时从 SpringMVC 请求映射自动采集
  *
+ * ⚠️ 2026-09-27 起 api:* **会被真正校验**：common.ApiPermInterceptor 对 /api/** 做**默认拒绝**，
+ *    角色组没显式持有对应权限码则 403；user 组的 api 权限由 registerAllRoutes 第 5 步自动同步。
+ *    C 端接口（/api/c/**）与未登录请求豁免 —— 本次只隔离 B 端登录用户。
+ *
  * 自动注册：每次启动时把当前所有 Controller 路由 + 前端页面路由 upsert 进 perm_routes 表，
  * 以后新增路由无需手工登记，重启即自动出现在权限路由表里。
  *
@@ -33,6 +41,8 @@ public final class PermService {
 
     public static final String ROLE_ADMIN = "super_admin";
     public static final String ROLE_USER = "user";
+
+    private static final Logger log = LoggerFactory.getLogger(PermService.class);
 
     private PermService() {}
 
@@ -76,6 +86,56 @@ public final class PermService {
         if (UserDao.countSuperAdmins() == 0) {
             UserDao.promoteFirstUserToAdmin();
         }
+        // 5) 默认拒绝下的普通用户组接口权限：非受限 api 补齐、受限 api 移除（见方法注释）
+        syncUserApiPerms();
+        // 6) 刷新拦截器用的路由表。**必须排在最后**：要晚于上面所有 upsert，否则新路由不在表里
+        PermGuard.reload();
+    }
+
+    /**
+     * 普通用户组的 {@code api:*} 权限码**补齐 + 裁剪**（幂等，规则确定性）。
+     *
+     * <p>为什么非做不可：接口拦截器是**默认拒绝**的，角色组"恰好没勾"就等于"全禁止"。
+     * 改造前 user 组能随便调 {@code /api/c-admin/users} 拿到全部 C 端用户，
+     * 正是因为从来没人管过 {@code api:*} 这一栏 —— 光加拦截器不补数据，会把功能全闸掉。
+     *
+     * <p>为什么可以自动写：划分规则是确定的（非受限全给、受限全不给），没有需要人肉判断的余地，
+     * 且用户已确认过受限范围（用户管理系统 + 界面配置）。
+     *
+     * <p>⚠️ **只动 {@code api:*}**：管理员工调整的 {@code page:*}（页面可见性）一律保留原样 ——
+     * 那是另一回事，在这里重算会吃掉手工配置。
+     *
+     * <p>⚠️ 只处理 {@link #ROLE_USER}。自建角色组仍需管理员到「角色组管理」里勾 ——
+     * 它们的意图没法推断，不该被代码覆盖。
+     */
+    private static void syncUserApiPerms() {
+        List<String> before = PermDao.roleRouteCodes(ROLE_USER);
+        Set<String> keep = new LinkedHashSet<>();
+        for (String c : before) {
+            if (c != null && c.startsWith("page:")) keep.add(c);
+        }
+        int restricted = 0;
+        int given = 0;
+        for (Map<String, Object> r : PermDao.listRoutes()) {
+            if (!"api".equals(String.valueOf(r.get("kind")))) continue;
+            String p = String.valueOf(r.get("path"));
+            if (p == null || p.isEmpty()) continue;
+            if (PermGuard.isRestricted(p)) {
+                restricted++;
+                continue;
+            }
+            keep.add("api:" + p);
+            given++;
+        }
+        List<String> want = new ArrayList<>(keep);
+        // 无变化就不写库 —— 每次启动都做一遍 delete + insert 没意义
+        if (before.size() == want.size() && new HashSet<>(before).containsAll(want)) {
+            log.info("普通用户组接口权限已是最新（api {} 条给 / {} 条受限），跳过写库", given, restricted);
+            return;
+        }
+        PermDao.setRoleRoutes(ROLE_USER, want);
+        log.info("已同步普通用户组接口权限：api {} 条给 / {} 条受限，page 权限保留 {} 条",
+                given, restricted, want.size() - given);
     }
 
     public static boolean isSuperAdmin(Map<String, Object> user) {

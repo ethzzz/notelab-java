@@ -2,6 +2,7 @@ package com.notelab.common;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
@@ -18,5 +19,16 @@ public class WebConfig implements WebMvcConfigurer {
                 .allowedMethods("*")
                 .allowedHeaders("*")
                 .allowCredentials(true);
+    }
+
+    /**
+     * 接口级权限拦截器（默认拒绝），只作用于 /api/**。
+     * 注意：这是一层**门禁**，各 Controller 自己的登录/isSuperAdmin 判断全部保留（双保险）；
+     * C 端接口（/api/c/**）与未登录请求在 ApiPermInterceptor 内部另有豁免。
+     */
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new ApiPermInterceptor())
+                .addPathPatterns("/api/**");
     }
 }
