@@ -32,8 +32,10 @@ public final class MenuTree {
                             menu("spire-skills", "技能制作", "⚡", "/spire-editor/skills", true),
                             menu("spire-assets", "素材资源", "🧩", "/spire-editor/assets", true),
                             menu("spire-map", "地图生成", "🗺️", "/spire-editor/map", true),
-                            menu("spire-access", "角色授权", "👥", "/spire-editor/access", true)),
-                            menu("game-access", "游戏登录管理", "🔑", "/admin/game-access", true)),
+                            menu("spire-access", "角色授权", "👥", "/spire-editor/access", true))),
+                    // 注意：菜单 path 不含 /admin 前缀（basePath 由前端 Next 自己拼），
+                    // 与 PageRoutes.PAGE_ROUTES 保持同一口径，否则守卫匹配不上。
+                    menu("game-access", "游戏登录管理", "🔑", "/game-access", true))),
             group("g_tools", "工具箱", "🧰", List.of(
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("translate", "翻译句子库", "🌐", "/translate", true),
