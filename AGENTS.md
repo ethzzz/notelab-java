@@ -80,6 +80,37 @@ src/main/java/com/notelab/
 
 2026-09-25 的实例：`/c-users` 两处都缺（只能靠 `/perm` 页一张 Card 手工跳转）、`/docs` 与 `/user/invites` 只有菜单节点缺页面路由（普通角色永久不可见）；三者已在同轮补齐（`1934629`）。
 
+## 接口级权限门禁：默认拒绝（`e8b6ad3`，2026-09-27）
+
+页面守卫只挡「看不见 / 打不开页面」，**接口一直是裸的**：此前 `perm_routes` 里的 `api:*` **只登记、不校验**（全仓唯一的 `WebMvcConfigurer` 只配了 CORS，没有拦截器），能不能调完全取决于「那个 Controller 有没有手写 `isSuperAdmin`」。实测同一个 user 账号：`/api/perm/overview` → 403（手写了）、`/api/c-admin/users` → **200**（能拉到全部 C 端用户）。
+
+现在由 `common/ApiPermInterceptor`（注册到 `/api/**`）+ 规则类 `common/PermGuard` 补齐。
+
+**判定顺序**（见 `PermGuard.denyReason`）
+
+| 序 | 条件 | 结果 | 为什么 |
+|---|---|---|---|
+| 1 | `OPTIONS` | 放行 | 拦下会让跨域调用全灭 |
+| 2 | 未登录 / 非 B 端会话 | 放行 | 本次**只隔离已持有 B 端会话**的用户；C 端与匿名沿用各 Controller 自有判断 |
+| 3 | `super_admin` | 放行 | 与菜单树 `allowedPagePaths` 同口径（超管在 `perm_role_routes` 里是 0 行，权限不靠数据） |
+| 4 | `/api/c/**` | 放行 | C 端是另一套身份体系 |
+| 5 | `login/logout/me/register/auth/verify/menu` | 放行 | 会话基础；自身安全由 Controller 的 `unauth()` 保证 |
+| 6 | 其余 | **没有对应 `api:<pattern>` 就 403** | 路由表里查不到也算未登记 → 同样拒绝 |
+
+路径匹配用 `AntPathMatcher`，**越具体的 pattern 优先**（`/api/perm/roles/{code}` 胜过 `/api/perm/roles`）。
+
+**受限清单**（`PermGuard.RESTRICTED_PREFIXES`，只给 super_admin）：`/api/perm`、`/api/c-admin`、`/api/ui-config`。
+⚠️ `/api/c-admin` 名字像 C 端，实际是 **B 端管理员管理 C 端用户**，别因为 `c` 开头就放进 C 端豁免。
+
+**三个操作性事实**
+
+- **新增 Controller 后必须重启**：路由只有启动时会采集进 `perm_routes`，在那之前门禁按「未登记」处理 → 403。这与原有机制一致，不是新约束。
+- `PermService.registerAllRoutes` 第 5 步 `syncUserApiPerms` 每次启动**幂等重算** `user` 组的 `api:*`（非受限全给、受限全不给），所以**不需要上线前手工勾选** —— 默认拒绝下"恰好没勾"等于"全禁止"。⚠️ 代价：在「角色组管理」界面上手工勾的 `api:*` 会被覆盖，想长期调整请改 `RESTRICTED_PREFIXES` 或那一节的规则。该方法**只动 `api:*`**，管理员调过的 `page:*` 原样保留；也**只处理 `ROLE_USER`**，自建角色组仍需管理员自己勾。
+- 各 Controller 里的 `isSuperAdmin` / 登录判断**全部保留**，不做替换 —— 刻意保留双保险，权限码配错时那层还拦得住。
+
+**验证**：`node .sync/verify-perm-guard.js`（user 模式）/ `... admin`（超管模式，需先把账号临时提权、**测完务必降回**）。
+⚠️ 断言写成「不是 200」而不是写死 403：路径存在但 method 不匹配时 Spring 会先回 **405**（handler 都没找到，拦截器根本没介入），405 同样是"没放行"，判成失败是在制造假警报。同理别拿 `POST /api/perm/roles` 这类真会创建/删除的操作去补测。
+
 2026-09-26 的实例：爬塔工坊由**单页 4 个 Tab 拆成 6 个子页**（`spire-editor` → `spire-cards` / `spire-chars` / `spire-skills` /
 `spire-assets` / `spire-map` / `spire-access`，菜单树里包成新分组 `gc_spire`）。两处常量都已同步补齐；
 `notelab-b/next.config.ts` 把裸 `/spire-editor` 307 到 `/spire-editor/cards`（放在 config 层，**不经过页面守卫**）。
