@@ -49,6 +49,7 @@ public class SpireAssetController {
     /** 目录 → 中文分组名；未登记的目录直接用其相对路径当名字 */
     private static final Map<String, String> GROUP_LABEL = Map.of(
             "art", "地图节点整图（位图 · 已接管节点与连线渲染）",
+            "art/dungeon", "地牢元素包（自包含 SVG · 按 boss/elite/normal/shop/rest/path 分组）",
             "png", "素材包 2 倍图（矢量层对应的位图）",
             "svg", "素材包矢量源",
             "", "根目录（清单 / 配置，非素材）");

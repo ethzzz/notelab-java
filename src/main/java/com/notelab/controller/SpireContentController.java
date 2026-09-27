@@ -51,6 +51,8 @@ public class SpireContentController {
     private static final int MAX_NODES = 4000;
     /** 素材路径长度上限（只是个 URL/相对路径，防呆） */
     private static final int MAX_ASSET_PATH = 500;
+    /** 单个槽位的资源池条目上限（同类素材够用即可，防呆） */
+    private static final int MAX_POOL_PER_SLOT = 50;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> get(HttpServletRequest request) {
@@ -84,6 +86,9 @@ public class SpireContentController {
         spire.put("charAccess", sanitizeCharAccess(node.get("charAccess")));
         // 素材资源槽位：{槽位 key: C 端素材路径}；未配置的槽位 C 端回落内置默认
         spire.put("assets", sanitizeAssets(node.get("assets")));
+        // 素材资源池：{槽位 key: [素材路径...]} —— 同一槽位可登记多个候选，
+        // assets 里的那一个才是**当前使用**的；池子为空时 C 端不受影响（仍按 assets 走）。
+        spire.put("assetPool", sanitizeAssetPool(node.get("assetPool")));
         // 地图方案：{defaultId, packs:[{id,name,params,acts:[{act,layers,nodes}]}]}；无方案时 C 端本地生成
         spire.put("maps", sanitizeMaps(node.get("maps")));
         String spireJson = JsonUtil.write(spire);
@@ -145,6 +150,7 @@ public class SpireContentController {
         out.put("skills", List.of());
         out.put("charAccess", new LinkedHashMap<String, List<String>>());
         out.put("assets", new LinkedHashMap<String, String>());
+        out.put("assetPool", new LinkedHashMap<String, List<String>>());
         out.put("maps", Map.of("packs", List.of()));
         Object o = cfg.get("spire");
         if (o instanceof Map) {
@@ -156,6 +162,8 @@ public class SpireContentController {
             if (ca instanceof Map) out.put("charAccess", ca);
             Object as = m.get("assets");
             if (as instanceof Map) out.put("assets", as);
+            Object ap = m.get("assetPool");
+            if (ap instanceof Map) out.put("assetPool", ap);
             Object mp = m.get("maps");
             if (mp instanceof Map) out.put("maps", mp);
         }
@@ -205,6 +213,36 @@ public class SpireContentController {
             String val = v.asText().trim();
             if (val.isEmpty() || val.length() > MAX_ASSET_PATH) return;
             out.put(k, val);
+        });
+        return out;
+    }
+
+    /**
+     * 素材资源池净化：{槽位 key: [素材路径...]}。
+     *
+     * <p>与 assets 的分工：**池子 = 该槽位登记了哪些候选**，assets = 当前使用哪一个。
+     * 同一类型（如精英怪）可以登记多张图，运营在后台切换即可，不用重新找素材路径。
+     *
+     * <p>净化规则：非对象→{}；值非数组→跳过；数组元素只保留合法路径字符串（trim、去重、保序），
+     * 单槽位条目上限 MAX_POOL_PER_SLOT。键的规则与 assets 一致（槽位 key，见 B 端 ASSET_SLOTS）。
+     */
+    private static Map<String, List<String>> sanitizeAssetPool(JsonNode node) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        if (node == null || !node.isObject()) return out;
+        node.fields().forEachRemaining(e -> {
+            String k = e.getKey() == null ? "" : e.getKey().trim();
+            if (k.isEmpty() || k.length() > 120) return;
+            JsonNode v = e.getValue();
+            if (v == null || !v.isArray()) return;
+            List<String> paths = new java.util.ArrayList<>();
+            for (JsonNode it : v) {
+                if (paths.size() >= MAX_POOL_PER_SLOT) break;
+                if (it == null || !it.isTextual()) continue;
+                String p = it.asText().trim();
+                if (p.isEmpty() || p.length() > MAX_ASSET_PATH) continue;
+                if (!paths.contains(p)) paths.add(p);
+            }
+            if (!paths.isEmpty()) out.put(k, paths);
         });
         return out;
     }
