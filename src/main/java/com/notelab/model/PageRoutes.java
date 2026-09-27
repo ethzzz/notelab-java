@@ -45,6 +45,6 @@ public final class PageRoutes {
             new String[]{"/perm", "权限管理"},
             // 路径不含 /admin 前缀：PAGE_ROUTES 与前端 router.pathname 比对，
             // 而 B 端 basePath（/admin）由 Next 自己拼，写进去会永远匹配不上 → 页面被守卫拦掉
-            new String[]{"/game-access", "游戏登录管理"},
+            new String[]{"/game-access", "游戏登录管理"}
     );
 }
