@@ -43,5 +43,6 @@ public final class PageRoutes {
             new String[]{"/c-users", "C端用户管理"},
             new String[]{"/ui", "界面配置"},
             new String[]{"/perm", "权限管理"}
+            new String[]{"/admin/game-access", "游戏登录管理"},
     );
 }
