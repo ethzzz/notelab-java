@@ -222,6 +222,17 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- C 端游戏存档（只增不改）：按 user_id + game_code 唯一，data_json 存各游戏自有结构 ----
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS c_game_save (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                game_code VARCHAR(32) NOT NULL,
+                data_json MEDIUMTEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_user_game (user_id, game_code),
+                KEY idx_game (game_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");

@@ -54,6 +54,10 @@ public class UiConfigController {
         clean.put("menus", cfgNode.has("menus")
                 ? JsonUtil.MAPPER.convertValue(cfgNode.get("menus"), LinkedHashMap.class)
                 : defaults.get("menus"));
+        // 游戏登录管理配置：仅当入参携带 game_access 时覆盖（其余情况保留库内已有值）
+        if (cfgNode.has("game_access")) {
+            clean.put("game_access", JsonUtil.MAPPER.convertValue(cfgNode.get("game_access"), LinkedHashMap.class));
+        }
         try {
             UiConfigDao.saveUiConfig(JsonUtil.write(clean));
         } catch (Exception e) {
