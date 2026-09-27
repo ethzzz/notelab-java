@@ -147,7 +147,7 @@ public final class AppConfig {
     // ---------- 爬塔素材清单（B 端「素材资源」页的候选池） ----------
     /**
      * C 端爬塔素材所在目录。B 端浏览器**读不到 C 端仓库**，所以素材候选清单由后端直接扫盘下发；
-     * 后端与 C 端同机部署，默认指向 C 端仓的 public/spire（即线上 /games/spire 的真实来源）。
+     * 后端与 C 端同机部署，默认指向 C 端仓的 public/spire（即线上 /spire 的真实来源）。
      * 目录不存在时接口返回 available=false，不抛错（本地开发/未部署 C 端时不该把 B 端页面打挂）。
      */
     public static String spireAssetRoot() {
@@ -155,10 +155,13 @@ public final class AppConfig {
     }
 
     /**
-     * 素材 URL 前缀：C 端 basePath（next.config.ts 写死 /games），
-     * 与 C 端 NODE_META.art 的 `/games/spire/...` 同一套约定。
+     * 素材 URL 前缀（拼在 /spire 之前）。⚠️ 默认已从 /games 改为空：
+     * C 端并入个人主页后**不再有 basePath**（nginx / → 3010），public 挂在根路径，
+     * /games 只是站内路由 —— 下发 /games/spire/... 会让 B 端预览缩略图与 C 端 <img> 全部 404。
+     * 历史已存的 /games 前缀路径由 C 端 spireAssetUrl 归一化剥掉，所以新旧值并存无害。
+     * 若日后 C 端重新挂 basePath，用环境变量 SPIRE_ASSET_URL_PREFIX 改回即可。
      */
     public static String spireAssetUrlPrefix() {
-        return get("SPIRE_ASSET_URL_PREFIX", "/games");
+        return get("SPIRE_ASSET_URL_PREFIX", "");
     }
 }
