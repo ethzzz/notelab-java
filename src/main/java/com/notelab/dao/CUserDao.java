@@ -8,8 +8,12 @@ import com.notelab.model.entity.CUser;
 import com.notelab.model.entity.CUserGroup;
 import org.springframework.dao.DuplicateKeyException;
 
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * C 端用户域 DAO（B/C 拆分阶段1）：c_users / c_user_groups 的访问。
@@ -98,6 +102,22 @@ public final class CUserDao {
 
     public static void deleteCUser(long id) {
         DaoSupport.cUser().deleteById(id);
+    }
+
+    /** 从给定 ID 集合中筛出真实存在的用户 ID（用于批量改组时区分「不存在的 ID」） */
+    public static List<Long> listExistingIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<CUser> recs = DaoSupport.cUser().selectList(
+                Wrappers.lambdaQuery(CUser.class).select(CUser::getId).in(CUser::getId, ids));
+        return recs.stream().map(CUser::getId).collect(Collectors.toList());
+    }
+
+    /** 批量把一组用户移动到指定用户组（仅改存在的行），返回受影响行数 */
+    public static int setGroupForUsers(List<Long> ids, String groupCode) {
+        if (ids == null || ids.isEmpty()) return 0;
+        return DaoSupport.cUser().update(Wrappers.lambdaUpdate(CUser.class)
+                .in(CUser::getId, ids)
+                .set(CUser::getGroupCode, groupCode));
     }
 
     public static long countCUsersByGroup(String groupCode) {

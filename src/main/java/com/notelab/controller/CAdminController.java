@@ -10,11 +10,14 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * B 端管理 C 用户（B/C 拆分阶段1）：前缀 /api/c-admin。
@@ -35,6 +38,7 @@ public class CAdminController {
     public static class GroupReq { public String code; public String name; }
     public static class GroupRenameReq { public String name; }
     public static class CreateInviteReq { public Integer max_uses; public Integer count; public String remark = ""; }
+    public static class AddMembersReq { public List<Long> user_ids; }
 
     // ================= C 用户 =================
 
@@ -213,6 +217,45 @@ public class CAdminController {
         }
         CUserDao.deleteGroup(code);
         return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /**
+     * 批量把用户加入当前用户组（按用户 ID）：
+     * - 用户组不存在 → 404
+     * - user_ids 空 / 非正整数 / 重复 → 过滤后忽略，重复仅计一次
+     * - 不存在的 ID 进入 unknown_ids，不影响其余成员写入
+     * - 已是本组成员的用户再写一次属于幂等更新
+     * 返回 added（成功数）/ added_ids / unknown_ids（ID 不存在）/ invalid_ids（非正整数或 null）
+     */
+    @PostMapping("/groups/{code}/members")
+    public ResponseEntity<Map<String, Object>> addMembers(@PathVariable String code,
+                                                          @RequestBody(required = false) AddMembersReq req,
+                                                          HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (CUserDao.getGroup(code) == null) return ResponseEntity.status(404).body(Map.of("error", "用户组不存在"));
+        if (req == null || req.user_ids == null || req.user_ids.isEmpty()) {
+            return ResponseEntity.status(400).body(Map.of("error", "请至少提供一个用户 ID"));
+        }
+        Set<Long> seen = new LinkedHashSet<>();
+        List<Long> valid = new ArrayList<>();
+        List<Long> invalid = new ArrayList<>();
+        for (Long id : req.user_ids) {
+            if (id == null || id <= 0) { invalid.add(id); continue; }
+            if (!seen.add(id)) continue;
+            valid.add(id);
+        }
+        List<Long> existing = CUserDao.listExistingIds(valid);
+        Set<Long> existingSet = new HashSet<>(existing);
+        List<Long> unknown = valid.stream().filter(v -> !existingSet.contains(v)).collect(Collectors.toList());
+        int count = CUserDao.setGroupForUsers(existing, code);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("added", (long) count);
+        body.put("added_ids", existing);
+        body.put("unknown_ids", unknown);
+        body.put("invalid_ids", invalid);
+        return ResponseEntity.ok(body);
     }
 
     // ================= C 端注册邀请码 =================
