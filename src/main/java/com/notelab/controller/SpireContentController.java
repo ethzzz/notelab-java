@@ -153,6 +153,26 @@ public class SpireContentController {
     );
 
     /**
+     * 内置平衡/难度参数（**只读镜像**）：内容 = notelab-c/lib/spire-engine.ts 的
+     * MAP_ROWS / TOTAL_ACTS / ACT_BOSS_IDS / actScale 步进。用途：让「难度配置」页总有
+     * 可用默认值，且 C 端在无自定义 balance 时回落这些内置常量。
+     * ⚠️ 调平衡改此处须同步 C 端 spire-engine.ts 的对应常量，否则两端不一致。
+     */
+    private static final int BASE_TOTAL_ACTS = 3;
+    private static final int BASE_MAP_ROWS = 16;
+    private static final List<String> BASE_ACT_BOSS_IDS = List.of("king", "jadeGolem", "spireLord");
+    private static final double BASE_ACT_SCALE_STEP = 0.3;
+
+    private static Map<String, Object> baseBalance() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("totalActs", BASE_TOTAL_ACTS);
+        m.put("mapRows", BASE_MAP_ROWS);
+        m.put("actBossIds", new ArrayList<>(BASE_ACT_BOSS_IDS));
+        m.put("actScaleStep", BASE_ACT_SCALE_STEP);
+        return m;
+    }
+
+    /**
      * spire JSON 体积上限（字符）。原来的 200KB 是按「只有卡/角色」估的；
      * 地图方案是自包含的整图节点表（一套 3 幕约 12KB），把上限提到 1MB 才够存几套。
      * 库里是 mediumtext（16MB），1MB 距上限很远；再大就该走对象存储而不是配置表。
@@ -177,6 +197,8 @@ public class SpireContentController {
         body.put("baseCharacters", BASE_CHARACTERS);
         // 只读常量，供 B 端「敌人制作」页打"内置/自定义"标签；不落库
         body.put("baseEnemies", BASE_ENEMIES);
+        // 只读常量，供 B 端「难度配置」页展示内置默认值；不落库
+        body.put("baseBalance", baseBalance());
         return ResponseEntity.ok(body);
     }
 
@@ -210,6 +232,8 @@ public class SpireContentController {
         spire.put("maps", sanitizeMaps(node.get("maps")));
         // 敌人/Boss：{id,name,icon,hp,elite?,boss?,moves:[...]}；库中无则用内置 10 懒 seed
         spire.put("enemies", sanitizeEnemies(node.get("enemies")));
+        // 平衡/难度：{totalActs,mapRows,actBossIds[],actScaleStep}；库中无则用内置默认值
+        spire.put("balance", sanitizeBalance(node.get("balance")));
         String spireJson = JsonUtil.write(spire);
         if (spireJson.length() > MAX_SPIRE_CHARS) {
             return ResponseEntity.status(400).body(Map.of("error",
@@ -260,7 +284,7 @@ public class SpireContentController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
-    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / assetPool / maps / enemies */
+    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / assetPool / maps / enemies / balance */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> spireOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -274,6 +298,8 @@ public class SpireContentController {
         out.put("maps", Map.of("packs", List.of()));
         // 敌人默认懒 seed 内置 10（库中无敌人数据时也保证后台可编辑内置敌人）
         out.put("enemies", new ArrayList<>(BASE_ENEMIES));
+        // 平衡/难度默认内置（库中无 balance 时用内置常量）
+        out.put("balance", baseBalance());
         Object o = cfg.get("spire");
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
@@ -295,6 +321,9 @@ public class SpireContentController {
             Object en = m.get("enemies");
             out.put("enemies", (en instanceof List && !((List<?>) en).isEmpty())
                     ? en : new ArrayList<>(BASE_ENEMIES));
+            // 平衡/难度：库中有 map 则用库的（缺字段以内置补齐），否则继续用内置
+            Object ba = m.get("balance");
+            if (ba instanceof Map) out.put("balance", mergeBalance((Map<String, Object>) ba));
         }
         return out;
     }
@@ -447,6 +476,50 @@ public class SpireContentController {
     private static String str(JsonNode n, String field) {
         JsonNode v = n == null ? null : n.get(field);
         return v == null || !v.isTextual() ? "" : v.asText();
+    }
+
+    /**
+     * 平衡/难度净化：totalActs 1-8、mapRows 1-400、actScaleStep 0-5（小数），actBossIds 为
+     * 非空字符串数组（幕 BOSS 的敌人 id，C 端缺失时回退终幕 BOSS）。非法值回落内置默认，
+     * 缺字段用 baseBalance 补齐，保证 C 端无脑消费也不会拿到 null。
+     */
+    private static Map<String, Object> sanitizeBalance(JsonNode node) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (node == null || !node.isObject()) return baseBalance();
+        out.put("totalActs", clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS));
+        out.put("mapRows", clampInt(node.get("mapRows"), 1, MAX_NODES, BASE_MAP_ROWS));
+        out.put("actScaleStep", clampDbl(node.get("actScaleStep"), 0.0, 5.0, BASE_ACT_SCALE_STEP));
+        List<String> ids = new java.util.ArrayList<>();
+        JsonNode ab = node.get("actBossIds");
+        if (ab != null && ab.isArray()) {
+            for (JsonNode it : ab) {
+                if (it == null || !it.isTextual()) continue;
+                String id = it.asText().trim();
+                if (!id.isEmpty() && ids.size() < MAX_ACTS && !ids.contains(id)) ids.add(id);
+            }
+        }
+        // 至少填到 totalActs 个：不足的用已收集的循环补齐（保证每幕都有 BOSS id，C 端不会越界）
+        int need = clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS);
+        if (ids.isEmpty()) ids.addAll(BASE_ACT_BOSS_IDS);
+        while (ids.size() < need) ids.add(ids.get((ids.size() - 1) % ids.size()));
+        out.put("actBossIds", new ArrayList<>(ids.subList(0, need)));
+        return out;
+    }
+
+    /** 库中有 balance map 时，用库值覆盖内置默认（缺字段保留内置），再走净化口径保证形状合法 */
+    private static Map<String, Object> mergeBalance(Map<String, Object> lib) {
+        Map<String, Object> merged = new LinkedHashMap<>(baseBalance());
+        for (String k : new String[] { "totalActs", "mapRows", "actScaleStep", "actBossIds" }) {
+            if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
+        }
+        return sanitizeBalance(JsonUtil.MAPPER.valueToTree(merged));
+    }
+
+    /** 取 Double 并夹到 [lo,hi]，非法/缺失返回 dft */
+    private static double clampDbl(JsonNode n, double lo, double hi, double dft) {
+        if (n == null || !n.isNumber()) return dft;
+        double v = n.asDouble();
+        return Math.max(lo, Math.min(hi, v));
     }
 
     /** 取整数并夹到 [lo,hi]，非法/缺失返回 dft（敌人血量、move 数值用） */

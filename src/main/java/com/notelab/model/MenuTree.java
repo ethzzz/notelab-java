@@ -31,6 +31,7 @@ public final class MenuTree {
                             menu("spire-chars", "角色制作", "🧙", "/spire-editor/chars", true),
                             menu("spire-skills", "技能制作", "⚡", "/spire-editor/skills", true),
                             menu("spire-enemies", "敌人制作", "👾", "/spire-editor/enemies", true),
+                            menu("spire-balance", "难度配置", "⚖️", "/spire-editor/balance", true),
                             menu("spire-assets", "素材资源", "🧩", "/spire-editor/assets", true),
                             menu("spire-map", "地图生成", "🗺️", "/spire-editor/map", true),
                             menu("spire-access", "角色授权", "👥", "/spire-editor/access", true))),
