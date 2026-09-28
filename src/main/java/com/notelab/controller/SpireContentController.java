@@ -285,6 +285,33 @@ public class SpireContentController {
     }
 
     /**
+     * 已发布快照的**素材切片**（GET /api/spire-content/published，B 端登录可读）。
+     *
+     * <p>为什么需要它：保存（save）与发布（publish）是**两步**。保存完本地 dirty 就清了，
+     * 但只要没点「发布到 C 端」，玩家看到的仍是旧快照 —— 前端没有可比对象，就无从提示
+     * 「你改了但还没发布」，而这是运营最高频的事故（表现为"后台配好了，游戏里没变"）。
+     *
+     * <p>只回 assets / assetPool 两个切片：地图方案可以上 MB，没必要每次进页面都整份下发；
+     * 以后别的页面要做同类对比，再加切片即可。
+     */
+    @GetMapping("/published")
+    public ResponseEntity<Map<String, Object>> published(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Object snap = UiConfigService.getConfig().get("spire_published");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("published", snap instanceof Map);
+        out.put("assets", new LinkedHashMap<String, String>());
+        out.put("assetPool", new LinkedHashMap<String, List<String>>());
+        if (snap instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) snap;
+            if (m.get("assets") instanceof Map) out.put("assets", m.get("assets"));
+            if (m.get("assetPool") instanceof Map) out.put("assetPool", m.get("assetPool"));
+        }
+        return ResponseEntity.ok(out);
+    }
+
+    /**
      * B/C 拆分阶段2：发布——把当前 spire 工坊内容整体快照写入顶层键 spire_published
      * （合并写，保留 background/menus/spire 等其它键，写法同 save）。
      */
