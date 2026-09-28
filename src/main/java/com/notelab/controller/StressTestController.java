@@ -157,31 +157,30 @@ public class StressTestController {
                 } catch (IOException e) { running.set(false); }
             }, 250, 250, TimeUnit.MILLISECONDS);
 
-            // 工作线程
+            // 工作线程：原子预约 slot，保证「总请求数」模式下精确不超发
+            int cap = byDuration ? Integer.MAX_VALUE : total;
             for (int i = 0; i < concurrency; i++) {
                 final int workerIndex = i;
                 workers.add(pool.submit(() -> {
                     while (running.get() && !handle.cancel.get()) {
-                        int done = completed.get();
-                        if (byDuration) {
-                            if (System.currentTimeMillis() - startWall >= durationSec * 1000L) break;
-                            if (done >= hardCap) break;
-                        } else {
-                            if (done >= total) break;
-                        }
-                        // ramp-up：前 rampUpSec 秒内逐步放开并发数（按 worker 序号门控）
+                        if (byDuration && System.currentTimeMillis() - startWall >= durationSec * 1000L) break;
+                        int slot = completed.getAndIncrement();
+                        if (slot >= cap) { completed.decrementAndGet(); break; }
+                        // ramp-up：前 rampUpSec 秒内逐步放开并发数（按 worker 序号门控），未放开则回退预约并重试
                         if (rampUpSec > 0) {
                             long elapsed = System.currentTimeMillis() - startWall;
                             int allowed = (int) Math.ceil(concurrency
                                     * Math.min(elapsed, (long) rampUpSec * 1000) / ((double) rampUpSec * 1000));
                             if (workerIndex >= allowed) {
+                                completed.decrementAndGet();
                                 try { Thread.sleep(50); } catch (InterruptedException ie) {
+                                    completed.decrementAndGet();
                                     Thread.currentThread().interrupt(); break;
                                 }
                                 continue;
                             }
                         }
-                        fireOne(method, fullUrl, headers, body, completed, success, failed, totalBytes,
+                        fireOne(method, fullUrl, headers, body, success, failed, totalBytes,
                                 latencies, latIdx, statusCounts, errors, startWall);
                     }
                 }));
@@ -218,7 +217,7 @@ public class StressTestController {
     }
 
     private void fireOne(String method, String fullUrl, Map<String, String> headers, String body,
-                        AtomicInteger completed, AtomicInteger success, AtomicInteger failed,
+                        AtomicInteger success, AtomicInteger failed,
                         AtomicLong totalBytes, long[] latencies, AtomicInteger latIdx,
                         Map<Integer, AtomicInteger> statusCounts, List<Map<String, Object>> errors, long startWall) {
         long t0 = System.currentTimeMillis();
@@ -259,7 +258,6 @@ public class StressTestController {
                 errors.add(Map.of("ts", System.currentTimeMillis() - startWall, "message", String.valueOf(errMsg)));
             }
         }
-        completed.incrementAndGet();
         if (errMsg == null) {
             if (status >= 200 && status < 400) success.incrementAndGet();
             else failed.incrementAndGet();
