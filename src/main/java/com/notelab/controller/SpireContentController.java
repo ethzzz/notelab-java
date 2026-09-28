@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,11 +32,55 @@ public class SpireContentController {
      * 但 B 端仓库没有引擎代码，故由后端提供这份常量。
      * ⚠️ 新增/改名内置角色时必须同步此处，否则 B 端授权界面看不到该角色（无法勾进白名单）。
      */
+    /** 构造一个基础角色（字段与 notelab-c/lib/spire-engine.ts 的 CharacterDef 完全对齐） */
+    private static Map<String, Object> baseChar(String id, String name, String icon, int maxHp, String desc,
+            List<String> startDeck, List<Map<String, Object>> passives, Map<String, Object> skill) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("icon", icon); m.put("maxHp", maxHp);
+        m.put("desc", desc); m.put("startDeck", startDeck); m.put("passives", passives); m.put("skill", skill);
+        return m;
+    }
+    private static Map<String, Object> basePassive(String kind, String name, String icon, String desc, int value) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind); m.put("name", name); m.put("icon", icon); m.put("desc", desc); m.put("value", value);
+        return m;
+    }
+    private static Map<String, Object> baseSkill(String kind, String name, String icon, String desc,
+            int cooldown, int value, String cardId) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind); m.put("name", name); m.put("icon", icon); m.put("desc", desc);
+        m.put("cooldown", cooldown); m.put("value", value);
+        if (cardId != null) m.put("cardId", cardId);
+        return m;
+    }
+
+    /**
+     * 内置基础角色（**完整定义**，只读镜像）：内容 = notelab-c/lib/spire-engine.ts 的 BASE_CHARACTERS
+     * （id / name / icon / maxHp / desc / startDeck / passives / skill）。
+     * 用途：①「角色授权」界面展示可选角色池；② spireOf 懒 seed——库中无角色数据时填充，
+     * 让后台「角色制作」页总能看见并编辑这 4 个内置角色（C 端同 id 覆盖代码兜底）。
+     * ⚠️ 新增/改名/调数值的内置角色必须同步 notelab-c/lib/spire-engine.ts 的 BASE_CHARACTERS，否则两端不一致。
+     */
     private static final List<Map<String, Object>> BASE_CHARACTERS = List.of(
-            Map.of("id", "blade", "name", "刃影", "icon", "🥷"),
-            Map.of("id", "guard", "name", "铁壁守卫", "icon", "🛡️"),
-            Map.of("id", "mage", "name", "秘法编织者", "icon", "🔮"),
-            Map.of("id", "wuzhuge", "name", "武诸葛", "icon", "🪶"));
+            baseChar("blade", "刃影", "🥷", 80, "磨砺锋刃的刺客，攻伐凌厉",
+                    List.of("strike", "strike", "strike", "strike", "strike", "defend", "defend", "defend", "defend", "bash"),
+                    List.of(basePassive("atk-bonus", "淬锋", "🗡️", "攻击卡伤害 +1（全局生效）", 1)),
+                    baseSkill("generate-card", "影分身", "🌑", "凭空生成一张 0 费【影袭】加入手牌", 3, 1, "shadowstrike")),
+            baseChar("guard", "铁壁守卫", "🛡️", 90, "岿然不动的前卫，铜墙铁壁",
+                    List.of("strike", "strike", "strike", "strike", "defend", "defend", "defend", "defend", "defend", "bash", "shrug"),
+                    List.of(basePassive("block-on-turn-start", "甲铸", "⚒️", "每回合开始时获得 2 点格挡", 2)),
+                    baseSkill("gain-block", "钢铁壁垒", "🏰", "立即获得 10 点格挡", 3, 10, null)),
+            baseChar("mage", "秘法编织者", "🔮", 72, "编织奥术的智者，牌流不竭",
+                    List.of("strike", "strike", "strike", "strike", "defend", "defend", "defend", "defend", "bash", "flex"),
+                    List.of(basePassive("energy-on-play-count", "奥术涌动", "✨", "每打出 3 张牌获得 1 点能量", 3)),
+                    baseSkill("draw-cards", "灵感迸发", "📖", "立即抽 2 张牌", 3, 2, null)),
+            baseChar("wuzhuge", "武诸葛", "🪶", 76, "鞠躬尽瘁的谋主，运筹帷幄，牌随势动",
+                    List.of("strike", "strike", "strike", "strike", "strike", "defend", "defend", "defend", "bash", "anger"),
+                    List.of(
+                            basePassive("start-hand-7", "尽瘁", "🕯️", "开局摸至 7 张手牌；每回合准备阶段回复生命（= 卡组中攻击卡数量，至少 1），并观看牌堆顶 7 张牌任意安排到顶/底", 7),
+                            basePassive("echo-on-play", "情势", "🀄", "打出卡片时，若手牌中还有同类型（攻击/防御/增益/特殊）的牌，可三选一：效果×同类数量 / 抽同类数量张牌 / 回复同类数量点生命", 0)),
+                    baseSkill("echo-copy", "锦囊复刻", "📜", "每轮对战限一次：选择手牌中一张牌生成其原始复制；复制牌打出后会在回合结束时回到手中，未打出则留在手牌", 0, 1, null))
+    );
 
     /**
      * spire JSON 体积上限（字符）。原来的 200KB 是按「只有卡/角色」估的；
@@ -146,7 +191,8 @@ public class SpireContentController {
     private static Map<String, Object> spireOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("cards", List.of());
-        out.put("characters", List.of());
+        // 角色默认懒 seed 内置 4（库中无角色数据时也保证后台可编辑内置角色）
+        out.put("characters", new ArrayList<>(BASE_CHARACTERS));
         out.put("skills", List.of());
         out.put("charAccess", new LinkedHashMap<String, List<String>>());
         out.put("assets", new LinkedHashMap<String, String>());
@@ -156,7 +202,10 @@ public class SpireContentController {
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
             out.put("cards", m.getOrDefault("cards", List.of()));
-            out.put("characters", m.getOrDefault("characters", List.of()));
+            // 角色：库中有非空列表则用库的，否则继续用内置 4（懒 seed）
+            Object ch = m.get("characters");
+            out.put("characters", (ch instanceof List && !((List<?>) ch).isEmpty())
+                    ? ch : new ArrayList<>(BASE_CHARACTERS));
             out.put("skills", m.getOrDefault("skills", List.of()));
             Object ca = m.get("charAccess");
             if (ca instanceof Map) out.put("charAccess", ca);
