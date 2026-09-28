@@ -15,7 +15,8 @@ import java.util.Map;
 
 /**
  * 爬塔尖塔内容工坊：GET|POST /api/spire-content。
- * 自定义卡/角色/技能模板存 ui_config JSON 的 "spire" 键（{cards:[], characters:[], skills:[]}），不新建表；
+ * 自定义卡/角色/技能模板/敌人存 ui_config JSON 的 "spire" 键
+ * （{cards:[], characters:[], skills:[], charAccess:{}, assets:{}, assetPool:{}, maps:{}, enemies:[]}），不新建表；
  * 前端引擎在加载时做净化与注册，这里只做结构与体积校验。
  *
  * 角色授权（spire 第 4 键 charAccess）：{组码: [可选角色 id...]}，C 端角色选择页按登录用户所属
@@ -83,6 +84,75 @@ public class SpireContentController {
     );
 
     /**
+     * 内置基础敌人（**完整定义**，只读镜像）：内容 = notelab-c/lib/spire-engine.ts 的 ENEMIES
+     * （id / name / icon / hp / elite / boss / moves）。用途同 BASE_CHARACTERS：
+     * ①「敌人制作」界面展示可选敌人池；② spireOf 懒 seed——库中无敌人数据时填充，
+     * 让后台「敌人制作」页总能看见并编辑这 10 个内置敌人（C 端同 id 覆盖代码兜底）。
+     * ⚠️ 新增/改名/调数值的内置敌人必须同步 notelab-c/lib/spire-engine.ts 的 ENEMIES，否则两端不一致。
+     */
+    private static Map<String, Object> baseMove(String name, String kind, int amt, int hits, String icon, String debuffKind) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", name); m.put("kind", kind); m.put("amt", amt); m.put("hits", hits); m.put("icon", icon);
+        if (debuffKind != null) m.put("debuffKind", debuffKind);
+        return m;
+    }
+    private static Map<String, Object> baseEnemy(String id, String name, String icon, int hp,
+            Boolean elite, Boolean boss, List<Map<String, Object>> moves) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("icon", icon); m.put("hp", hp); m.put("moves", moves);
+        if (Boolean.TRUE.equals(elite)) m.put("elite", true);
+        if (Boolean.TRUE.equals(boss)) m.put("boss", true);
+        return m;
+    }
+
+    private static final List<Map<String, Object>> BASE_ENEMIES = List.of(
+            baseEnemy("cultist", "邪教徒", "👤", 30, false, false, List.of(
+                    baseMove("嚎叫", "buff", 2, 1, "📣", null),
+                    baseMove("黑暗打击", "atk", 6, 1, "🗡️", null),
+                    baseMove("黑暗打击", "atk", 6, 1, "🗡️", null))),
+            baseEnemy("worm", "颚虫", "🐛", 34, false, false, List.of(
+                    baseMove("撕咬", "atk", 11, 1, "👄", null),
+                    baseMove("鞭打", "atk", 7, 1, "💥", null),
+                    baseMove("盘蜷", "block", 6, 1, "🛡️", null))),
+            baseEnemy("louse", "虱子", "🪲", 24, false, false, List.of(
+                    baseMove("叮咬", "atk", 6, 1, "🦷", null),
+                    baseMove("吐丝", "debuff", 2, 1, "🕸️", "weak"),
+                    baseMove("叮咬", "atk", 6, 1, "🦷", null))),
+            baseEnemy("slime", "酸液史莱姆", "🦠", 36, false, false, List.of(
+                    baseMove("撞击", "atk", 9, 1, "💢", null),
+                    baseMove("重压", "atk", 12, 1, "🫠", null),
+                    baseMove("分泌", "buff", 2, 1, "🫧", null))),
+            baseEnemy("fungi", "真菌兽", "🍄", 28, false, false, List.of(
+                    baseMove("生长", "buff", 3, 1, "🌱", null),
+                    baseMove("啃咬", "atk", 7, 1, "🦷", null),
+                    baseMove("孢子喷吐", "debuff", 1, 1, "☁️", "vuln"))),
+            baseEnemy("nob", "哥布林头目", "👹", 62, true, false, List.of(
+                    baseMove("怒吼", "buff", 2, 1, "📣", null),
+                    baseMove("冲撞", "atk", 13, 1, "🐂", null),
+                    baseMove("碎颅击", "atk", 9, 1, "💀", null))),
+            baseEnemy("sentry", "石像哨卫", "🗿", 58, true, false, List.of(
+                    baseMove("石化凝视", "debuff", 1, 1, "👁️", "vuln"),
+                    baseMove("重拳", "atk", 12, 1, "🪨", null),
+                    baseMove("岩甲", "block", 9, 1, "🛡️", null))),
+            baseEnemy("king", "史莱姆之王", "👑", 130, false, true, List.of(
+                    baseMove("王者重击", "atk", 16, 1, "👑", null),
+                    baseMove("泰山压顶", "atk", 11, 1, "🌊", null),
+                    baseMove("沸腾", "buff", 3, 1, "🫧", null),
+                    baseMove("腐蚀喷吐", "debuff", 2, 1, "☠️", "weak"))),
+            baseEnemy("jadeGolem", "青玉魔像", "💠", 165, false, true, List.of(
+                    baseMove("碎岩重拳", "atk", 18, 1, "🪨", null),
+                    baseMove("晶簇崩落", "atk", 9, 2, "💠", null),
+                    baseMove("青玉壁障", "block", 14, 1, "🛡️", null),
+                    baseMove("共鸣", "buff", 3, 1, "🔮", null))),
+            baseEnemy("spireLord", "尖塔之主", "🔺", 200, false, true, List.of(
+                    baseMove("终焉裁决", "atk", 22, 1, "⚔️", null),
+                    baseMove("万钧坠击", "atk", 10, 3, "🌩️", null),
+                    baseMove("邪能灌注", "buff", 4, 1, "🔺", null),
+                    baseMove("王座威压", "debuff", 2, 1, "🌀", "weak"),
+                    baseMove("绝望凝视", "debuff", 2, 1, "👁️", "vuln")))
+    );
+
+    /**
      * spire JSON 体积上限（字符）。原来的 200KB 是按「只有卡/角色」估的；
      * 地图方案是自包含的整图节点表（一套 3 幕约 12KB），把上限提到 1MB 才够存几套。
      * 库里是 mediumtext（16MB），1MB 距上限很远；再大就该走对象存储而不是配置表。
@@ -105,6 +175,8 @@ public class SpireContentController {
         Map<String, Object> body = spireOf(UiConfigService.getConfig());
         // 只读常量，供 B 端授权界面展示内置角色；不落库（publish 快照走 spireOf，不含该键）
         body.put("baseCharacters", BASE_CHARACTERS);
+        // 只读常量，供 B 端「敌人制作」页打"内置/自定义"标签；不落库
+        body.put("baseEnemies", BASE_ENEMIES);
         return ResponseEntity.ok(body);
     }
 
@@ -136,6 +208,8 @@ public class SpireContentController {
         spire.put("assetPool", sanitizeAssetPool(node.get("assetPool")));
         // 地图方案：{defaultId, packs:[{id,name,params,acts:[{act,layers,nodes}]}]}；无方案时 C 端本地生成
         spire.put("maps", sanitizeMaps(node.get("maps")));
+        // 敌人/Boss：{id,name,icon,hp,elite?,boss?,moves:[...]}；库中无则用内置 10 懒 seed
+        spire.put("enemies", sanitizeEnemies(node.get("enemies")));
         String spireJson = JsonUtil.write(spire);
         if (spireJson.length() > MAX_SPIRE_CHARS) {
             return ResponseEntity.status(400).body(Map.of("error",
@@ -186,7 +260,7 @@ public class SpireContentController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
-    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / maps */
+    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / assetPool / maps / enemies */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> spireOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -198,6 +272,8 @@ public class SpireContentController {
         out.put("assets", new LinkedHashMap<String, String>());
         out.put("assetPool", new LinkedHashMap<String, List<String>>());
         out.put("maps", Map.of("packs", List.of()));
+        // 敌人默认懒 seed 内置 10（库中无敌人数据时也保证后台可编辑内置敌人）
+        out.put("enemies", new ArrayList<>(BASE_ENEMIES));
         Object o = cfg.get("spire");
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
@@ -215,6 +291,10 @@ public class SpireContentController {
             if (ap instanceof Map) out.put("assetPool", ap);
             Object mp = m.get("maps");
             if (mp instanceof Map) out.put("maps", mp);
+            // 敌人：库中有非空列表则用库的，否则继续用内置 10（懒 seed）
+            Object en = m.get("enemies");
+            out.put("enemies", (en instanceof List && !((List<?>) en).isEmpty())
+                    ? en : new ArrayList<>(BASE_ENEMIES));
         }
         return out;
     }
@@ -367,5 +447,62 @@ public class SpireContentController {
     private static String str(JsonNode n, String field) {
         JsonNode v = n == null ? null : n.get(field);
         return v == null || !v.isTextual() ? "" : v.asText();
+    }
+
+    /** 取整数并夹到 [lo,hi]，非法/缺失返回 dft（敌人血量、move 数值用） */
+    private static int clampInt(JsonNode n, int lo, int hi, int dft) {
+        if (n == null || !n.isNumber()) return dft;
+        return Math.max(lo, Math.min(hi, n.asInt()));
+    }
+
+    /** 意图类型白名单（与 C 端 Move.kind 对齐） */
+    private static final java.util.Set<String> MOVE_KINDS =
+            java.util.Set.of("atk", "block", "buff", "debuff");
+
+    /**
+     * 敌人净化：每条必须 id / name 非空、至少 1 个合法 move，否则丢弃该条（结构与体积校验，
+     * 不做战斗平衡裁决——平衡在 C 端引擎与 `actScale` 倍率）。move 必须 name/kind 合法，
+     * kind 非白名单丢弃该 move；debuffKind 只接受 weak/vuln。
+     */
+    private static List<Map<String, Object>> sanitizeEnemies(JsonNode node) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        if (node == null || !node.isArray()) return out;
+        for (JsonNode e : node) {
+            if (e == null || !e.isObject()) continue;
+            String id = str(e, "id");
+            String name = str(e, "name");
+            if (id.isEmpty() || name.isEmpty()) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("name", name);
+            m.put("icon", e.has("icon") && e.get("icon").isTextual() ? e.get("icon").asText() : "👾");
+            m.put("hp", clampInt(e.get("hp"), 1, 999, 30));
+            JsonNode el = e.get("elite");
+            if (el != null && el.isBoolean() && el.asBoolean()) m.put("elite", true);
+            JsonNode bo = e.get("boss");
+            if (bo != null && bo.isBoolean() && bo.asBoolean()) m.put("boss", true);
+            List<Map<String, Object>> moves = new java.util.ArrayList<>();
+            JsonNode mv = e.get("moves");
+            if (mv != null && mv.isArray()) {
+                for (JsonNode mm : mv) {
+                    if (mm == null || !mm.isObject()) continue;
+                    String kind = str(mm, "kind");
+                    if (!MOVE_KINDS.contains(kind)) continue;
+                    Map<String, Object> mv2 = new LinkedHashMap<>();
+                    mv2.put("name", str(mm, "name"));
+                    mv2.put("kind", kind);
+                    mv2.put("amt", clampInt(mm.get("amt"), 0, 99, 1));
+                    mv2.put("hits", clampInt(mm.get("hits"), 1, 9, 1));
+                    mv2.put("icon", mm.has("icon") && mm.get("icon").isTextual() ? mm.get("icon").asText() : "❓");
+                    String dk = str(mm, "debuffKind");
+                    if (dk.equals("weak") || dk.equals("vuln")) mv2.put("debuffKind", dk);
+                    moves.add(mv2);
+                }
+            }
+            if (moves.isEmpty()) continue; // 无可用招式的敌人无意义，丢弃
+            m.put("moves", moves);
+            out.add(m);
+        }
+        return out;
     }
 }
