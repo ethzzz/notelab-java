@@ -105,8 +105,9 @@ public class OpsController {
                 "HTTP " + menu.code + (authOn ? " —— 已拦截" : menu.code == 200 ? " —— 未登录竟能取到菜单，鉴权异常！" : " —— 非预期状态码，需人工确认")));
         if (authOn) ok++; else if (menu.code == 200) fail++; else warn++;
 
-        // ③ C 端已发布内容：匿名接口能取到 assets 键，说明"保存+发布"两步都走完了
-        String cBody = body(3010, "/api/c/spire/content");
+        // ③ C 端已发布内容：匿名接口能取到 assets 键，说明"保存+发布"两步都走完了。
+        //    ⚠️ 这个接口在**后端**而不是 C 端：nginx 把 /api 全部转给 :8001，直连 :3010 是 404。
+        String cBody = body(8001, "/api/c/spire/content");
         boolean published = cBody != null && cBody.contains("assets");
         items.add(item(published ? "ok" : "warn", "C 端爬塔内容已发布",
                 published ? "/api/c/spire/content 返回含 assets（" + cBody.length() + " 字节）" : "取不到已发布内容（未发布？）"));
@@ -215,7 +216,9 @@ public class OpsController {
             g.put("subject", kv[0]);
             g.put("date", kv.length > 1 ? kv[1] : "");
         }
-        String[] st = exec(List.of("git", "-C", dir, "status", "--porcelain"), CMD_TIMEOUT_SEC);
+        // -uno：只统计**已跟踪文件**的改动。untracked 的临时文档（如 TASK-PROMPT-*.md）
+        //      不影响部署，算进去会让看板天天报"脏"，反而把真正的改动淹没掉。
+        String[] st = exec(List.of("git", "-C", dir, "status", "--porcelain", "-uno"), CMD_TIMEOUT_SEC);
         g.put("dirty", st[0].isEmpty() ? 0 : st[0].split("\n").length);
         String[] ab = exec(List.of("git", "-C", dir, "rev-list", "--left-right", "--count", "HEAD...origin/main"), CMD_TIMEOUT_SEC);
         if (!ab[0].isEmpty()) {
