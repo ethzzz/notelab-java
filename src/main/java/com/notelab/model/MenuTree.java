@@ -56,7 +56,9 @@ public final class MenuTree {
                     menu("c-users", "C端用户管理", "🙋", "/c-users", true))),
             group("g_system", "系统管理", "⚙️", List.of(
                     menu("ui", "界面配置", "🎛️", "/ui", true),
-                    menu("perm", "权限管理", "🔐", "/perm", true))));
+                    menu("perm", "权限管理", "🔐", "/perm", true),
+                    // 运维看板：只读展示进程/端口/git/资源 + 发布自检，仅超管（见 PermService 默认排除）
+                    menu("ops", "运维看板", "🩺", "/ops", true))));
 
     private static Map<String, Object> menu(String key, String name, String icon, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();
