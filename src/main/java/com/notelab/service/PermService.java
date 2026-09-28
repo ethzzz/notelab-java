@@ -75,10 +75,12 @@ public final class PermService {
                     "api", nameByPath.getOrDefault(e.getKey(), ""));
         }
         // 3) 普通角色默认权限（仅首次为空时写入，不覆盖已有配置）：全部功能页，不含 ui/perm 管理页
+        //    /stress-test（接口压测）也排除：它是超管专属运维工具（服务端代理发请求，有 SSRF/DoS 风险），普通角色默认无权看到入口
         if (PermDao.roleRouteCodes(ROLE_USER).isEmpty()) {
             List<String> defaults = new ArrayList<>();
             for (String[] p : PageRoutes.PAGE_ROUTES) {
-                if (!p[0].equals("/ui") && !p[0].equals("/perm")) defaults.add("page:" + p[0]);
+                if (!p[0].equals("/ui") && !p[0].equals("/perm") && !p[0].equals("/stress-test"))
+                    defaults.add("page:" + p[0]);
             }
             PermDao.setRoleRoutes(ROLE_USER, defaults);
         }

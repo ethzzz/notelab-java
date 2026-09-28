@@ -45,6 +45,7 @@ public final class MenuTree {
                     menu("docs", "文档编辑", "📝", "/docs", true),
                     menu("notes", "笔记", "🗒️", "/notes", true),
                     menu("tools", "AI工具库", "🔧", "/tools", true),
+                    menu("stress-test", "接口压测", "🔥", "/stress-test", true),
                     menu("lowcode", "低代码平台", "🧱", "/lowcode", true),
                     menu("image", "文生图", "🎨", "/image", false),
                     menu("audio", "语音转文字", "🎤", "/audio", false))),
