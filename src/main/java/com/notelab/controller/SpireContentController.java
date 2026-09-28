@@ -15,8 +15,8 @@ import java.util.Map;
 
 /**
  * 爬塔尖塔内容工坊：GET|POST /api/spire-content。
- * 自定义卡/角色/技能模板/敌人存 ui_config JSON 的 "spire" 键
- * （{cards:[], characters:[], skills:[], charAccess:{}, assets:{}, assetPool:{}, maps:{}, enemies:[]}），不新建表；
+ * 自定义卡/角色/技能模板/敌人/地图规则存 ui_config JSON 的 "spire" 键
+ * （{cards:[], characters:[], skills:[], charAccess:{}, assets:{}, assetPool:{}, maps:{}, enemies:[], balance:{}, mapRules:{}}），不新建表；
  * 前端引擎在加载时做净化与注册，这里只做结构与体积校验。
  *
  * 角色授权（spire 第 4 键 charAccess）：{组码: [可选角色 id...]}，C 端角色选择页按登录用户所属
@@ -173,6 +173,35 @@ public class SpireContentController {
     }
 
     /**
+     * 内置地图生成规则（**只读镜像**）：内容 = notelab-b/src/lib/spire-mapgen.ts 的 DEFAULT_PARAMS
+     * （= notelab-c/public/spire/map-gen.config.json 的现值 + 项目扩展 event 权重/最早层与 earlySafeLayers）。
+     * 用途：让「地图生成」页总有可用默认规则，且 C 端在无自定义 mapRules 时回落这些内置常量。
+     * ⚠️ 调地图规则改此处须同步 notelab-b/src/lib/spire-mapgen.ts 的 DEFAULT_PARAMS 与
+     *     notelab-c/lib/spire-engine.ts 的 BASE_MAP_RULES，否则两端不一致。
+     */
+    private static final Map<String, Object> BASE_MAP_RULES = baseMapRules();
+    private static Map<String, Object> baseMapRules() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("layers", 16);
+        m.put("acts", 3);
+        m.put("maxColumns", 4);
+        m.put("pathCount", List.of(4, 6));
+        Map<String, Object> weights = new LinkedHashMap<>();
+        weights.put("enemy", 45); weights.put("elite", 15); weights.put("shop", 12);
+        weights.put("rest", 10); weights.put("random", 18); weights.put("event", 12);
+        m.put("weights", weights);
+        Map<String, Object> minLayer = new LinkedHashMap<>();
+        minLayer.put("enemy", 0); minLayer.put("elite", 3); minLayer.put("shop", 2);
+        minLayer.put("rest", 2); minLayer.put("random", 0); minLayer.put("event", 2);
+        m.put("minLayer", minLayer);
+        Map<String, Object> revealPool = new LinkedHashMap<>();
+        revealPool.put("normal", 45); revealPool.put("elite", 15); revealPool.put("shop", 12); revealPool.put("rest", 10);
+        m.put("revealPool", revealPool);
+        m.put("earlySafeLayers", 2);
+        return m;
+    }
+
+    /**
      * spire JSON 体积上限（字符）。原来的 200KB 是按「只有卡/角色」估的；
      * 地图方案是自包含的整图节点表（一套 3 幕约 12KB），把上限提到 1MB 才够存几套。
      * 库里是 mediumtext（16MB），1MB 距上限很远；再大就该走对象存储而不是配置表。
@@ -199,6 +228,8 @@ public class SpireContentController {
         body.put("baseEnemies", BASE_ENEMIES);
         // 只读常量，供 B 端「难度配置」页展示内置默认值；不落库
         body.put("baseBalance", baseBalance());
+        // 只读常量，供 B 端「地图生成」页展示内置默认规则；不落库
+        body.put("baseMapRules", baseMapRules());
         return ResponseEntity.ok(body);
     }
 
@@ -234,6 +265,8 @@ public class SpireContentController {
         spire.put("enemies", sanitizeEnemies(node.get("enemies")));
         // 平衡/难度：{totalActs,mapRows,actBossIds[],actScaleStep}；库中无则用内置默认值
         spire.put("balance", sanitizeBalance(node.get("balance")));
+        // 地图生成规则：{layers,acts,maxColumns,pathCount,weights,minLayer,revealPool,earlySafeLayers}；库中无则用内置默认值
+        spire.put("mapRules", sanitizeMapRules(node.get("mapRules")));
         String spireJson = JsonUtil.write(spire);
         if (spireJson.length() > MAX_SPIRE_CHARS) {
             return ResponseEntity.status(400).body(Map.of("error",
@@ -284,7 +317,7 @@ public class SpireContentController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
-    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / assetPool / maps / enemies / balance */
+    /** spire 出口（GET 与 publish 快照共用）：cards / characters / skills / charAccess / assets / assetPool / maps / enemies / balance / mapRules */
     @SuppressWarnings("unchecked")
     private static Map<String, Object> spireOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
@@ -300,6 +333,8 @@ public class SpireContentController {
         out.put("enemies", new ArrayList<>(BASE_ENEMIES));
         // 平衡/难度默认内置（库中无 balance 时用内置常量）
         out.put("balance", baseBalance());
+        // 地图生成规则默认内置（库中无 mapRules 时用内置常量）
+        out.put("mapRules", baseMapRules());
         Object o = cfg.get("spire");
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
@@ -324,6 +359,9 @@ public class SpireContentController {
             // 平衡/难度：库中有 map 则用库的（缺字段以内置补齐），否则继续用内置
             Object ba = m.get("balance");
             if (ba instanceof Map) out.put("balance", mergeBalance((Map<String, Object>) ba));
+            // 地图生成规则：库中有 map 则用库的（缺字段以内置补齐），否则继续用内置
+            Object mr = m.get("mapRules");
+            if (mr instanceof Map) out.put("mapRules", mergeMapRules((Map<String, Object>) mr));
         }
         return out;
     }
@@ -513,6 +551,59 @@ public class SpireContentController {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
         }
         return sanitizeBalance(JsonUtil.MAPPER.valueToTree(merged));
+    }
+
+    /**
+     * 地图生成规则净化：layers 4-40、acts 1-8、maxColumns 2-8、pathCount 1-8、weights 0-999、
+     * minLayer 0-40、revealPool 0-999、earlySafeLayers 0-8。缺字段/越界回落内置默认，保证 C 端
+     * 无脑消费也不会拿到 null（fail-open）。口径与 B 端 spire-mapgen.ts 的 sanitizeParams 完全一致。
+     */
+    private static Map<String, Object> sanitizeMapRules(JsonNode node) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (node == null || !node.isObject()) return baseMapRules();
+        out.put("layers", clampInt(node.get("layers"), 4, 40, 16));
+        out.put("acts", clampInt(node.get("acts"), 1, 8, 3));
+        out.put("maxColumns", clampInt(node.get("maxColumns"), 2, 8, 4));
+        JsonNode pc = node.get("pathCount");
+        out.put("pathCount", List.of(
+                clampInt(pc != null && pc.isArray() && pc.size() > 0 ? pc.get(0) : null, 1, 8, 4),
+                clampInt(pc != null && pc.isArray() && pc.size() > 1 ? pc.get(1) : null, 1, 8, 6)));
+        Map<String, Object> weights = new LinkedHashMap<>();
+        JsonNode w = node.get("weights");
+        weights.put("enemy", clampInt(w != null && w.has("enemy") ? w.get("enemy") : null, 0, 999, 45));
+        weights.put("elite", clampInt(w != null && w.has("elite") ? w.get("elite") : null, 0, 999, 15));
+        weights.put("shop", clampInt(w != null && w.has("shop") ? w.get("shop") : null, 0, 999, 12));
+        weights.put("rest", clampInt(w != null && w.has("rest") ? w.get("rest") : null, 0, 999, 10));
+        weights.put("random", clampInt(w != null && w.has("random") ? w.get("random") : null, 0, 999, 18));
+        weights.put("event", clampInt(w != null && w.has("event") ? w.get("event") : null, 0, 999, 12));
+        out.put("weights", weights);
+        Map<String, Object> minLayer = new LinkedHashMap<>();
+        JsonNode ml = node.get("minLayer");
+        minLayer.put("enemy", clampInt(ml != null && ml.has("enemy") ? ml.get("enemy") : null, 0, 40, 0));
+        minLayer.put("elite", clampInt(ml != null && ml.has("elite") ? ml.get("elite") : null, 0, 40, 3));
+        minLayer.put("shop", clampInt(ml != null && ml.has("shop") ? ml.get("shop") : null, 0, 40, 2));
+        minLayer.put("rest", clampInt(ml != null && ml.has("rest") ? ml.get("rest") : null, 0, 40, 2));
+        minLayer.put("random", clampInt(ml != null && ml.has("random") ? ml.get("random") : null, 0, 40, 0));
+        minLayer.put("event", clampInt(ml != null && ml.has("event") ? ml.get("event") : null, 0, 40, 2));
+        out.put("minLayer", minLayer);
+        Map<String, Object> revealPool = new LinkedHashMap<>();
+        JsonNode rp = node.get("revealPool");
+        revealPool.put("normal", clampInt(rp != null && rp.has("normal") ? rp.get("normal") : null, 0, 999, 45));
+        revealPool.put("elite", clampInt(rp != null && rp.has("elite") ? rp.get("elite") : null, 0, 999, 15));
+        revealPool.put("shop", clampInt(rp != null && rp.has("shop") ? rp.get("shop") : null, 0, 999, 12));
+        revealPool.put("rest", clampInt(rp != null && rp.has("rest") ? rp.get("rest") : null, 0, 999, 10));
+        out.put("revealPool", revealPool);
+        out.put("earlySafeLayers", clampInt(node.get("earlySafeLayers"), 0, 8, 2));
+        return out;
+    }
+
+    /** 库中有 mapRules map 时，用库值覆盖内置默认（缺字段保留内置），再走净化口径保证形状合法 */
+    private static Map<String, Object> mergeMapRules(Map<String, Object> lib) {
+        Map<String, Object> merged = new LinkedHashMap<>(baseMapRules());
+        for (String k : new String[] { "layers", "acts", "maxColumns", "pathCount", "weights", "minLayer", "revealPool", "earlySafeLayers" }) {
+            if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
+        }
+        return sanitizeMapRules(JsonUtil.MAPPER.valueToTree(merged));
     }
 
     /** 取 Double 并夹到 [lo,hi]，非法/缺失返回 dft */

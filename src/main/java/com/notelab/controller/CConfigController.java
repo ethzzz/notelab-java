@@ -51,6 +51,7 @@ public class CConfigController {
             out.put("skills", m.getOrDefault("skills", List.of()));
             out.put("enemies", m.getOrDefault("enemies", List.of()));
             out.put("balance", m.getOrDefault("balance", Map.of()));
+            out.put("mapRules", m.getOrDefault("mapRules", Map.of()));
             Object ca = m.get("charAccess");
             out.put("charAccess", ca instanceof Map ? ca : Map.of());
             Object as = m.get("assets");
@@ -64,6 +65,7 @@ public class CConfigController {
         out.put("skills", List.of());
         out.put("enemies", List.of());
         out.put("balance", Map.of());
+        out.put("mapRules", Map.of());
         out.put("charAccess", Map.of());
         out.put("assets", Map.of());
         out.put("maps", Map.of("packs", List.of()));
