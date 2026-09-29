@@ -8,6 +8,7 @@ import com.notelab.model.entity.EnTrSentence;
 import com.notelab.model.entity.EnTrSubmission;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
