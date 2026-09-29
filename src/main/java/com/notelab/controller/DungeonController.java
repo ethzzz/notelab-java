@@ -100,17 +100,28 @@ public class DungeonController {
         int version = n.path("version").asInt(1);
         if (version < 1) return bad("version 非法");
 
-        // 收益上限校验：拿旧档的金币与新档比对，涨幅不得超过「离线时长 × 每秒上限 + 手动容差」
+        // 收益上限校验：拿旧档的金币与新档比对，涨幅不得超过「离线时长 × 每秒上限 + 手动容差」。
+        // 无旧档（首次写入）同样受限 —— 否则新号可以直接 POST 一笔天文数字的"初始存档"。
         Map<String, Object> old = GameSaveDao.get(uid, GAME);
         long newGold = goldOf(data);
-        if (old != null && old.get("data_json") != null) {
-            long oldGold = goldOfJson(String.valueOf(old.get("data_json")));
+        if (old == null || old.get("data_json") == null) {
+            if (newGold > MANUAL_SLACK) {
+                return bad("初始存档金币 " + newGold + " 超出上限 " + MANUAL_SLACK);
+            }
+        } else {
+            String oldRaw = String.valueOf(old.get("data_json"));
+            long oldGold = goldOfJson(oldRaw);
             Long lastSeen = tsOf(old.get("updated_at"));
             long offlineSec = lastSeen == null ? 0 : Math.min(MAX_OFFLINE_SEC, Math.max(0, (System.currentTimeMillis() - lastSeen) / 1000));
             long cap = offlineSec * MAX_GOLD_PER_SEC + MANUAL_SLACK;
             long delta = newGold - oldGold;
             if (delta > cap) {
                 return bad("本次金币增量 " + delta + " 超出上限 " + cap + "（离线 " + offlineSec + "s）");
+            }
+            // 版本回退防护：旧档版本比新档还新，多半是并发写坏了或拿旧档覆盖，拒绝
+            int oldVersion = oldVersionOf(oldRaw);
+            if (oldVersion > 0 && version < oldVersion) {
+                return bad("存档版本 " + version + " 低于服务端已有的 " + oldVersion + "，疑似旧档覆盖，已拒绝");
             }
         }
 
@@ -139,6 +150,17 @@ public class DungeonController {
     private static long goldOfJson(String raw) {
         try {
             return goldOf(JsonUtil.MAPPER.readTree(raw));
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** 旧档自身的版本号（data.v）；解析不了返回 0（视为未知，不做回退比较） */
+    private static int oldVersionOf(String raw) {
+        try {
+            JsonNode n = JsonUtil.MAPPER.readTree(raw);
+            JsonNode v = n.path("v");
+            return v.isNumber() ? v.asInt() : 0;
         } catch (Exception e) {
             return 0;
         }
