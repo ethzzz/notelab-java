@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.notelab.dao.TranslateDao;
+import com.notelab.service.GradeEngine;
 import com.notelab.service.TranslateService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
