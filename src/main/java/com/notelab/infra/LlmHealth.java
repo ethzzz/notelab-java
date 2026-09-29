@@ -104,6 +104,7 @@ public final class LlmHealth {
                         .GET().build();
                 HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
                 int st = resp.statusCode();
+                log.info("LlmHealth 探测：base={} key={} status={}", AppConfig.qwenBaseUrl(), QwenKeys.mask(k), st);
                 if (st == 200) {
                     QwenKeys.markWorking(k);
                     return new Result(true, "");
