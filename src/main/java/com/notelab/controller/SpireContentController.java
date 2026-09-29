@@ -56,6 +56,29 @@ public class SpireContentController {
     }
 
     /**
+     * 内置基础卡牌（**完整定义**，只读镜像）：内容 = notelab-c/lib/spire-engine.ts 的 FALLBACK_CARDS
+     * （id / name / icon / cost / category / rarity / effects / spawnOnly）。用途：spireOf 懒 seed——
+     * 库中无卡牌数据时填充，让后台「卡片制作」页总能看见并编辑这 15 张内置卡（C 端空卡池回落 FALLBACK_CARDS 兜底）。
+     * ⚠️ 新增/改名/调数值的内置卡必须同步 notelab-c/lib/spire-engine.ts 的 FALLBACK_CARDS，否则两端不一致。
+     */
+    private static Map<String, Object> baseEffect(String type, int amount, String target, Integer hits) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", type); m.put("amount", amount);
+        if (target != null) m.put("target", target);
+        if (hits != null) m.put("hits", hits);
+        return m;
+    }
+    private static Map<String, Object> baseCard(String id, String name, String icon, int cost,
+            String category, int rarity, List<Map<String, Object>> effects, Boolean spawnOnly) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("icon", icon);
+        m.put("cost", cost); m.put("category", category); m.put("rarity", rarity);
+        m.put("effects", effects);
+        if (spawnOnly != null && spawnOnly) m.put("spawnOnly", true);
+        return m;
+    }
+
+    /**
      * 内置基础角色（**完整定义**，只读镜像）：内容 = notelab-c/lib/spire-engine.ts 的 BASE_CHARACTERS
      * （id / name / icon / maxHp / desc / startDeck / passives / skill）。
      * 用途：①「角色授权」界面展示可选角色池；② spireOf 懒 seed——库中无角色数据时填充，
@@ -81,6 +104,29 @@ public class SpireContentController {
                             basePassive("start-hand-7", "尽瘁", "🕯️", "开局摸至 7 张手牌；每回合准备阶段回复生命（= 卡组中攻击卡数量，至少 1），并观看牌堆顶 7 张牌任意安排到顶/底", 7),
                             basePassive("echo-on-play", "情势", "🀄", "打出卡片时，若手牌中还有同类型（攻击/防御/增益/特殊）的牌，可三选一：效果×同类数量 / 抽同类数量张牌 / 回复同类数量点生命", 0)),
                     baseSkill("echo-copy", "锦囊复刻", "📜", "每轮对战限一次：选择手牌中一张牌生成其原始复制；复制牌打出后会在回合结束时回到手中，未打出则留在手牌", 0, 1, null))
+    );
+
+    /**
+     * 内置基础卡牌（**完整定义**，只读镜像）：内容 = notelab-c/lib/spire-engine.ts 的 FALLBACK_CARDS
+     * （15 张初始卡组）。spireOf 懒 seed——库中无卡牌数据时填充，让后台「卡片制作」页总能看见并编辑。
+     * ⚠️ 同步 notelab-c/lib/spire-engine.ts 的 FALLBACK_CARDS。
+     */
+    private static final List<Map<String, Object>> BASE_CARDS = List.of(
+            baseCard("strike", "打击", "⚔️", 1, "attack", 0, List.of(baseEffect("damage", 6, "enemy", null)), null),
+            baseCard("defend", "防御", "🛡️", 1, "defense", 0, List.of(baseEffect("block", 5, "self", null)), null),
+            baseCard("bash", "痛击", "🔨", 2, "attack", 0, List.of(baseEffect("damage", 8, "enemy", null), baseEffect("apply-vuln", 2, "enemy", null)), null),
+            baseCard("flex", "爆发", "💪", 0, "buff", 0, List.of(baseEffect("gain-temp-str", 2, "self", null)), null),
+            baseCard("anger", "怒火", "😡", 0, "attack", 0, List.of(baseEffect("damage", 6, "enemy", null), baseEffect("copy-to-discard", 1, "self", null)), null),
+            baseCard("heavy", "重锤", "🪨", 2, "attack", 1, List.of(baseEffect("damage", 14, "enemy", null)), null),
+            baseCard("twin", "双重打击", "⚡", 1, "attack", 1, List.of(baseEffect("damage", 4, "enemy", 2)), null),
+            baseCard("wave", "铁壁波动", "🌊", 1, "attack", 1, List.of(baseEffect("damage", 5, "enemy", null), baseEffect("block", 5, "self", null)), null),
+            baseCard("shrug", "耸肩防御", "🤷", 1, "defense", 1, List.of(baseEffect("block", 8, "self", null), baseEffect("draw", 1, "self", null)), null),
+            baseCard("blood", "放血", "🩸", 0, "special", 1, List.of(baseEffect("self-damage", 3, "self", null), baseEffect("energy", 2, "self", null)), null),
+            baseCard("pommel", "剑柄打击", "🗡️", 1, "attack", 1, List.of(baseEffect("damage", 9, "enemy", null), baseEffect("draw", 1, "self", null)), null),
+            baseCard("armament", "武装", "⚙️", 1, "defense", 1, List.of(baseEffect("block", 5, "self", null), baseEffect("energy", 1, "self", null)), null),
+            baseCard("uppercut", "上勾拳", "🥊", 2, "attack", 2, List.of(baseEffect("damage", 13, "enemy", null), baseEffect("apply-weak", 1, "enemy", null), baseEffect("apply-vuln", 1, "enemy", null)), null),
+            baseCard("carnage", "大屠杀", "☠️", 2, "attack", 2, List.of(baseEffect("damage", 20, "enemy", null)), null),
+            baseCard("shadowstrike", "影袭", "🌑", 0, "attack", 1, List.of(baseEffect("damage", 10, "enemy", null)), true)
     );
 
     /**
@@ -365,7 +411,10 @@ public class SpireContentController {
         Object o = cfg.get("spire");
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
-            out.put("cards", m.getOrDefault("cards", List.of()));
+            // 卡片：库中有非空列表则用库的，否则继续用内置 15（懒 seed），让后台「卡片制作」页总能看见并编辑内置卡
+            Object cd = m.get("cards");
+            out.put("cards", (cd instanceof List && !((List<?>) cd).isEmpty())
+                    ? cd : new ArrayList<>(BASE_CARDS));
             // 角色：库中有非空列表则用库的，否则继续用内置 4（懒 seed）
             Object ch = m.get("characters");
             out.put("characters", (ch instanceof List && !((List<?>) ch).isEmpty())
