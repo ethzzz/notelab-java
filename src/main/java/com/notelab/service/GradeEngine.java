@@ -186,8 +186,9 @@ public final class GradeEngine {
         return l.size() <= n ? l : new ArrayList<>(l.subList(0, n));
     }
 
+    /** 百分比的**数字部分**（不带 % 号，由调用方拼接标点） */
     private static String pct(double r) {
-        return Math.round(r * 100) + "%";
+        return String.valueOf(Math.round(r * 100));
     }
 
     private static String truncate(String s, int max) {
