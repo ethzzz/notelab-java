@@ -65,6 +65,14 @@ public final class NoteDao {
         return RowUtil.rows(DaoSupport.note().selectPage(page, w).getRecords(), LIST_COLS);
     }
 
+    /** 全量列表（含正文），按 id 倒序；供「导出全部」使用 */
+    public static List<Map<String, Object>> listAll(String q) {
+        QueryWrapper<Note> w = new QueryWrapper<>();
+        appendFilter(w, q);
+        w.orderByDesc("id");
+        return RowUtil.rows(DaoSupport.note().selectList(w), ALL_COLS);
+    }
+
     public static long countFiltered(String q) {
         QueryWrapper<Note> w = new QueryWrapper<>();
         appendFilter(w, q);
