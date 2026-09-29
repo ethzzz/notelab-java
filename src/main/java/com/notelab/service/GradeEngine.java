@@ -78,27 +78,30 @@ public final class GradeEngine {
                     "该句暂无参考译文，且大模型批改当前不可用，无法自动判分。请对照中文原句自行核对。",
                     List.of(), "[]", "manual");
         }
-        double ratio = similarity(en, ref);
+        // 两个维度取较高值：词序敏感（seq）+ 词序不敏感（词袋 F1）。
+        // 只用 seq 会冤枉"语义正确但语序不同"的改写（实测：语序颠倒的同义句只有 38%），
+        // 只用 F1 又会放过"词对但语序乱"的句子 —— 取 max 是本地对照下最不容易误伤的折中。
+        double seq = similarity(en, ref);
+        double f1 = bagF1(en, ref);
+        double ratio = Math.max(seq, f1);
+
         boolean accurate;
         int score;
-        if (ratio >= 0.999) {
+        if (ratio >= 0.85) {
             accurate = true;
-            score = 100;
-        } else if (ratio >= 0.90) {
-            // 同义改写：认可，但扣一点分
-            accurate = true;
-            score = 88 + (int) Math.round((ratio - 0.90) / 0.10 * 11);
-        } else if (ratio >= 0.70) {
+            score = 88 + (int) Math.round((ratio - 0.85) / 0.15 * 12);
+        } else if (ratio >= 0.60) {
             accurate = false;
-            score = 60 + (int) Math.round((ratio - 0.70) / 0.20 * 24);
+            score = 60 + (int) Math.round((ratio - 0.60) / 0.25 * 24);
         } else {
             accurate = false;
-            score = 30 + (int) Math.round(ratio / 0.70 * 29);
+            score = 30 + (int) Math.round(ratio / 0.60 * 29);
         }
         score = Math.max(0, Math.min(100, score));
 
         List<Map<String, Object>> errors = accurate ? List.of() : List.of(error(ratio, en, ref));
-        String note = "本地对照判分（AI 批改暂不可用）：与参考译文相似度 " + pct(ratio) + "%。" + diffNote(en, ref);
+        String note = "本地对照判分（AI 批改暂不可用）：用词覆盖率 " + pct(f1) + "%、语序相似度 "
+                + pct(seq) + "%。" + diffNote(en, ref);
         return new Grade("local", accurate, score, accurate ? en : ref, note, errors,
                 JsonUtil.write(errors), "local-diff");
     }
@@ -123,6 +126,25 @@ public final class GradeEngine {
         int dist = editDistance(ta, tb);
         double r = 1.0 - (double) dist / Math.max(ta.size(), tb.size());
         return Math.max(0.0, Math.min(1.0, r));
+    }
+
+    /**
+     * 词袋 F1（**词序不敏感**）：只看用词重合度，2·交集/(双方词数之和)。
+     * 用于兜住"语义正确但语序不同"的改写 —— 这是纯序列编辑距离最容易误伤的一类。
+     */
+    static double bagF1(String a, String b) {
+        Map<String, Integer> ca = counts(tokens(a));
+        Map<String, Integer> cb = counts(tokens(b));
+        int inter = 0;
+        for (Map.Entry<String, Integer> e : cb.entrySet()) {
+            inter += Math.min(e.getValue(), ca.getOrDefault(e.getKey(), 0));
+        }
+        int la = 0;
+        int lb = 0;
+        for (int v : ca.values()) la += v;
+        for (int v : cb.values()) lb += v;
+        if (la + lb == 0) return 1.0;
+        return 2.0 * inter / (double) (la + lb);
     }
 
     /** 归一化 + 分词：小写、弯引号拉直、非字母数字撇号一律视为分隔符 */
