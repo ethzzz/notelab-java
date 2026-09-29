@@ -31,7 +31,10 @@ import java.util.Map;
  *   <li>**降噪**：只在「可用 ↔ 不可用」**状态翻转**时打一条日志，不再每次失败都刷。</li>
  * </ol>
  *
- * <p>探测用 {@code GET /models}：只验证凭据是否成立，不生成 token，比 chat completion 便宜得多。
+ * <p>⚠️ 探测**必须走真实 chat 调用**（{@code max_tokens=1}），不能用 {@code GET /models}：
+ * 2026-09-30 实测某把 key 对 {@code /models} 返回 200（key 本身有效），但对**所有模型**的 chat
+ * 都返回 403 AccessDenied.Unpurchased（没开通）。用 /models 判定会得出"可用"的假阳性，
+ * 结果判分时才发现根本出不了内容。一次 1 token 的调用很便宜，且结果缓存 5 分钟。
  */
 public final class LlmHealth {
 
@@ -97,35 +100,16 @@ public final class LlmHealth {
         if (keys.isEmpty()) return new Result(false, "未配置大模型 key（QWEN_API_KEYS 为空）");
         String last = null;
         for (String k : keys) {
-            try {
-                HttpRequest req = HttpRequest.newBuilder(URI.create(AppConfig.qwenBaseUrl() + "/models"))
-                        .timeout(Duration.ofSeconds(PROBE_TIMEOUT_SEC))
-                        .header("Authorization", "Bearer " + k)
-                        .GET().build();
-                HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-                int st = resp.statusCode();
-                log.info("LlmHealth 探测：base={} key={} status={}", AppConfig.qwenBaseUrl(), QwenKeys.mask(k), st);
-                if (st == 200) {
-                    QwenKeys.markWorking(k);
-                    return new Result(true, "");
-                }
-                // 网关没实现 /models（404/405）不代表 key 不可用 → 退回一次极小的 chat 探测再判
-                if (st == 404 || st == 405) {
-                    Result fallback = chatProbe(k);
-                    if (fallback.available) {
-                        QwenKeys.markWorking(k);
-                        return fallback;
-                    }
-                    last = fallback.reason;
-                    continue;
-                }
-                String why = QwenKeys.unusableReason(st, resp.body());
-                if (why == null) why = "上游返回 HTTP " + st;
-                else QwenKeys.markUnusable(k, why);
-                last = why;
-            } catch (Exception e) {
-                last = "探测异常：" + e.getClass().getSimpleName();
+            Result r = chatProbe(k);
+            log.info("LlmHealth 探测：model={} key={} 可用={} 原因={}",
+                    AppConfig.qwenModel(), QwenKeys.mask(k), r.available, r.reason);
+            if (r.available) {
+                QwenKeys.markWorking(k);
+                return r;
             }
+            // 401（key 无效）/ 403（key 有效但没开通该模型）属于"这把 key 用不了"，标记后 30 分钟内不再试
+            if (r.status == 401 || r.status == 403) QwenKeys.markUnusable(k, r.reason);
+            last = r.reason;
         }
         return new Result(false, last == null ? "无可用 key" : last);
     }
@@ -143,11 +127,12 @@ public final class LlmHealth {
                     .build();
             HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             int st = resp.statusCode();
-            if (st == 200) return new Result(true, "");
+            if (st == 200) return new Result(true, "", st);
             String why = QwenKeys.unusableReason(st, resp.body());
-            return new Result(false, why != null ? why : ("chat 探测返回 HTTP " + st));
+            if (why == null) why = "chat 探测返回 HTTP " + st;
+            return new Result(false, why, st);
         } catch (Exception e) {
-            return new Result(false, "chat 探测异常：" + e.getClass().getSimpleName());
+            return new Result(false, "chat 探测异常：" + e.getClass().getSimpleName(), 0);
         }
     }
 
@@ -167,10 +152,17 @@ public final class LlmHealth {
     public static final class Result {
         public final boolean available;
         public final String reason;
+        /** 上游 HTTP 状态码（0 表示没走到 HTTP，如超时/未配置） */
+        public final int status;
 
         Result(boolean available, String reason) {
+            this(available, reason, 0);
+        }
+
+        Result(boolean available, String reason, int status) {
             this.available = available;
             this.reason = reason == null ? "" : reason;
+            this.status = status;
         }
     }
 }
