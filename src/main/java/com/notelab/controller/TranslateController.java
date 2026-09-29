@@ -74,21 +74,16 @@ public class TranslateController {
         String zh = String.valueOf(sentence.get("zh_text"));
         String ref = sentence.get("ref_en") == null ? "" : String.valueOf(sentence.get("ref_en"));
 
-        TranslateService.Grade grade;
-        try {
-            grade = TranslateService.grade(zh, en, ref);
-        } catch (TranslateService.GradeException e) {
-            return ResponseEntity.status(502).body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            return ResponseEntity.status(502).body(Map.of("error", "判分失败，请重试"));
-        }
+        // 判分：大模型可用走 AI 批改，不可用自动降级为本地对照/自评（GradeEngine 永不抛异常）
+        GradeEngine.Grade grade = GradeEngine.grade(zh, en, ref);
 
         long uid = CAuthUtil.userId(user);
         try {
             // upsert：靠 uk_user_sentence_date 唯一键，重复提交同句覆盖旧判分结果
+            // manual 模式（无参考译文 + AI 不可用）下 accurate/score 为 null，表示"未判分"
             TranslateDao.upsertSubmission(uid, req.sentence_id, gid, today, en,
-                    grade.accurate ? 1 : 0, grade.score, grade.corrected, grade.explanation,
-                    grade.errorsJson, grade.model);
+                    grade.accurate == null ? null : (grade.accurate ? 1 : 0), grade.score,
+                    grade.corrected, grade.explanation, grade.errorsJson, grade.model);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存判分结果失败，请稍后重试"));
         }
@@ -97,6 +92,7 @@ public class TranslateController {
         body.put("sentence_id", req.sentence_id);
         body.put("date", today.toString());
         body.put("en_text", en);
+        body.put("mode", grade.mode);
         body.put("accurate", grade.accurate);
         body.put("score", grade.score);
         body.put("corrected", grade.corrected);

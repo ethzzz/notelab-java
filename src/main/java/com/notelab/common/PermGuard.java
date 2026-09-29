@@ -61,7 +61,8 @@ public final class PermGuard {
      */
     public static final Set<String> SESSION_ENDPOINTS = Set.of(
             "/api/login", "/api/logout", "/api/me", "/api/register",
-            "/api/auth/verify", "/api/menu"
+            "/api/auth/verify", "/api/menu",
+            "/api/health/llm"   // 大模型可用性：任何登录用户都要能查，否则前端无法提示"已降级为本地判分"
     );
 
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
