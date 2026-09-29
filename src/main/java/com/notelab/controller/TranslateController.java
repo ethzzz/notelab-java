@@ -105,6 +105,33 @@ public class TranslateController {
 
     // ================= 历史 =================
 
+    /**
+     * 进度 / 习惯闭环：GET /progress?days=90
+     * 每日完成量 + 正确量 + 当天应做量、连续打卡天数、弱项（错误类型）分布、总体统计。
+     * **纯只读聚合，不依赖大模型** —— key 不可用时照样能看进度。
+     */
+    @GetMapping("/progress")
+    public ResponseEntity<Map<String, Object>> progress(@RequestParam(required = false) String days,
+                                                        HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        int d = 90;
+        if (days != null && !days.isBlank()) {
+            try {
+                d = Integer.parseInt(days.trim());
+            } catch (NumberFormatException e) {
+                return ResponseEntity.status(400).body(Map.of("error", "days 应为整数"));
+            }
+        }
+        // 边界收敛：太小画不出趋势，太大会拖慢聚合
+        d = Math.max(7, Math.min(365, d));
+        try {
+            return ResponseEntity.ok(TranslateService.progressPayload(CAuthUtil.userId(user), d));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "读取进度失败，请稍后重试"));
+        }
+    }
+
     /** 某天提交列表（date 缺省为今天；非法日期 400） */
     @GetMapping("/history")
     public ResponseEntity<Map<String, Object>> history(@RequestParam(required = false) String date,

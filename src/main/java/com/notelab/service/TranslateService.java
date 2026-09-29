@@ -313,6 +313,105 @@ public final class TranslateService {
         return body;
     }
 
+    // ================= 进度 / 习惯闭环 =================
+
+    /** 弱项统计最多回看多少条提交（只用于聚合，宁可少读） */
+    private static final int ERROR_SCAN_LIMIT = 2000;
+
+    /**
+     * GET /progress 的数据组装：每日完成量/正确量 + 连续天数 + 弱项分布 + 总体统计。
+     * **纯只读聚合，不依赖大模型。**
+     *
+     * @param days 回看天数（含今天），由 Controller 做边界收敛
+     */
+    public static Map<String, Object> progressPayload(long cUserId, int days) {
+        LocalDate today = LocalDate.now();
+        LocalDate from = today.minusDays(Math.max(0, days - 1));
+
+        Map<String, int[]> byDate = new LinkedHashMap<>();   // date -> [done, correct]
+        for (Map<String, Object> r : TranslateDao.dailyStatsSince(cUserId, from)) {
+            String d = String.valueOf(r.get("submit_date"));
+            byDate.put(d, new int[]{intOf(r.get("cnt")), intOf(r.get("ok"))});
+        }
+        Map<String, Integer> totalByDate = new LinkedHashMap<>();  // date -> 当天应做句数
+        for (Map<String, Object> g : TranslateDao.activatedGroupsSince(from)) {
+            Object ad = g.get("activated_date");
+            if (ad == null) continue;
+            long gid = ((Number) g.get("id")).longValue();
+            totalByDate.put(String.valueOf(ad), (int) TranslateDao.countSentences(gid));
+        }
+
+        List<Map<String, Object>> daily = new ArrayList<>(days);
+        int sumDone = 0;
+        int sumCorrect = 0;
+        Set<String> active = new java.util.HashSet<>();
+        for (int i = 0; i < days; i++) {
+            LocalDate d = from.plusDays(i);
+            String ds = d.toString();
+            int[] v = byDate.getOrDefault(ds, new int[]{0, 0});
+            if (v[0] > 0) active.add(ds);
+            sumDone += v[0];
+            sumCorrect += v[1];
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("date", ds);
+            m.put("done", v[0]);
+            m.put("correct", v[1]);
+            m.put("total", totalByDate.getOrDefault(ds, 0));
+            daily.add(m);
+        }
+
+        // 连续天数：今天还没做不算断（从昨天起算），避免"早上打开就被清零"的挫败感
+        int streak = 0;
+        LocalDate cur = active.contains(today.toString()) ? today : today.minusDays(1);
+        while (active.contains(cur.toString())) {
+            streak++;
+            cur = cur.minusDays(1);
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("date", today.toString());
+        body.put("days", days);
+        body.put("daily", daily);
+        body.put("streak", streak);
+        body.put("error_types", errorTypeStats(cUserId, from));
+        Map<String, Object> totals = new LinkedHashMap<>();
+        totals.put("done", sumDone);
+        totals.put("correct", sumCorrect);
+        totals.put("active_days", active.size());
+        totals.put("rate", sumDone == 0 ? 0 : Math.round(sumCorrect * 100.0 / sumDone));
+        body.put("totals", totals);
+        // 顺带下发大模型状态，前端不用再单独请求一次
+        body.put("llm", com.notelab.infra.LlmHealth.snapshot());
+        return body;
+    }
+
+    private static int intOf(Object v) {
+        return v instanceof Number n ? n.intValue() : 0;
+    }
+
+    /** 按 errors_json 里的 type 聚合（解析在 Java 侧完成，不把 JSON 丢给前端），Top 8 */
+    private static List<Map<String, Object>> errorTypeStats(long cUserId, LocalDate from) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (String json : TranslateDao.errorsJsonSince(cUserId, from, ERROR_SCAN_LIMIT)) {
+            for (Map<String, Object> e : parseErrorsArray(json)) {
+                String t = String.valueOf(e.getOrDefault("type", "")).trim();
+                if (t.isEmpty()) continue;
+                counts.merge(t, 1, Integer::sum);
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        counts.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .limit(8)
+                .forEach(e -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("type", e.getKey());
+                    m.put("count", e.getValue());
+                    out.add(m);
+                });
+        return out;
+    }
+
     /** 提交记录 → 前端视图（errors_json 解析为数组，解析失败退化为空数组） */
     public static Map<String, Object> submissionView(Map<String, Object> sub) {
         if (sub == null) return null;
@@ -326,6 +425,9 @@ public final class TranslateService {
         Object errorsJson = sub.get("errors_json");
         m.put("errors", parseErrorsArray(errorsJson == null ? null : String.valueOf(errorsJson)));
         m.put("updated_at", sub.get("updated_at"));
+        // 判分来源：模型名 / "local-diff"（本地对照）/ "manual"（无参考译文自评）。
+        // 前端据此诚实标注，不要把本地比对显示成 AI 批改。
+        m.put("model", sub.get("model"));
         return m;
     }
 

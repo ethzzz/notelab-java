@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.GameSaveDao;
 import jakarta.servlet.http.HttpServletRequest;
@@ -46,6 +47,9 @@ public class DungeonController {
 
     /** 可离线结算的最大时长：超过 12 小时的部分不产出（也是上限的一部分） */
     private static final long MAX_OFFLINE_SEC = 12 * 3600;
+
+    /** 首版层数上限：与前端 FLOORS 保持一致，越界的派遣不予结算 */
+    private static final int MAX_FLOOR = 10;
 
     /** 读档：返回存档 + 服务端时间 + 离线秒数 */
     @GetMapping("/save")
@@ -133,6 +137,76 @@ public class DungeonController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("savedAt", System.currentTimeMillis());
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 结算闸门：派遣归来的战利品由客户端按规则算出再存回（规则只写一份，避免前后端数值漂移），
+     * 但**"能不能结算"由服务端说了算** —— 服务端只在 endsAt（服务端时间）真的到了才盖章。
+     * 这样改本机时间、或直接伪造一份"已完成"的存档，都过不了这道闸门。
+     */
+    @PostMapping("/collect")
+    public ResponseEntity<Map<String, Object>> collect(@RequestBody(required = false) String raw,
+                                                       HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        long uid = CAuthUtil.userId(user);
+
+        JsonNode n;
+        try {
+            n = raw == null ? null : JsonUtil.MAPPER.readTree(raw);
+        } catch (Exception e) {
+            return bad("请求不是合法 JSON");
+        }
+        if (n == null) return bad("缺少参数");
+        String id = n.path("id").asText("");
+        if (id.isEmpty()) return bad("缺少队伍 id");
+
+        Map<String, Object> row = GameSaveDao.get(uid, GAME);
+        if (row == null || row.get("data_json") == null) return bad("还没有存档");
+        String saveRaw = String.valueOf(row.get("data_json"));
+
+        JsonNode root;
+        try {
+            root = JsonUtil.MAPPER.readTree(saveRaw);
+        } catch (Exception e) {
+            return bad("存档无法解析");
+        }
+        if (!root.isObject()) return bad("存档格式不对");
+
+        JsonNode parties = root.path("parties");
+        if (!parties.isArray()) return bad("存档里没有出征记录");
+
+        long now = System.currentTimeMillis();
+        ObjectNode target = null;
+        for (JsonNode p : parties) {
+            if (p.isObject() && id.equals(p.path("id").asText())) { target = (ObjectNode) p; break; }
+        }
+        if (target == null) return bad("找不到这支出征队伍");
+        if (target.path("collected").asBoolean(false)) return bad("这队已经结算过了");
+
+        int floor = target.path("floor").asInt(0);
+        if (floor < 1 || floor > MAX_FLOOR) return bad("层数 " + floor + " 不合法");
+
+        long endsAt = target.path("endsAt").asLong(0);
+        if (endsAt <= 0) return bad("这队没有归来时间");
+        if (now < endsAt) {
+            return bad("队伍还在路上，还需 " + Math.max(1, (endsAt - now) / 1000) + " 秒");
+        }
+
+        // 盖章：标记已结算（真正的战利品由客户端算完再走 /save 存回，受金币上限约束）
+        target.put("collected", true);
+        try {
+            GameSaveDao.upsert(uid, GAME, JsonUtil.MAPPER.writeValueAsString(root));
+        } catch (Exception e) {
+            return bad("写档失败：" + e.getMessage());
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("id", id);
+        body.put("floor", floor);
+        body.put("serverNow", now);
         return ResponseEntity.ok(body);
     }
 

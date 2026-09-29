@@ -230,4 +230,44 @@ public final class TranslateDao {
     public static List<Map<String, Object>> listSubmissionsByDate(long cUserId, LocalDate date) {
         return RowUtil.norms(DaoSupport.enTrSubmission().selectByUserDate(cUserId, date), SUB_JOIN_COLS);
     }
+
+    // ================= 进度统计（只读聚合，供 GET /progress） =================
+
+    /**
+     * 按日聚合提交量与正确量：返回 [{submit_date, cnt, ok}]，ok 计 accurate=1。
+     * 只覆盖有提交的日子，无提交的日子由调用方补 0。
+     */
+    public static List<Map<String, Object>> dailyStatsSince(long cUserId, LocalDate from) {
+        QueryWrapper<EnTrSubmission> w = new QueryWrapper<>();
+        w.select("submit_date", "COUNT(*) AS cnt", "SUM(CASE WHEN accurate = 1 THEN 1 ELSE 0 END) AS ok");
+        w.eq("c_user_id", cUserId).ge("submit_date", from).groupBy("submit_date").orderByAsc("submit_date");
+        return DaoSupport.enTrSubmission().selectMaps(w);
+    }
+
+    /** 自 from 起已激活的组（含 activated_date），用于推算「当天本应做几句」 */
+    public static List<Map<String, Object>> activatedGroupsSince(LocalDate from) {
+        return RowUtil.rows(DaoSupport.enTrGroup().selectList(
+                Wrappers.lambdaQuery(EnTrGroup.class)
+                        .eq(EnTrGroup::getStatus, "used")
+                        .ge(EnTrGroup::getActivatedDate, from)
+                        .orderByAsc(EnTrGroup::getActivatedDate)), GROUP_ALL_COLS);
+    }
+
+    /**
+     * 自 from 起的非空 errors_json 文本（用于弱项统计）。
+     *  capped by limit：只用于统计，宁可少读也不要把历史全表拉进内存。
+     */
+    public static List<String> errorsJsonSince(long cUserId, LocalDate from, int limit) {
+        QueryWrapper<EnTrSubmission> w = new QueryWrapper<>();
+        w.select("errors_json");
+        w.eq("c_user_id", cUserId).ge("submit_date", from)
+                .isNotNull("errors_json").ne("errors_json", "").ne("errors_json", "[]")
+                .last("LIMIT " + Math.max(1, limit));
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> m : DaoSupport.enTrSubmission().selectMaps(w)) {
+            Object v = m.get("errors_json");
+            if (v != null) out.add(String.valueOf(v));
+        }
+        return out;
+    }
 }
