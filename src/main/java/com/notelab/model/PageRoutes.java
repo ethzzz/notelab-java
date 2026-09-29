@@ -48,6 +48,8 @@ public final class PageRoutes {
             new String[]{"/perm", "权限管理"},
             // 运维看板（超管专属：接口在受限前缀 /api/admin/ops，且默认角色不含本页，见 PermService）
             new String[]{"/ops", "运维看板"},
+            // 博客管理 → 文章生成（B 端写入 ethzzz/blog 仓库，见 BlogContentController）
+            new String[]{"/blog-gen", "博客·文章生成"},
             // 路径不含 /admin 前缀：PAGE_ROUTES 与前端 router.pathname 比对，
             // 而 B 端 basePath（/admin）由 Next 自己拼，写进去会永远匹配不上 → 页面被守卫拦掉
             new String[]{"/game-access", "游戏登录管理"}

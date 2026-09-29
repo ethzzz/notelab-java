@@ -58,7 +58,11 @@ public final class MenuTree {
                     menu("ui", "界面配置", "🎛️", "/ui", true),
                     menu("perm", "权限管理", "🔐", "/perm", true),
                     // 运维看板：只读展示进程/端口/git/资源 + 发布自检，仅超管（见 PermService 默认排除）
-                    menu("ops", "运维看板", "🩺", "/ops", true))));
+                    menu("ops", "运维看板", "🩺", "/ops", true))),
+            // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
+            // 文章生成子页把手动输入 / AI 起草的文章提交到博客仓库（见 BlogContentController）。
+            group("g_blog", "博客管理", "📖", List.of(
+                    menu("blog-gen", "文章生成", "✍️", "/blog-gen", true))));
 
     private static Map<String, Object> menu(String key, String name, String icon, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();
