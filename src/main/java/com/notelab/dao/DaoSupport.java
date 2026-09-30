@@ -1,5 +1,8 @@
 package com.notelab.dao;
 
+import com.notelab.mapper.ArchScanCycleMapper;
+import com.notelab.mapper.ArchScanRunMapper;
+import com.notelab.mapper.ArchScanViolationMapper;
 import com.notelab.mapper.ConversationMapper;
 import com.notelab.mapper.CGameSaveMapper;
 import com.notelab.mapper.CUserGroupMapper;
@@ -37,6 +40,9 @@ public class DaoSupport {
     private static volatile boolean ready = false;
     private static TransactionTemplate tx;
 
+    private static ArchScanRunMapper archScanRunMapper;
+    private static ArchScanCycleMapper archScanCycleMapper;
+    private static ArchScanViolationMapper archScanViolationMapper;
     private static UserMapper userMapper;
     private static ConversationMapper conversationMapper;
     private static MessageMapper messageMapper;
@@ -60,7 +66,10 @@ public class DaoSupport {
     private static EnTrSentenceMapper enTrSentenceMapper;
     private static EnTrSubmissionMapper enTrSubmissionMapper;
 
-    public DaoSupport(PlatformTransactionManager txManager,
+    public DaoSupport(                      PlatformTransactionManager txManager,
+                      ArchScanRunMapper archScanRunMapper,
+                      ArchScanCycleMapper archScanCycleMapper,
+                      ArchScanViolationMapper archScanViolationMapper,
                       UserMapper userMapper,
                       ConversationMapper conversationMapper,
                       MessageMapper messageMapper,
@@ -84,6 +93,9 @@ public class DaoSupport {
                       EnTrSentenceMapper enTrSentenceMapper,
                       EnTrSubmissionMapper enTrSubmissionMapper) {
         DaoSupport.tx = new TransactionTemplate(txManager);
+        DaoSupport.archScanRunMapper = archScanRunMapper;
+        DaoSupport.archScanCycleMapper = archScanCycleMapper;
+        DaoSupport.archScanViolationMapper = archScanViolationMapper;
         DaoSupport.userMapper = userMapper;
         DaoSupport.conversationMapper = conversationMapper;
         DaoSupport.messageMapper = messageMapper;
@@ -119,6 +131,9 @@ public class DaoSupport {
         return ready;
     }
 
+    public static ArchScanRunMapper archScanRun() { return archScanRunMapper; }
+    public static ArchScanCycleMapper archScanCycle() { return archScanCycleMapper; }
+    public static ArchScanViolationMapper archScanViolation() { return archScanViolationMapper; }
     public static UserMapper user() { return userMapper; }
     public static ConversationMapper conversation() { return conversationMapper; }
     public static MessageMapper message() { return messageMapper; }

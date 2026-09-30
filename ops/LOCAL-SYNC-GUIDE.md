@@ -5,7 +5,7 @@
 > （见根 `AGENTS.md`「开发流程」）。不再使用 `docs\sync-from-server.ps1`，也不再 scp 覆盖本地目录。
 > 保留本文仅为历史参考；其中「`/root/myapp` 在服务器上不是 git 仓库」这一事实仍然成立——它不在这套 git 同步范围内。
 
-本地镜像（Windows）通过 `docs\sync-from-server.ps1` 从服务器 117.72.32.87 同步。
+本地镜像（Windows）通过 `docs\sync-from-server.ps1` 从服务器 haolo.cloud 同步。
 **该脚本当前只同步 `myapp` 与 `notelab-java` 两个目录**；B/C 拆分新增了
 `/root/notelab-c` 与 `/root/notelab-b` 两个仓库（均为独立 git 仓库，各 1 个提交），需要补进同步范围。
 
@@ -21,13 +21,13 @@
 
 ```powershell
 # notelab-c
-ssh root@117.72.32.87 "cd /root && tar czf /tmp/notelab-c.tgz --exclude=notelab-c/node_modules --exclude=notelab-c/.next notelab-c"
-scp root@117.72.32.87:/tmp/notelab-c.tgz $env:TEMP\notelab-c.tgz
+ssh root@haolo.cloud "cd /root && tar czf /tmp/notelab-c.tgz --exclude=notelab-c/node_modules --exclude=notelab-c/.next notelab-c"
+scp root@haolo.cloud:/tmp/notelab-c.tgz $env:TEMP\notelab-c.tgz
 tar xzf $env:TEMP\notelab-c.tgz -C <本地镜像根目录>
 
 # notelab-b
-ssh root@117.72.32.87 "cd /root && tar czf /tmp/notelab-b.tgz --exclude=notelab-b/node_modules --exclude=notelab-b/.next notelab-b"
-scp root@117.72.32.87:/tmp/notelab-b.tgz $env:TEMP\notelab-b.tgz
+ssh root@haolo.cloud "cd /root && tar czf /tmp/notelab-b.tgz --exclude=notelab-b/node_modules --exclude=notelab-b/.next notelab-b"
+scp root@haolo.cloud:/tmp/notelab-b.tgz $env:TEMP\notelab-b.tgz
 tar xzf $env:TEMP\notelab-b.tgz -C <本地镜像根目录>
 ```
 
@@ -36,8 +36,8 @@ tar xzf $env:TEMP\notelab-b.tgz -C <本地镜像根目录>
 
 ```powershell
 # 仅供参考（不推荐，体积大）：
-# scp -r root@117.72.32.87:/root/notelab-c <本地镜像根目录>\notelab-c
-# scp -r root@117.72.32.87:/root/notelab-b <本地镜像根目录>\notelab-b
+# scp -r root@haolo.cloud:/root/notelab-c <本地镜像根目录>\notelab-c
+# scp -r root@haolo.cloud:/root/notelab-b <本地镜像根目录>\notelab-b
 ```
 
 ## 同步后本地构建（如需在本地运行）

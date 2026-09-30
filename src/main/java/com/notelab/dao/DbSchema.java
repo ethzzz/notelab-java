@@ -243,6 +243,39 @@ final class DbSchema {
         if (!hasColumn("trpg_scenarios", "published")) {
             Db.exec("ALTER TABLE trpg_scenarios ADD COLUMN published TINYINT NOT NULL DEFAULT 0");
         }
+        // ---- 架构守护台 ArchGuard：跨仓依赖扫描快照（只增不改，供 M3 可视化页面画趋势） ----
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS arch_scan_runs (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                node_count INT NOT NULL DEFAULT 0,
+                edge_count INT NOT NULL DEFAULT 0,
+                cycle_count INT NOT NULL DEFAULT 0,
+                violation_count INT NOT NULL DEFAULT 0,
+                error_count INT NOT NULL DEFAULT 0,
+                warn_count INT NOT NULL DEFAULT 0,
+                build_ms INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_arch_run_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS arch_scan_cycles (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                run_id BIGINT NOT NULL,
+                member_seq INT NOT NULL,
+                member VARCHAR(255) NOT NULL,
+                KEY idx_arch_cycle_run (run_id, member)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS arch_scan_violations (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                run_id BIGINT NOT NULL,
+                rule_id VARCHAR(64) NOT NULL,
+                level VARCHAR(16) NOT NULL,
+                from_module VARCHAR(255) NOT NULL,
+                to_module VARCHAR(255) NOT NULL,
+                KEY idx_arch_vio_run (run_id),
+                KEY idx_arch_vio_rule (rule_id, level)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /** 列存在守护（information_schema）：存在返回 true */
