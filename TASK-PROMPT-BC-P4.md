@@ -1,6 +1,6 @@
 # B/C 端拆分 · 阶段 4：B 端前端 notelab-b（basePath + 15 页全量 antd 化）
 
-你在服务器（117.72.32.87）。这是「B/C 端拆分」的**阶段 4**：把 B 端壳应用 /root/notelab-b（:3020，pm2 `notelab-b`，nginx 经 /admin 暴露）建设为完整的 antd 管理后台，承接原 /root/myapp 的全部功能。
+你在服务器（haolo.cloud）。这是「B/C 端拆分」的**阶段 4**：把 B 端壳应用 /root/notelab-b（:3020，pm2 `notelab-b`，nginx 经 /admin 暴露）建设为完整的 antd 管理后台，承接原 /root/myapp 的全部功能。
 后端阶段 1/2 已完成（/api/c-admin/*、剧本发布、spire 发布均已上线）。**接口契约以 /root/notelab-java 实际代码为准**。
 
 ## 背景事实（已核实，直接采信）

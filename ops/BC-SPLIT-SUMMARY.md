@@ -1,10 +1,10 @@
 # B/C 端拆分 · 一页纸总览（阶段 0-5 完成）
 
-日期：2026-08-25　服务器：117.72.32.87　详细阶段记录：ops/BC-SPLIT-P0/P3/P4.md + PROGRESS.md 末章
+日期：2026-08-25　服务器：haolo.cloud　详细阶段记录：ops/BC-SPLIT-P0/P3/P4.md + PROGRESS.md 末章
 
 ## 入口与拓扑
 
-- **唯一推荐入口：`http://117.72.32.87/`（nginx :80）**
+- **唯一推荐入口：`https://haolo.cloud/`（nginx :80）**
   - `/` → C 端游戏中心（notelab-c，:3010）
   - `/admin` → B 端管理后台（notelab-b，:3020，basePath=/admin）
   - `/api/*` → API 主后端（notelab-java，:8001，SSE 直通配置）

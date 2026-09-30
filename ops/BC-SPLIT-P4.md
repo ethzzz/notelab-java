@@ -1,6 +1,6 @@
 # B/C 拆分 · 阶段 4：B 端前端 notelab-b（antd 管理后台）
 
-日期：2026-08-25　服务器：117.72.32.87
+日期：2026-08-25　服务器：haolo.cloud
 
 > 开工前 /root/notelab-b 为阶段 0 占位壳（app/layout.tsx + page.tsx）。
 > 占位壳已备份至 /root/.notelab-b-p0-backup（含其 node_modules/.next），可整体回滚。

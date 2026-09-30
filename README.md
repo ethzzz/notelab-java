@@ -173,7 +173,7 @@ mvn -DskipTests package && pm2 restart notelab-java
 - 全量回归矩阵（B 端 21 项 / C 端 18 项 / 隔离对抗 / 旧链路 / 进程）全部通过，见 PROGRESS.md 末章。
 - 测试数据清理归零（本系列 ctest/bctest 前缀；ctest1 作为回归 fixture 保留）。
 - 一页纸总览：[ops/BC-SPLIT-SUMMARY.md](ops/BC-SPLIT-SUMMARY.md)（入口、端口、DB 变更、接口清单、遗留事项、回滚速查）。
-- **入口**：`http://117.72.32.87/`（C 端）与 `http://117.72.32.87/admin`（B 端），:80 为唯一推荐入口。
+- **入口**：`https://haolo.cloud/`（C 端）与 `https://haolo.cloud/admin`（B 端），:80 为唯一推荐入口。
 - Python 版（:8000）与旧 myapp（:3000/:3001）观察期保留，退役/停用由用户决定（见 SUMMARY 遗留事项）。
 
 ## 每日英语翻译练习（✅ 2026-09-22 上线）

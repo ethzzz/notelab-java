@@ -1,6 +1,6 @@
 # 杀戮尖塔 · 角色选择按 C 端用户组前置筛选（跨 java / notelab-b / notelab-c 三仓）
 
-你在服务器（117.72.32.87，Ubuntu，`/root` 已预信任）。任务：给爬塔游戏（杀戮尖塔）的**角色选择**加"按 C 端用户组授权"的前置筛选，并在 B 端后台「尖塔内容工坊」新增「角色授权」配置能力。涉及三仓，全部在生产目录内改：
+你在服务器（haolo.cloud，Ubuntu，`/root` 已预信任）。任务：给爬塔游戏（杀戮尖塔）的**角色选择**加"按 C 端用户组授权"的前置筛选，并在 B 端后台「尖塔内容工坊」新增「角色授权」配置能力。涉及三仓，全部在生产目录内改：
 
 - `/root/notelab-java`（Spring Boot 后端，:8001，pm2 `notelab-java`）
 - `/root/notelab-b`（B 端 antd 后台，basePath `/admin`，:3020，pm2 `notelab-b`）

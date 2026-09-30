@@ -1,6 +1,6 @@
 # B/C 端拆分 · 阶段 5：切流、退役与收尾
 
-你在服务器（117.72.32.87）。这是「B/C 端拆分」的**阶段 5（最后阶段）**：全量回归、文档更新、本地同步准备。
+你在服务器（haolo.cloud）。这是「B/C 端拆分」的**阶段 5（最后阶段）**：全量回归、文档更新、本地同步准备。
 前 4 阶段已完成：先通读 /root/notelab-java/ops/BC-SPLIT-P*.md、/root/notelab-java git log、/root/notelab-c 与 /root/notelab-b 的 git 提交，确认实际状态后开工。
 
 ## 硬性纪律

@@ -1,6 +1,6 @@
 # B/C 端拆分 · 阶段 3：C 端前端 notelab-c（游戏中心 + 新外壳）
 
-你在服务器（117.72.32.87）。这是「B/C 端拆分」的**阶段 3**：把 C 端壳应用 /root/notelab-c（:3010，pm2 `notelab-c`）建设为真正的 C 端产品。
+你在服务器（haolo.cloud）。这是「B/C 端拆分」的**阶段 3**：把 C 端壳应用 /root/notelab-c（:3010，pm2 `notelab-c`）建设为真正的 C 端产品。
 后端阶段 1/2 已完成：先读 /root/notelab-java git log 与相关 controller 代码确认可用接口，**接口契约以实际代码为准**。
 
 ## 重跑说明（必读）

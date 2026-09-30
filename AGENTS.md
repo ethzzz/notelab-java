@@ -12,7 +12,7 @@ NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 
 | pm2 进程 | `notelab-java` |
 | 端口 | **127.0.0.1:8001**（只绑本地，写死在 `src/main/resources/application.properties`） |
 | nginx | `location /api/` 与 `location = /api` 直达本服务；SSE 已配 `proxy_buffering off` |
-| 线上入口 | http://117.72.32.87/api/* |
+| 线上入口 | https://haolo.cloud/api/* |
 | GitHub | `git@github.com:ethzzz/notelab-java.git`（main） |
 | 技术栈 | Spring Boot 3.4.5 / Java 17 / MyBatis-Plus 3.5.9 / poi-ooxml 5.2.5（jar 名 `target/notelab-java.jar`） |
 
