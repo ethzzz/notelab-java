@@ -8,7 +8,7 @@ set -uo pipefail
 
 get_key() {
   local key="$1" def="$2" f line val
-  for f in /root/notelab-java/.env /root/notelab/.env; do
+  for f in /root/Notelab/notelab-java/.env /root/notelab/.env; do
     [ -f "$f" ] || continue
     line=$(grep -E "^[[:space:]]*${key}=" "$f" | tail -1)
     [ -n "$line" ] || continue
@@ -51,4 +51,4 @@ else
   echo "数据库连通性 FAILED"; exit 1
 fi
 
-echo "下一步：bash /root/notelab-java/ops/daily-iteration/install-cron.sh 安装定时备份+巡检"
+echo "下一步：bash /root/Notelab/notelab-java/ops/daily-iteration/install-cron.sh 安装定时备份+巡检"

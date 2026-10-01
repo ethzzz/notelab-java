@@ -3,7 +3,7 @@
 # 关键设计：cron 直接执行 notelab-java 仓 ops/daily-iteration/ 内的脚本（单一真相源），
 #          避免"仓里一份、/root/ops 一份"的副本漂移。运行产物仍落 /root/ops 与 /root/backups。
 set -uo pipefail
-DIR=/root/notelab-java/ops/daily-iteration
+DIR=/root/Notelab/notelab-java/ops/daily-iteration
 CHECK="$DIR/daily-check.py"
 BACKUP="$DIR/backup-db.sh"
 [ -f "$CHECK" ]  || { echo "缺少 $CHECK";  exit 1; }

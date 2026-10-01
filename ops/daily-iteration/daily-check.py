@@ -26,7 +26,7 @@ SERVICES = [
 # git 仓：目录名 -> GitHub 仓（用于 fetch 落后检查）
 REPOS = ["notelab-java", "notelab-c", "notelab-b", "ai-lab"]
 # 前端仓（有 package-lock，可 npm audit / outdated）
-NPM_REPOS = ["/root/notelab-c", "/root/notelab-b"]
+NPM_REPOS = ["/root/Notelab/notelab-c", "/root/Notelab/notelab-b"]
 # ai-lab venv pip
 PIP = "/root/ai-lab/.venv/bin/pip"
 

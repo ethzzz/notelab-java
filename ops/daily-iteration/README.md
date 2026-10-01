@@ -13,8 +13,8 @@
 
 ## 定时任务（crontab）
 ```
-0 3 * * *  /root/notelab-java/ops/daily-iteration/backup-db.sh >>/root/ops/backup.log 2>&1
-30 7 * * * /usr/bin/python3 /root/notelab-java/ops/daily-iteration/daily-check.py >/dev/null 2>>/root/ops/cron.log
+0 3 * * *  /root/Notelab/notelab-java/ops/daily-iteration/backup-db.sh >>/root/ops/backup.log 2>&1
+30 7 * * * /usr/bin/python3 /root/Notelab/notelab-java/ops/daily-iteration/daily-check.py >/dev/null 2>>/root/ops/cron.log
 ```
 - **3:00 备份** → 早于巡检，让巡检看到新鲜备份。
 - **7:30 巡检** → 报告落 `/root/ops/reports/YYYY-MM-DD.md`（保留 30 天）；每周日或 `--deep` 加做依赖更新 + `npm audit`。
@@ -30,7 +30,7 @@
 
 ## 首次部署 / 重装
 ```bash
-cd /root/notelab-java && git pull            # 取到本目录脚本
+cd /root/Notelab/notelab-java && git pull            # 取到本目录脚本
 bash ops/daily-iteration/setup-mybackup.sh   # 生成凭据 + 连通性测试
 bash ops/daily-iteration/install-cron.sh     # 安装两条 cron
 python3 ops/daily-iteration/daily-check.py --deep   # 手动跑一次全量巡检验证

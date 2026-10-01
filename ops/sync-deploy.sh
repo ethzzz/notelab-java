@@ -97,14 +97,14 @@ npm_install_if_needed() {  # $1=变更文件清单
   # 上面的正则是全行精确匹配，匹配不到子路径，所以单独补一条；匹配不到时行为完全不变。
   if printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
     log "  archguard 子包依赖有变更 → 在 notelab-c/archguard 内 npm install"
-    [ "$DRY_RUN" = 1 ] || ( cd /root/notelab-c/archguard && npm install --no-audit --no-fund >/dev/null 2>&1 ) \
+    [ "$DRY_RUN" = 1 ] || ( cd /root/Notelab/notelab-c/archguard && npm install --no-audit --no-fund >/dev/null 2>&1 ) \
       || die "archguard npm install 失败"
   fi
 }
 
 # 2026-10-01：架构门禁。ArchGuard 扫 java/b/c 三仓源码建依赖图，error>0 即中止部署。
 #   · index.js 退出码 1 == 有 error 违规（这是门禁的**正常结果**不是故障），
-#     所以只把 rc=1 判成「架构退步」；报告写 /root/notelab-c/archguard/arch-report.json。
+#     所以只把 rc=1 判成「架构退步」；报告写 /root/Notelab/notelab-c/archguard/arch-report.json。
 #   · 只在碰了源码时才扫（archguard 自带 node_modules，一次约 2s）。
 #   · 紧急绕过：SKIP_ARCH=1 ./sync-deploy.sh notelab-c
 archguard_gate() {
@@ -113,10 +113,10 @@ archguard_gate() {
   printf '%s\n' "$1" | grep -qE '^(notelab-(java|b|c)/)?(src/|archguard/)' || return 0
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过 ArchGuard 扫描"; return 0; fi
   log "  ArchGuard 架构门禁扫描…"
-  ( cd /root/notelab-c/archguard && node src/index.js >/dev/null 2>&1 )
+  ( cd /root/Notelab/notelab-c/archguard && node src/index.js >/dev/null 2>&1 )
   local rc=$?
   if [ "$rc" -eq 1 ]; then
-    die "ArchGuard 检出 error 级架构违规，已中止部署；详情见 /root/notelab-c/archguard/arch-report.json"
+    die "ArchGuard 检出 error 级架构违规，已中止部署；详情见 /root/Notelab/notelab-c/archguard/arch-report.json"
   fi
   [ "$rc" -ne 0 ] && die "ArchGuard 扫描异常（rc=$rc，扫描器本身坏了，不是架构问题）"
   log "  ArchGuard 通过（无 error 级违规）"
