@@ -2,7 +2,6 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.JsonUtil;
-import com.notelab.dao.TrpgDao;
 import com.notelab.service.TrpgService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -32,14 +31,14 @@ public class CTrpgController {
     public ResponseEntity<?> list(HttpServletRequest request) {
         Map<String, Object> user = CAuthUtil.user(request);
         if (user == null) return CAuthUtil.unauth();
-        return ResponseEntity.ok(Map.of("scenarios", TrpgDao.listPublishedTrpgScenarios()));
+        return ResponseEntity.ok(Map.of("scenarios", TrpgService.listPublishedTrpgScenarios()));
     }
 
     @GetMapping("/scenarios/{id}")
     public ResponseEntity<?> detail(@PathVariable long id, HttpServletRequest request) {
         Map<String, Object> user = CAuthUtil.user(request);
         if (user == null) return CAuthUtil.unauth();
-        Map<String, Object> row = TrpgDao.getTrpgScenario(id);
+        Map<String, Object> row = TrpgService.getTrpgScenario(id);
         if (row == null || !isPublished(row)) return ResponseEntity.status(404).body(Map.of("error", "剧本不存在"));
         try {
             ObjectNode sc = (ObjectNode) JsonUtil.parse(String.valueOf(row.get("scenario_json")));
@@ -57,12 +56,12 @@ public class CTrpgController {
     public ResponseEntity<?> startPlay(@PathVariable long id, HttpServletRequest request) {
         Map<String, Object> user = CAuthUtil.user(request);
         if (user == null) return CAuthUtil.unauth();
-        Map<String, Object> row = TrpgDao.getTrpgScenario(id);
+        Map<String, Object> row = TrpgService.getTrpgScenario(id);
         if (row == null || !isPublished(row)) return ResponseEntity.status(404).body(Map.of("error", "剧本不存在"));
         try {
             ObjectNode sc = (ObjectNode) JsonUtil.parse(String.valueOf(row.get("scenario_json")));
-            long pid = TrpgDao.createTrpgPlay(id, CAuthUtil.userId(user), TrpgService.startNodeId(sc), "c");
-            return ResponseEntity.ok(TrpgService.playPayload(TrpgDao.getTrpgPlay(pid), sc));
+            long pid = TrpgService.createTrpgPlay(id, CAuthUtil.userId(user), TrpgService.startNodeId(sc), "c");
+            return ResponseEntity.ok(TrpgService.playPayload(TrpgService.getTrpgPlay(pid), sc));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "开局失败"));
         }
@@ -74,7 +73,7 @@ public class CTrpgController {
     public ResponseEntity<?> listPlays(HttpServletRequest request) {
         Map<String, Object> user = CAuthUtil.user(request);
         if (user == null) return CAuthUtil.unauth();
-        return ResponseEntity.ok(Map.of("plays", TrpgDao.listTrpgPlays("c", CAuthUtil.userId(user))));
+        return ResponseEntity.ok(Map.of("plays", TrpgService.listTrpgPlays("c", CAuthUtil.userId(user))));
     }
 
     @GetMapping("/plays/{id}")
@@ -109,7 +108,7 @@ public class CTrpgController {
         if (user == null) return CAuthUtil.unauth();
         Map<String, Object> play = ownedCPlay(id, user);
         if (play == null) return ResponseEntity.status(404).body(Map.of("error", "对局不存在"));
-        TrpgDao.deleteTrpgPlay(id, CAuthUtil.userId(user));
+        TrpgService.deleteTrpgPlay(id, CAuthUtil.userId(user));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -117,7 +116,7 @@ public class CTrpgController {
 
     /** 存档归属校验：scope='c' 且属于当前 C 用户；不满足返回 null（对外 404）。剧本下架不影响存量存档。 */
     private static Map<String, Object> ownedCPlay(long id, Map<String, Object> user) {
-        Map<String, Object> play = TrpgDao.getTrpgPlay(id);
+        Map<String, Object> play = TrpgService.getTrpgPlay(id);
         if (play == null || !"c".equals(play.get("scope"))) return null;
         Object uid = play.get("user_id");
         if (uid == null || ((Number) uid).longValue() != CAuthUtil.userId(user)) return null;

@@ -279,4 +279,87 @@ public final class TrpgService {
     public static Map<String, Object> toMap(ObjectNode sc) {
         return JsonUtil.MAPPER.convertValue(sc, LinkedHashMap.class);
     }
+
+
+    // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static List<Map<String, Object>> listTrpgScenarios(long userId) {
+        return TrpgDao.listTrpgScenarios(userId);
+    }   // listTrpgScenarios(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static long createTrpgGenTask(long userId, String configJson) {
+        return TrpgDao.createTrpgGenTask(userId, configJson);
+    }   // createTrpgGenTask(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static void failTrpgGenTask(long id, String error) {
+        TrpgDao.failTrpgGenTask(id, error);
+    }   // failTrpgGenTask(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static long createTrpgScenario(long userId, String title, String genre, String summary, String configJson, String scenarioJson) {
+        return TrpgDao.createTrpgScenario(userId, title, genre, summary, configJson, scenarioJson);
+    }   // createTrpgScenario(6)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static void finishTrpgGenTask(long id, long scenarioId) {
+        TrpgDao.finishTrpgGenTask(id, scenarioId);
+    }   // finishTrpgGenTask(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static Map<String, Object> getTrpgGenTask(long id) {
+        return TrpgDao.getTrpgGenTask(id);
+    }   // getTrpgGenTask(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static Map<String, Object> getTrpgScenario(long id) {
+        return TrpgDao.getTrpgScenario(id);
+    }   // getTrpgScenario(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static void deleteTrpgScenario(long id, long userId) {
+        TrpgDao.deleteTrpgScenario(id, userId);
+    }   // deleteTrpgScenario(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static void setTrpgScenarioPublished(long id, int published) {
+        TrpgDao.setTrpgScenarioPublished(id, published);
+    }   // setTrpgScenarioPublished(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static long createTrpgPlay(long scenarioId, long userId, String startNode) {
+        return TrpgDao.createTrpgPlay(scenarioId, userId, startNode);
+    }   // createTrpgPlay(3)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static Map<String, Object> getTrpgPlay(long id) {
+        return TrpgDao.getTrpgPlay(id);
+    }   // getTrpgPlay(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static List<Map<String, Object>> listTrpgPlays(long userId) {
+        return TrpgDao.listTrpgPlays(userId);
+    }   // listTrpgPlays(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static void deleteTrpgPlay(long id, long userId) {
+        TrpgDao.deleteTrpgPlay(id, userId);
+    }   // deleteTrpgPlay(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static List<Map<String, Object>> listPublishedTrpgScenarios() {
+        return TrpgDao.listPublishedTrpgScenarios();
+    }   // listPublishedTrpgScenarios(0)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static long createTrpgPlay(long scenarioId, long userId, String startNode, String scope) {
+        return TrpgDao.createTrpgPlay(scenarioId, userId, startNode, scope);
+    }   // createTrpgPlay(4)
+
+    /** ArchGuard 收敛：controller 不再直调 TrpgDao，统一经 TrpgService */
+    public static List<Map<String, Object>> listTrpgPlays(String scope, long userId) {
+        return TrpgDao.listTrpgPlays(scope, userId);
+    }   // listTrpgPlays(2)
 }

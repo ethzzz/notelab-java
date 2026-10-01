@@ -133,4 +133,12 @@ public final class UiConfigService {
         }
         return out;
     }
+
+
+    // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
+
+    /** ArchGuard 收敛：controller 不再直调 UiConfigDao，统一经 UiConfigService */
+    public static void saveUiConfig(String configJson) {
+        UiConfigDao.saveUiConfig(configJson);
+    }   // saveUiConfig(1)
 }

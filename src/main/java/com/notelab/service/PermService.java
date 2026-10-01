@@ -183,4 +183,127 @@ public final class PermService {
         }
         return out;
     }
+
+
+    // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static List<Map<String, Object>> listRoles() {
+        return PermDao.listRoles();
+    }   // listRoles(0)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static List<String> roleRouteCodes(String roleCode) {
+        return PermDao.roleRouteCodes(roleCode);
+    }   // roleRouteCodes(1)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static List<Map<String, Object>> listRoutes() {
+        return PermDao.listRoutes();
+    }   // listRoutes(0)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static List<Map<String, Object>> listUsersForPerm() {
+        return UserDao.listUsersForPerm();
+    }   // listUsersForPerm(0)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static boolean createRole(String code, String name) {
+        return PermDao.createRole(code, name);
+    }   // createRole(2)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static Map<String, Object> getRole(String code) {
+        return PermDao.getRole(code);
+    }   // getRole(1)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static void updateRoleName(String code, String name) {
+        PermDao.updateRoleName(code, name);
+    }   // updateRoleName(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static long countUsersByRole(String role) {
+        return UserDao.countUsersByRole(role);
+    }   // countUsersByRole(1)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void migrateUsersToRole(String fromRole, String toRole) {
+        UserDao.migrateUsersToRole(fromRole, toRole);
+    }   // migrateUsersToRole(2)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static void deleteRole(String code) {
+        PermDao.deleteRole(code);
+    }   // deleteRole(1)
+
+    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    public static void setRoleRoutes(String roleCode, List<String> codes) {
+        PermDao.setRoleRoutes(roleCode, codes);
+    }   // setRoleRoutes(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static long countUsersFiltered(String q, String role) {
+        return UserDao.countUsersFiltered(q, role);
+    }   // countUsersFiltered(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static List<Map<String, Object>> listUsersPaged(String q, String role, int limit, long offset) {
+        return UserDao.listUsersPaged(q, role, limit, offset);
+    }   // listUsersPaged(4)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static Map<String, Object> getUserByUsername(String username) {
+        return UserDao.getUserByUsername(username);
+    }   // getUserByUsername(1)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static Map<String, Object> getUserByEmail(String email) {
+        return UserDao.getUserByEmail(email);
+    }   // getUserByEmail(1)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static long createUserWithRole(String username, String passwordHash, String email, String role) {
+        return UserDao.createUserWithRole(username, passwordHash, email, role);
+    }   // createUserWithRole(4)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static Map<String, Object> getUserById(long id) {
+        return UserDao.getUserById(id);
+    }   // getUserById(1)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void updateUserInfo(long id, String username, String email) {
+        UserDao.updateUserInfo(id, username, email);
+    }   // updateUserInfo(3)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static long countSuperAdmins() {
+        return UserDao.countSuperAdmins();
+    }   // countSuperAdmins(0)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void setUserRole(long uid, String role) {
+        UserDao.setUserRole(uid, role);
+    }   // setUserRole(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static List<Map<String, Object>> listUsersByIds(List<Long> ids) {
+        return UserDao.listUsersByIds(ids);
+    }   // listUsersByIds(1)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void setUsersRole(List<Long> ids, String role) {
+        UserDao.setUsersRole(ids, role);
+    }   // setUsersRole(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void setUserPassword(long uid, String passwordHash) {
+        UserDao.setUserPassword(uid, passwordHash);
+    }   // setUserPassword(2)
+
+    /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
+    public static void deleteUser(long id) {
+        UserDao.deleteUser(id);
+    }   // deleteUser(1)
 }

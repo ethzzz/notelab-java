@@ -1,7 +1,6 @@
 package com.notelab.controller;
 
 import com.notelab.common.AppConfig;
-import com.notelab.dao.TranslateDao;
 import com.notelab.scheduler.TranslateScheduler;
 import com.notelab.service.PermService;
 import com.notelab.service.RateLimit;
@@ -90,9 +89,9 @@ public class TranslateAdminController {
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("groups", TranslateDao.listGroups());
+        body.put("groups", TranslateService.listGroups());
         body.put("tiers", TranslateService.tiers());
-        body.put("queued", TranslateDao.countQueued());
+        body.put("queued", TranslateService.countQueued());
         body.put("today", LocalDate.now().toString());
         return ResponseEntity.ok(body);
     }
@@ -113,11 +112,11 @@ public class TranslateAdminController {
         }
         String source = VALID_SOURCE.contains(nz(req.source)) ? req.source.trim() : "manual";
         Long createdBy = me.get("id") instanceof Number n ? n.longValue() : null;
-        long id = TranslateDao.createGroup(title, source, trimTo(req.scenario, 60), trimTo(req.note, 255), createdBy);
+        long id = TranslateService.createGroup(title, source, trimTo(req.scenario, 60), trimTo(req.note, 255), createdBy);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", id);
-        body.put("group", TranslateDao.getGroup(id));
+        body.put("group", TranslateService.getGroup(id));
         return ResponseEntity.ok(body);
     }
 
@@ -127,9 +126,9 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        Map<String, Object> group = TranslateDao.getGroup(id);
+        Map<String, Object> group = TranslateService.getGroup(id);
         if (group == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
-        List<Map<String, Object>> sentences = TranslateDao.listSentences(id);
+        List<Map<String, Object>> sentences = TranslateService.listSentences(id);
         Map<Integer, Integer> counts = new LinkedHashMap<>();
         counts.put(1, 0);
         counts.put(2, 0);
@@ -157,7 +156,7 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        if (TranslateDao.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
+        if (TranslateService.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
         Map<String, Object> req = body == null ? Map.of() : body;
 
         String title = null;
@@ -197,9 +196,9 @@ public class TranslateAdminController {
         if (status == null && activatedDate != null) status = "used";
         if (status == null && clearDate) status = "draft";
 
-        TranslateDao.updateGroupFields(id, title, status, scenario, note, activatedDate);
-        if (clearDate) TranslateDao.clearActivatedDate(id);
-        return ResponseEntity.ok(Map.of("ok", true, "group", TranslateDao.getGroup(id)));
+        TranslateService.updateGroupFields(id, title, status, scenario, note, activatedDate);
+        if (clearDate) TranslateService.clearActivatedDate(id);
+        return ResponseEntity.ok(Map.of("ok", true, "group", TranslateService.getGroup(id)));
     }
 
     /** 删组（句子由外键 ON DELETE CASCADE 级联删） */
@@ -208,8 +207,8 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        if (TranslateDao.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
-        TranslateDao.deleteGroup(id);
+        if (TranslateService.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
+        TranslateService.deleteGroup(id);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -219,17 +218,17 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        Map<String, Object> group = TranslateDao.getGroup(id);
+        Map<String, Object> group = TranslateService.getGroup(id);
         if (group == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
-        if (TranslateDao.countSentences(id) == 0) {
+        if (TranslateService.countSentences(id) == 0) {
             return ResponseEntity.status(400).body(Map.of("error", "句子组为空，请先添加句子再入队"));
         }
         if ("used".equals(group.get("status"))) {
             return ResponseEntity.status(400).body(Map.of("error", "该组已激活，无需入队"));
         }
-        TranslateDao.updateGroupFields(id, null, "queued", null, null, null);
-        return ResponseEntity.ok(Map.of("ok", true, "group", TranslateDao.getGroup(id),
-                "queued", TranslateDao.countQueued()));
+        TranslateService.updateGroupFields(id, null, "queued", null, null, null);
+        return ResponseEntity.ok(Map.of("ok", true, "group", TranslateService.getGroup(id),
+                "queued", TranslateService.countQueued()));
     }
 
     /** 手动补跑激活（与 0 点定时任务同一逻辑，幂等）：当天已激活则不重复 */
@@ -252,15 +251,15 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        if (TranslateDao.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
+        if (TranslateService.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
         ResponseEntity<Map<String, Object>> bad = validateSentence(req);
         if (bad != null) return bad;
         String zh = req.zh_text.trim();
-        long sid = TranslateDao.createSentence(id, req.tier, zh, nullIfBlank(req.ref_en), req.sort_order);
+        long sid = TranslateService.createSentence(id, req.tier, zh, nullIfBlank(req.ref_en), req.sort_order);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", sid);
-        body.put("sentence", TranslateDao.getSentence(sid));
+        body.put("sentence", TranslateService.getSentence(sid));
         if (zh.length() > TranslateService.MAX_ZH_LEN) {
             body.put("warning", "中文原句超过 " + TranslateService.MAX_ZH_LEN + " 字，已入库但偏长");
         }
@@ -275,7 +274,7 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        Map<String, Object> row = TranslateDao.getSentence(sid);
+        Map<String, Object> row = TranslateService.getSentence(sid);
         if (row == null) return ResponseEntity.status(404).body(Map.of("error", "句子不存在"));
         if (req == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不能为空"));
         String zh = req.zh_text == null ? null : req.zh_text.trim();
@@ -290,8 +289,8 @@ public class TranslateAdminController {
         if (zh == null && ref == null && tier == null && req.sort_order == null) {
             return ResponseEntity.status(400).body(Map.of("error", "没有需要更新的字段"));
         }
-        TranslateDao.updateSentenceFields(sid, zh, ref, tier, req.sort_order);
-        return ResponseEntity.ok(Map.of("ok", true, "sentence", TranslateDao.getSentence(sid)));
+        TranslateService.updateSentenceFields(sid, zh, ref, tier, req.sort_order);
+        return ResponseEntity.ok(Map.of("ok", true, "sentence", TranslateService.getSentence(sid)));
     }
 
     /** 删单句 */
@@ -300,10 +299,10 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        if (TranslateDao.getSentence(sid) == null) {
+        if (TranslateService.getSentence(sid) == null) {
             return ResponseEntity.status(404).body(Map.of("error", "句子不存在"));
         }
-        TranslateDao.deleteSentence(sid);
+        TranslateService.deleteSentence(sid);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -319,7 +318,7 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        if (TranslateDao.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
+        if (TranslateService.getGroup(id) == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
         if (req == null || req.text == null || req.text.isBlank()) {
             return ResponseEntity.status(400).body(Map.of("error", "导入文本不能为空"));
         }
@@ -331,18 +330,18 @@ public class TranslateAdminController {
 
         TranslateService.SplitResult split = TranslateService.splitZhText(req.text);
         int skipped = split.skipped;
-        boolean emptyBefore = TranslateDao.countSentences(id) == 0;
+        boolean emptyBefore = TranslateService.countSentences(id) == 0;
         List<Map<String, Object>> inserted = new ArrayList<>();
         int longCount = 0;
         for (String zhRaw : split.sentences) {
             String zh = zhRaw.length() > MAX_ZH_LEN ? zhRaw.substring(0, MAX_ZH_LEN) : zhRaw;
-            if (TranslateDao.sentenceExists(id, zh)) {
+            if (TranslateService.sentenceExists(id, zh)) {
                 skipped++;
                 continue;
             }
-            long sid = TranslateDao.createSentence(id, tier, zh, null, null);
+            long sid = TranslateService.createSentence(id, tier, zh, null, null);
             if (zh.length() > TranslateService.MAX_ZH_LEN) longCount++;
-            Map<String, Object> row = TranslateDao.getSentence(sid);
+            Map<String, Object> row = TranslateService.getSentence(sid);
             if (row != null) inserted.add(row);
         }
         if (emptyBefore && !inserted.isEmpty()) setSourceIfManual(id, "import");
@@ -370,7 +369,7 @@ public class TranslateAdminController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!allowed(me)) return forbidden();
-        Map<String, Object> group = TranslateDao.getGroup(id);
+        Map<String, Object> group = TranslateService.getGroup(id);
         if (group == null) return ResponseEntity.status(404).body(Map.of("error", "句子组不存在"));
         if (req == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不能为空"));
         Map<Integer, Integer> counts = new LinkedHashMap<>();
@@ -383,7 +382,7 @@ public class TranslateAdminController {
         if (!RateLimit.rateOk("entr-gen:" + ip, 6, 300)) {
             return ResponseEntity.status(429).body(Map.of("error", "生成过于频繁，请 5 分钟后再试"));
         }
-        boolean emptyBefore = TranslateDao.countSentences(id) == 0;
+        boolean emptyBefore = TranslateService.countSentences(id) == 0;
         String scenario = trimTo(req.scenario, 60);
         String prompt = trimTo(req.prompt, 500);
 
@@ -402,18 +401,18 @@ public class TranslateAdminController {
         Set<String> seen = new LinkedHashSet<>();
         for (TranslateService.Generated g : items) {
             String zh = g.zhText.length() > MAX_ZH_LEN ? g.zhText.substring(0, MAX_ZH_LEN) : g.zhText;
-            if (!seen.add(zh) || TranslateDao.sentenceExists(id, zh)) {
+            if (!seen.add(zh) || TranslateService.sentenceExists(id, zh)) {
                 skipped++;
                 continue;
             }
-            long sid = TranslateDao.createSentence(id, g.tier, zh, g.refEn == null || g.refEn.isBlank() ? null : g.refEn, null);
-            Map<String, Object> row = TranslateDao.getSentence(sid);
+            long sid = TranslateService.createSentence(id, g.tier, zh, g.refEn == null || g.refEn.isBlank() ? null : g.refEn, null);
+            Map<String, Object> row = TranslateService.getSentence(sid);
             if (row != null) inserted.add(row);
         }
         if (emptyBefore && !inserted.isEmpty()) {
             setSourceIfManual(id, "llm");
             if (!scenario.isEmpty()) {
-                TranslateDao.updateGroupFields(id, null, null, scenario, null, null);
+                TranslateService.updateGroupFields(id, null, null, scenario, null, null);
             }
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -450,9 +449,9 @@ public class TranslateAdminController {
 
     /** 组来源仍为 manual 时改写为 import/llm（首次批量填充时定型，后续手动加句不覆盖） */
     private static void setSourceIfManual(long groupId, String source) {
-        Map<String, Object> g = TranslateDao.getGroup(groupId);
+        Map<String, Object> g = TranslateService.getGroup(groupId);
         if (g != null && "manual".equals(g.get("source"))) {
-            TranslateDao.setGroupSource(groupId, source);
+            TranslateService.setGroupSource(groupId, source);
         }
     }
 

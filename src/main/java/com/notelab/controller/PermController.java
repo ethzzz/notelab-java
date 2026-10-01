@@ -14,8 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import com.notelab.dao.UserDao;
-import com.notelab.dao.PermDao;
 
 /**
  * 权限/用户管理（仅超级管理员）：
@@ -64,19 +62,19 @@ public class PermController {
         if (!PermService.isSuperAdmin(me)) return forbidden();
 
         List<Map<String, Object>> roles = new ArrayList<>();
-        for (Map<String, Object> r : PermDao.listRoles()) {
+        for (Map<String, Object> r : PermService.listRoles()) {
             String code = String.valueOf(r.get("code"));
             Map<String, Object> role = new LinkedHashMap<>();
             role.put("code", code);
             role.put("name", r.get("name"));
-            role.put("route_codes", PermDao.roleRouteCodes(code));
+            role.put("route_codes", PermService.roleRouteCodes(code));
             roles.add(role);
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("me", Map.of("id", me.get("id"), "username", me.get("username"), "role", String.valueOf(me.get("role"))));
-        body.put("routes", PermDao.listRoutes());
+        body.put("routes", PermService.listRoutes());
         body.put("roles", roles);
-        body.put("users", UserDao.listUsersForPerm());
+        body.put("users", PermService.listUsersForPerm());
         return ResponseEntity.ok(body);
     }
 
@@ -99,7 +97,7 @@ public class PermController {
         if (name.isEmpty() || name.length() > 20) {
             return ResponseEntity.status(400).body(Map.of("error", "角色名称需为 1-20 字"));
         }
-        if (!PermDao.createRole(code, name)) {
+        if (!PermService.createRole(code, name)) {
             return ResponseEntity.status(409).body(Map.of("error", "角色编码已存在"));
         }
         return ResponseEntity.ok(Map.of("ok", true, "code", code));
@@ -112,11 +110,11 @@ public class PermController {
         Map<String, Object> me = guard(request);
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return forbidden();
-        if (PermDao.getRole(code) == null) return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
+        if (PermService.getRole(code) == null) return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
         if (req == null || req.name == null || req.name.trim().isEmpty() || req.name.trim().length() > 20) {
             return ResponseEntity.status(400).body(Map.of("error", "角色名称需为 1-20 字"));
         }
-        PermDao.updateRoleName(code, req.name.trim());
+        PermService.updateRoleName(code, req.name.trim());
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -128,10 +126,10 @@ public class PermController {
         if (PermService.ROLE_ADMIN.equals(code) || PermService.ROLE_USER.equals(code)) {
             return ResponseEntity.status(400).body(Map.of("error", "内置角色（超级管理员/普通用户）不可删除"));
         }
-        if (PermDao.getRole(code) == null) return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
-        long n = UserDao.countUsersByRole(code);
-        if (n > 0) UserDao.migrateUsersToRole(code, PermService.ROLE_USER); // 成员并入普通用户，避免悬空角色
-        PermDao.deleteRole(code);
+        if (PermService.getRole(code) == null) return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
+        long n = PermService.countUsersByRole(code);
+        if (n > 0) PermService.migrateUsersToRole(code, PermService.ROLE_USER); // 成员并入普通用户，避免悬空角色
+        PermService.deleteRole(code);
         return ResponseEntity.ok(Map.of("ok", true, "migrated", n));
     }
 
@@ -142,7 +140,7 @@ public class PermController {
         Map<String, Object> me = guard(request);
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return forbidden();
-        if (PermDao.getRole(code) == null) {
+        if (PermService.getRole(code) == null) {
             return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
         }
         if (PermService.ROLE_ADMIN.equals(code)) {
@@ -150,10 +148,10 @@ public class PermController {
         }
         List<String> codes = req == null || req.codes == null ? List.of() : req.codes;
         Set<String> known = new LinkedHashSet<>();
-        for (Map<String, Object> r : PermDao.listRoutes()) known.add((String) r.get("code"));
+        for (Map<String, Object> r : PermService.listRoutes()) known.add((String) r.get("code"));
         List<String> valid = new ArrayList<>();
         for (String c : codes) if (c != null && known.contains(c)) valid.add(c);
-        PermDao.setRoleRoutes(code, valid);
+        PermService.setRoleRoutes(code, valid);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -171,8 +169,8 @@ public class PermController {
         if (!PermService.isSuperAdmin(me)) return forbidden();
         int p = Math.max(page, 1);
         int s = Math.min(Math.max(size, 1), 100);
-        long total = UserDao.countUsersFiltered(q, role);
-        List<Map<String, Object>> items = UserDao.listUsersPaged(q, role, s, (long) (p - 1) * s);
+        long total = PermService.countUsersFiltered(q, role);
+        List<Map<String, Object>> items = PermService.listUsersPaged(q, role, s, (long) (p - 1) * s);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("items", items);
         body.put("total", total);
@@ -202,15 +200,15 @@ public class PermController {
             return ResponseEntity.status(400).body(Map.of("error", "邮箱格式不正确"));
         }
         String role = PermService.isValidRole(req.role) ? req.role : "user";
-        if (UserDao.getUserByUsername(username) != null) {
+        if (PermService.getUserByUsername(username) != null) {
             return ResponseEntity.status(409).body(Map.of("error", "用户名已存在"));
         }
-        if (!email.isEmpty() && UserDao.getUserByEmail(email) != null) {
+        if (!email.isEmpty() && PermService.getUserByEmail(email) != null) {
             return ResponseEntity.status(409).body(Map.of("error", "该邮箱已被注册"));
         }
         long uid;
         try {
-            uid = UserDao.createUserWithRole(username, Passwords.hash(req.password), email.isEmpty() ? null : email, role);
+            uid = PermService.createUserWithRole(username, Passwords.hash(req.password), email.isEmpty() ? null : email, role);
         } catch (Db.UniqueViolation e) {
             return ResponseEntity.status(409).body(Map.of("error", "用户名或邮箱已存在"));
         }
@@ -224,7 +222,7 @@ public class PermController {
         Map<String, Object> me = guard(request);
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return forbidden();
-        Map<String, Object> target = UserDao.getUserById(id);
+        Map<String, Object> target = PermService.getUserById(id);
         if (target == null) return ResponseEntity.status(404).body(Map.of("error", "用户不存在"));
         if (req == null || req.username == null) {
             return ResponseEntity.status(400).body(Map.of("error", "用户名不能为空"));
@@ -237,17 +235,17 @@ public class PermController {
         if (!email.isEmpty() && !EMAIL_RE.matcher(email).matches()) {
             return ResponseEntity.status(400).body(Map.of("error", "邮箱格式不正确"));
         }
-        Map<String, Object> byName = UserDao.getUserByUsername(username);
+        Map<String, Object> byName = PermService.getUserByUsername(username);
         if (byName != null && ((Number) byName.get("id")).longValue() != id) {
             return ResponseEntity.status(409).body(Map.of("error", "用户名已被占用"));
         }
         if (!email.isEmpty()) {
-            Map<String, Object> byMail = UserDao.getUserByEmail(email);
+            Map<String, Object> byMail = PermService.getUserByEmail(email);
             if (byMail != null && ((Number) byMail.get("id")).longValue() != id) {
                 return ResponseEntity.status(409).body(Map.of("error", "该邮箱已被占用"));
             }
         }
-        UserDao.updateUserInfo(id, username, email.isEmpty() ? null : email);
+        PermService.updateUserInfo(id, username, email.isEmpty() ? null : email);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -261,15 +259,15 @@ public class PermController {
         if (req == null || !PermService.isValidRole(req.role)) {
             return ResponseEntity.status(400).body(Map.of("error", "角色无效"));
         }
-        Map<String, Object> target = UserDao.getUserById(id);
+        Map<String, Object> target = PermService.getUserById(id);
         if (target == null) {
             return ResponseEntity.status(404).body(Map.of("error", "用户不存在"));
         }
         long meId = ((Number) me.get("id")).longValue();
-        if (id == meId && !PermService.ROLE_ADMIN.equals(req.role) && UserDao.countSuperAdmins() <= 1) {
+        if (id == meId && !PermService.ROLE_ADMIN.equals(req.role) && PermService.countSuperAdmins() <= 1) {
             return ResponseEntity.status(400).body(Map.of("error", "至少需要保留一名超级管理员"));
         }
-        UserDao.setUserRole(id, req.role);
+        PermService.setUserRole(id, req.role);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -303,7 +301,7 @@ public class PermController {
         if (want.size() > 200) {
             return ResponseEntity.status(400).body(Map.of("error", "单次最多操作 200 个账户"));
         }
-        List<Map<String, Object>> found = UserDao.listUsersByIds(new ArrayList<>(want));
+        List<Map<String, Object>> found = PermService.listUsersByIds(new ArrayList<>(want));
         List<Long> valid = new ArrayList<>();
         long demotingAdmins = 0;
         for (Map<String, Object> u : found) {
@@ -314,10 +312,10 @@ public class PermController {
             return ResponseEntity.status(404).body(Map.of("error", "所选账户均已不存在"));
         }
         if (!PermService.ROLE_ADMIN.equals(req.role)
-                && UserDao.countSuperAdmins() - demotingAdmins < 1) {
+                && PermService.countSuperAdmins() - demotingAdmins < 1) {
             return ResponseEntity.status(400).body(Map.of("error", "至少需要保留一名超级管理员"));
         }
-        UserDao.setUsersRole(valid, req.role);
+        PermService.setUsersRole(valid, req.role);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("updated", valid.size());
@@ -335,11 +333,11 @@ public class PermController {
         if (req == null || req.password == null || req.password.length() < 6) {
             return ResponseEntity.status(400).body(Map.of("error", "密码至少 6 位"));
         }
-        Map<String, Object> target = UserDao.getUserById(id);
+        Map<String, Object> target = PermService.getUserById(id);
         if (target == null) {
             return ResponseEntity.status(404).body(Map.of("error", "用户不存在"));
         }
-        UserDao.setUserPassword(id, Passwords.hash(req.password));
+        PermService.setUserPassword(id, Passwords.hash(req.password));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -348,16 +346,16 @@ public class PermController {
         Map<String, Object> me = guard(request);
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return forbidden();
-        Map<String, Object> target = UserDao.getUserById(id);
+        Map<String, Object> target = PermService.getUserById(id);
         if (target == null) return ResponseEntity.status(404).body(Map.of("error", "用户不存在"));
         long meId = ((Number) me.get("id")).longValue();
         if (id == meId) {
             return ResponseEntity.status(400).body(Map.of("error", "不能删除当前登录的账户"));
         }
-        if (PermService.ROLE_ADMIN.equals(target.get("role")) && UserDao.countSuperAdmins() <= 1) {
+        if (PermService.ROLE_ADMIN.equals(target.get("role")) && PermService.countSuperAdmins() <= 1) {
             return ResponseEntity.status(400).body(Map.of("error", "至少需要保留一名超级管理员"));
         }
-        UserDao.deleteUser(id);
+        PermService.deleteUser(id);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 }

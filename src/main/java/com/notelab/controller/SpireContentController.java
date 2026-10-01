@@ -2,7 +2,6 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonUtil;
-import com.notelab.dao.UiConfigDao;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -322,7 +321,7 @@ public class SpireContentController {
         Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
         cfg.put("spire", spire);
         try {
-            UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
@@ -367,7 +366,7 @@ public class SpireContentController {
         Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
         cfg.put("spire_published", spireOf(cfg));
         try {
-            UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
@@ -382,7 +381,7 @@ public class SpireContentController {
         Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
         cfg.remove("spire_published");
         try {
-            UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }

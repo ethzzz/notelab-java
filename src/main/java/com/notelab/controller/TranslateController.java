@@ -1,6 +1,5 @@
 package com.notelab.controller;
 
-import com.notelab.dao.TranslateDao;
 import com.notelab.service.GradeEngine;
 import com.notelab.service.TranslateService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -63,9 +62,9 @@ public class TranslateController {
         }
         LocalDate today = LocalDate.now();
         // 句子必须存在且属于当天激活组（否则视为非法提交）
-        Map<String, Object> group = TranslateDao.getActivatedGroup(today);
+        Map<String, Object> group = TranslateService.getActivatedGroup(today);
         if (group == null) return ResponseEntity.status(400).body(Map.of("error", "今日暂无练习内容"));
-        Map<String, Object> sentence = TranslateDao.getSentence(req.sentence_id);
+        Map<String, Object> sentence = TranslateService.getSentence(req.sentence_id);
         if (sentence == null) return ResponseEntity.status(400).body(Map.of("error", "句子不存在"));
         long gid = ((Number) group.get("id")).longValue();
         Object sGroup = sentence.get("group_id");
@@ -82,7 +81,7 @@ public class TranslateController {
         try {
             // upsert：靠 uk_user_sentence_date 唯一键，重复提交同句覆盖旧判分结果
             // manual 模式（无参考译文 + AI 不可用）下 accurate/score 为 null，表示"未判分"
-            TranslateDao.upsertSubmission(uid, req.sentence_id, gid, today, en,
+            TranslateService.upsertSubmission(uid, req.sentence_id, gid, today, en,
                     grade.accurate == null ? null : (grade.accurate ? 1 : 0), grade.score,
                     grade.corrected, grade.explanation, grade.errorsJson, grade.model);
         } catch (Exception e) {
@@ -146,7 +145,7 @@ public class TranslateController {
         }
         List<Map<String, Object>> items = new ArrayList<>();
         try {
-            for (Map<String, Object> sub : TranslateDao.listSubmissionsByDate(CAuthUtil.userId(user), day)) {
+            for (Map<String, Object> sub : TranslateService.listSubmissionsByDate(CAuthUtil.userId(user), day)) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("id", sub.get("id"));
                 m.put("sentence_id", sub.get("sentence_id"));

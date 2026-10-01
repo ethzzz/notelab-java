@@ -506,4 +506,97 @@ public final class TranslateService {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, max);
     }
+
+
+    // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static Map<String, Object> getActivatedGroup(LocalDate date) {
+        return TranslateDao.getActivatedGroup(date);
+    }   // getActivatedGroup(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static Map<String, Object> getSentence(long id) {
+        return TranslateDao.getSentence(id);
+    }   // getSentence(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void upsertSubmission(long cUserId, long sentenceId, long groupId, LocalDate submitDate, String enText, Integer accurate, Integer score, String corrected, String explanation, String errorsJson, String model) {
+        TranslateDao.upsertSubmission(cUserId, sentenceId, groupId, submitDate, enText, accurate, score, corrected, explanation, errorsJson, model);
+    }   // upsertSubmission(11)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static List<Map<String, Object>> listSubmissionsByDate(long cUserId, LocalDate date) {
+        return TranslateDao.listSubmissionsByDate(cUserId, date);
+    }   // listSubmissionsByDate(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static List<Map<String, Object>> listGroups() {
+        return TranslateDao.listGroups();
+    }   // listGroups(0)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static long countQueued() {
+        return TranslateDao.countQueued();
+    }   // countQueued(0)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static long createGroup(String title, String source, String scenario, String note, Long createdBy) {
+        return TranslateDao.createGroup(title, source, scenario, note, createdBy);
+    }   // createGroup(5)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static Map<String, Object> getGroup(long id) {
+        return TranslateDao.getGroup(id);
+    }   // getGroup(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static List<Map<String, Object>> listSentences(long groupId) {
+        return TranslateDao.listSentences(groupId);
+    }   // listSentences(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void updateGroupFields(long id, String title, String status, String scenario, String note, LocalDate activatedDate) {
+        TranslateDao.updateGroupFields(id, title, status, scenario, note, activatedDate);
+    }   // updateGroupFields(6)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void clearActivatedDate(long id) {
+        TranslateDao.clearActivatedDate(id);
+    }   // clearActivatedDate(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void deleteGroup(long id) {
+        TranslateDao.deleteGroup(id);
+    }   // deleteGroup(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static long countSentences(long groupId) {
+        return TranslateDao.countSentences(groupId);
+    }   // countSentences(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static long createSentence(long groupId, int tier, String zhText, String refEn, Integer sortOrder) {
+        return TranslateDao.createSentence(groupId, tier, zhText, refEn, sortOrder);
+    }   // createSentence(5)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void updateSentenceFields(long id, String zhText, String refEn, Integer tier, Integer sortOrder) {
+        TranslateDao.updateSentenceFields(id, zhText, refEn, tier, sortOrder);
+    }   // updateSentenceFields(5)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void deleteSentence(long id) {
+        TranslateDao.deleteSentence(id);
+    }   // deleteSentence(1)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static boolean sentenceExists(long groupId, String zhText) {
+        return TranslateDao.sentenceExists(groupId, zhText);
+    }   // sentenceExists(2)
+
+    /** ArchGuard 收敛：controller 不再直调 TranslateDao，统一经 TranslateService */
+    public static void setGroupSource(long id, String source) {
+        TranslateDao.setGroupSource(id, source);
+    }   // setGroupSource(2)
 }

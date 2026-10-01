@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import com.notelab.dao.UiConfigDao;
 
 /** 界面配置：GET|POST /api/ui-config（30s 缓存，保存后失效，逻辑与 Python 版一致） */
 @RestController
@@ -59,7 +58,7 @@ public class UiConfigController {
             clean.put("game_access", JsonUtil.MAPPER.convertValue(cfgNode.get("game_access"), LinkedHashMap.class));
         }
         try {
-            UiConfigDao.saveUiConfig(JsonUtil.write(clean));
+            UiConfigService.saveUiConfig(JsonUtil.write(clean));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
