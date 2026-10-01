@@ -15,7 +15,8 @@
 # 退出码：0 成功（含"已是最新"）；非 0 表示同步或构建失败，需人工介入。
 set -euo pipefail
 
-ROOT=/root
+ROOT=/root                        # 家目录：日志/备份仍在 /root/ops、/root/backups
+REPO_ROOT=/root/Notelab           # 三个 notelab 仓所在（2026-10-01 从 /root 平铺迁入）
 OPS_LOG_DIR=/root/ops
 PROG=$(basename "$0")
 
@@ -168,7 +169,7 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
 }
 
 sync_one() {
-  local repo=$1 dir="$ROOT/$1"
+  local repo=$1 dir="$REPO_ROOT/$1"
   log "=== $repo ==="
   [ -d "$dir/.git" ] || die "$dir 不是 git 工作副本"
   cd "$dir"
