@@ -197,7 +197,8 @@ def check_git():
     out("| 仓 | 工作区脏文件 | HEAD | 落后 origin/main |")
     out("|---|---|---|---|")
     for r in REPOS:
-        d = f"/root/{r}"
+        # notelab-* 三仓 2026-10-01 起在 /root/Notelab/；ai-lab 未迁移，仍平铺在 /root/
+        d = f"/root/{r}" if r == "ai-lab" else f"/root/Notelab/{r}"
         if not os.path.isdir(os.path.join(d, ".git")):
             out(f"| {r} | — | 无 git | — |")
             continue
