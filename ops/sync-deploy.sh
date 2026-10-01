@@ -93,6 +93,13 @@ npm_install_if_needed() {  # $1=变更文件清单
     log "  package.json / lock 有变更 → 先 npm install"
     [ "$DRY_RUN" = 1 ] || npm install --no-audit --no-fund >/dev/null 2>&1 || die "npm install 失败"
   fi
+  # 2026-10-01：ArchGuard 在 notelab-c 里是**子包**（notelab-c/archguard），有自己的 package.json。
+  # 上面的正则是全行精确匹配，匹配不到子路径，所以单独补一条；匹配不到时行为完全不变。
+  if printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
+    log "  archguard 子包依赖有变更 → 在 notelab-c/archguard 内 npm install"
+    [ "$DRY_RUN" = 1 ] || ( cd /root/notelab-c/archguard && npm install --no-audit --no-fund >/dev/null 2>&1 ) \
+      || die "archguard npm install 失败"
+  fi
 }
 
 pm2_restart() {
