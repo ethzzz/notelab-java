@@ -102,6 +102,25 @@ npm_install_if_needed() {  # $1=变更文件清单
   fi
 }
 
+# 2026-10-01：架构门禁。ArchGuard 扫 java/b/c 三仓源码建依赖图，error>0 即中止部署。
+#   · index.js 退出码 1 == 有 error 违规（这是门禁的**正常结果**不是故障），
+#     所以只把 rc=1 判成「架构退步」；报告写 /root/notelab-c/archguard/arch-report.json。
+#   · 只在碰了源码时才扫（archguard 自带 node_modules，一次约 2s）。
+#   · 紧急绕过：SKIP_ARCH=1 ./sync-deploy.sh notelab-c
+archguard_gate() {
+  [ "${SKIP_ARCH:-0}" = 1 ] && { log "  SKIP_ARCH=1 → 跳过 ArchGuard 门禁"; return 0; }
+  printf '%s\n' "$1" | grep -qE '^(notelab-(java|b|c)/)?(src/|archguard/src/)' || return 0
+  if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过 ArchGuard 扫描"; return 0; fi
+  log "  ArchGuard 架构门禁扫描…"
+  ( cd /root/notelab-c/archguard && node src/index.js >/dev/null 2>&1 )
+  local rc=$?
+  if [ "$rc" -eq 1 ]; then
+    die "ArchGuard 检出 error 级架构违规，已中止部署；详情见 /root/notelab-c/archguard/arch-report.json"
+  fi
+  [ "$rc" -ne 0 ] && die "ArchGuard 扫描异常（rc=$rc，扫描器本身坏了，不是架构问题）"
+  log "  ArchGuard 通过（无 error 级违规）"
+}
+
 pm2_restart() {
   local name=$1 probe=$2 timeout=${3:-40}
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] pm2 restart $name"; return 0; fi
@@ -115,6 +134,7 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
   case "$repo" in
     notelab-c)
       npm_install_if_needed "$changed"
+      archguard_gate "$changed"
       run_build "$repo" "npm run build"
       pm2_restart notelab-c "http://127.0.0.1:3010/games/" ;;
     notelab-b)
