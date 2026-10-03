@@ -185,11 +185,17 @@ public class LootContentController {
                     poolItem("it-009", 10), poolItem("it-017", 4), poolItem("it-021", 1), poolItem("it-023", 1)))
     );
 
-    /** 2 张图 */
+    /**
+     * 2 张图。
+     * ⚠️ 门槛不能只看"全清毛收益"：玩家受背包上限约束（8 格），港口 33 个槽位里只能带走 8 格。
+     * 2026-10-03 W3 模拟（10,000 局）实测：门槛 900 时 EV 倍率只有 1.02×（打这张图不划算），
+     * 降到 400 后为 2.30×，落在设计区间 [1.5, 3.5]，且高于仓库区的 1.73×（难图收益更高）。
+     * 改这里必须同步 notelab-c/lib/loot-content.ts 的 DEFAULT_MAP_LIST，否则"未发布的手感"会不同。
+     */
     private static final List<Map<String, Object>> BASE_MAPS = List.of(
             mapDef("depot", "仓库区", 300, 20, 0.35, 0, entry(200, 0),
                     List.of(ctnCount("ct-crate", 4), ctnCount("ct-safe", 1)), 2),
-            mapDef("port", "港口集装箱", 240, 30, 0.50, 0.4, entry(900, 3),
+            mapDef("port", "港口集装箱", 240, 30, 0.50, 0.4, entry(400, 3),
                     List.of(ctnCount("ct-crate", 3), ctnCount("ct-tool", 3), ctnCount("ct-ammo", 2),
                             ctnCount("ct-med", 2), ctnCount("ct-safe", 2), ctnCount("ct-cage", 2)), 3)
     );
