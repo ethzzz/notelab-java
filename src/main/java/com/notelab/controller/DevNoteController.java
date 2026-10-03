@@ -255,7 +255,138 @@ public class DevNoteController {
                                             + "  }, 80)\n"
                                             + "  return () => clearInterval(id)\n"
                                             + "}, [searching, applySearch])",
-                                    List.of("react", "定时器", "确定性", "rng"), "2026-10-03")
+                                    List.of("react", "定时器", "确定性", "rng"), "2026-10-03"),
+                            devEntry("loot-w3-01",
+                                    "保底永不触发：计数「到顶清零」+ 把 force 当返回值，调用方却只看计数",
+                                    "W3 · 保底机制", "bug",
+                                    "10,000 局模拟跑下来保底触发 0 次。保险柜配了「12 次未出 epic 就必出」，一次都没触发，"
+                                            + "但页面不报错、单局也看不出异常 —— 只有把整局跑一万遍统计才暴露。",
+                                    "原实现把「记账」和「判定」塞进同一个函数，而且都发生在**开容器之前**：计到 afterRuns 就清零，"
+                                            + "并把 minRarity 当返回值。调用方存下 state 后，下一次开容器时读 state[id] 判断该不该强制 —— "
+                                            + "可它已经被清零了；force 返回值也在调用链里被丢掉。计数永远在 0 与 1 之间来回，够不到判定线。",
+                                    "拆成「只读判定」与「消费」：计数到顶就**停在顶、不清零**，由下一次真正强制时清。\n"
+                                            + "调用方：const force = firstSlot ? pendingPity(raid.pity, def) : null，抽完再 applyPity(..., force != null)。\n"
+                                            + "验证：构造性测试 200/200 触发且 100% 达档；10,000 局自然触发 148（仓库区）/ 213（港口）次。",
+                                    "export function pendingPity(state, container) {\n"
+                                            + "  const p = container.pity\n"
+                                            + "  if (!p) return null\n"
+                                            + "  return (state[container.id] || 0) >= p.afterRuns ? p.minRarity : null\n"
+                                            + "}\n"
+                                            + "// applyPity：到顶停驻（Math.min(cur+1, afterRuns)），仅本次真强制时归零",
+                                    List.of("数值", "保底", "状态机", "静默失败"), "2026-10-03"),
+                            devEntry("loot-w3-02",
+                                    "valueMult 只乘了展示价、没乘回收价 → 后台 EV 面板与真实经济差 2.6 倍",
+                                    "W3 · 经济口径", "bug",
+                                    "B 端 EV 面板算出港口 1.88×，模拟器（跑真实引擎）跑出 4.89×，差 2.6 倍。"
+                                            + "两个数来自同一份配置，却对不上。",
+                                    "地图的 valueMult 只在**展示价**上生效，回收时漏了：displayValue 乘了 mult，"
+                                            + "recycleValue 却只用 baseValue * recycleRate。玩家眼里「这图的东西值 2 倍」，到手却按原价折算。",
+                                    "recycleValue 增加 mult 参数；更关键的是**入库时就把单价钉死**（物品离开地图后就没有 mult 上下文了）："
+                                            + "backpack.push({ item, value, unit: recycleValue(pick, balance, map.valueMult) })，结算直接累加 unit。\n"
+                                            + "仓库合并键带 unit（${itemId}@${unit}）—— 同一物品从不同倍率的图带出，价格本就不同，按 itemId 合并会抹掉差价；"
+                                            + "旧存档无 unit 时按 1× 折算。验证：两图 EV 收敛到 1.71× / 2.30×，两个面板互相印证。",
+                                    "displayValue = baseValue * map.valueMult                 // 展示 ✅\n"
+                                            + "recycleValue = baseValue * map.valueMult * balance.recycleRate  // 修复前漏了 mult ❌",
+                                    List.of("数值", "经济", "口径不一致"), "2026-10-03"),
+                            devEntry("loot-w3-03",
+                                    "EV 用算术平均 + 忽略背包上限 → 算出 3.00× 而真实只有 2.30×",
+                                    "W3 · EV 建模", "bug",
+                                    "解析公式算出港口 EV 3.00×，模拟只有 2.30×，差 30%。方向说「经济很厚」，实际没那么厚。",
+                                    "两处错误都藏在「平均值」里：① 池内平均用了**算术平均**，而抽中概率与 weight 成正比，"
+                                            + "算术平均会把权重 1 的传说当成和权重 30 的普通一样常见，期望被系统性抬高；"
+                                            + "② 完全**忽略背包上限** —— 港口 33 个槽位但玩家只背得动 8 件，按「全清」算等于假设无限背包。",
+                                    "① 按 weight 加权平均；② 改成「会算账的玩家」模型：单格期望值高的容器先开、装满背包就撤、"
+                                            + "会把自己撑爆的格子跳过（risk + riskCost > limit 就 continue）。\n"
+                                            + "验证（反例法）：把 backpackCap 从 4 → 8 → 20 扫一遍，gross 应随之上台阶（1875 → 2963 → 3235，20 之后到顶）——"
+                                            + "若还是全清，这个数会一步到位顶格。",
+                                    "const wsum = cands.reduce((s, p) => s + p.weight, 0)\n"
+                                            + "const wavg = cands.reduce((s, p) => s + p.weight * item(p.itemId).baseValue, 0) / wsum\n"
+                                            + "for (const g of groups.sort((a, b) => b.ev - a.ev)) {\n"
+                                            + "  if (bag >= cap) break\n"
+                                            + "  if (risk + g.riskCost > limit) continue\n"
+                                            + "  ...\n"
+                                            + "}",
+                                    List.of("数值", "EV", "建模", "加权"), "2026-10-03"),
+                            devEntry("loot-w3-04",
+                                    "卡方检验测的是「轮盘」，测不了保底：两种跑法要分开",
+                                    "W3 · 验收方法", "note",
+                                    "验收要同时证明「各稀有度实测频率 = 配置权重」（卡方）与「单局真实收益 EV 落 [1.5, 3.5]」，"
+                                            + "两件事互相干扰。",
+                                    "卡方检验的前提是**每次抽取独立同分布**，而保底机制会**主动改写**稀有度分布"
+                                            + "（连续 12 次没出 epic 就强制 epic）。拿带保底的模拟跑卡方，测的就不是轮盘而是「轮盘 + 保底」，"
+                                            + "偏差必然偏大且随 afterRuns 漂移。",
+                                    "两种跑法、两条随机流：\n"
+                                            + "· 全清抽样（不带保底，rngDist）→ 稀有度频率 vs 配置权重（卡方）；\n"
+                                            + "· 政策模拟（带保底，rngPlay）→ 真实 EV。\n"
+                                            + "两条流用不同种子派生，互不污染游标。判据：最大偏差 ≤ 0.015 且 p > 0.05。\n"
+                                            + "实测：仓库区 χ²=6.52 (df 4)、p=0.1635、最大偏差 0.107%；港口 χ²=4.87、p=0.3005、0.113%。",
+                                    "",
+                                    List.of("验收", "统计", "卡方", "保底"), "2026-10-03"),
+                            devEntry("loot-w3-05",
+                                    "B 端模拟器是 C 端引擎的同构端口，靠「指纹 + 整局逐字段对拍」兜漂移",
+                                    "W3 · 跨端同构", "note",
+                                    "后台模拟器要跑「真实引擎」，但 notelab-b 与 notelab-c 是两个仓库、不能互相 import，"
+                                            + "只能在 B 端手抄一份 C 端引擎逻辑。",
+                                    "手抄件一旦和母本漂移（改了一边忘了另一边），后台给出的分布/EV 就是**假的** —— "
+                                            + "而且它会一直显示「通过」，因为两边都在自洽地算错。",
+                                    "三层对拍：① 指纹 —— 同 seed + 同容器 → 抽取序列哈希逐位相同（rollFingerprint 两端都实现）；"
+                                            + "② 整局逐字段 —— 同 seed 跑完整一局，比 rolls / 各档命中数 / EV（实测两端一致：rolls=66000、"
+                                            + "命中[common]=32116、EV=2.2762）；③ 取整口径也要对齐（C 端 recycleValue 用 Math.round，"
+                                            + "B 端端口必须同样 Math.round，差 1 金币第 2 层就对不上）。",
+                                    "",
+                                    List.of("跨端", "同构", "验收", "对拍"), "2026-10-03"),
+                            devEntry("loot-w3-06",
+                                    "EV 守卫挂在页面的保存按钮上 = 没有守卫（换个页面就绕过去了）",
+                                    "W3 · 保存守卫", "pitfall",
+                                    "EV 守卫（ratio 超阈值就拒绝保存）最初写在「全局参数」页的保存按钮回调里。"
+                                            + "测试发现：从「地图配置」页保存，守卫完全不生效。",
+                                    "valueMult 是在**地图配置页**改的，EV 面板在**全局参数页** —— 守卫挂在其中一页的按钮上，"
+                                            + "另一页的保存路径就绕过去了。更一般地：只要有第二个写入口，挂在按钮上的校验必然被绕过。",
+                                    "移到共享 store 的**唯一写入口** commit()（所有页面的 save() 都汇到这里）："
+                                            + "reject 直接 toast.error + return false，warn 提示后继续。页面保存按钮退化成 () => save()，"
+                                            + "只负责把校验结果画出来。\n"
+                                            + "验证（CDP，在「地图配置」页操作）：valueMult=3 → toast「EV 倍率超过 10×……已拒绝保存」且草稿未变；"
+                                            + "=0.8 → toast「EV 倍率偏高……已保存」且草稿写入。",
+                                    "const evs = d.maps.map((m) => evalMap(m, d.containers, d.tables, d.items, d.balance))\n"
+                                            + "const bad = evs.filter((e) => e.level === \"reject\")\n"
+                                            + "if (bad.length) { toast.error(`EV 倍率超过 ${d.balance.evRejectRatio}×（...），已拒绝保存`); return false }",
+                                    List.of("架构", "守卫", "写入口", "可绕过"), "2026-10-03"),
+                            devEntry("loot-w3-07",
+                                    "告警阈值低于设计区间下限 → 健康配置常驻告警，验收口径永远不成立",
+                                    "W3 · 数值自洽", "pitfall",
+                                    "任务书里三条口径同时存在：EV 落 [1.5, 3.5] / evWarnRatio=1.15、evRejectRatio=3.0 / "
+                                            + "「valueMult 改成 1.6 → 保存成功但带警告」。实测第三条**在任何门槛下都不成立**："
+                                            + "线上配置 ratio/valueMult=4.594（常数），1.6 → 7.35× > 3.0 被拒；退回改前的门槛 900 也是 3.27× 仍被拒。",
+                                    "阈值与设计区间**量纲不自洽**：evWarnRatio=1.15 低于区间下限 1.5 → 落进设计区间的健康图"
+                                            + "（1.71×/2.30×）都常驻告警（告警疲劳）；evRejectRatio=3.0 几乎贴着区间上限 3.5 → "
+                                            + "手改 valueMult 一点点就被拒绝。",
+                                    "让阈值由设计区间推导：evWarnRatio = 3.5（= 区间上限，超出健康区间才提示），"
+                                            + "evRejectRatio = 10.0（= 10× 门槛，崩到这个量级才拒绝保存）。三端必须同值"
+                                            + "（Java BASE_BALANCE / B model.ts / C loot-content.ts），且因懒 seed 不改线上已有数据，"
+                                            + "必须显式重发布一次 ui_config.loot。\n"
+                                            + "验证：现状 1.711×/2.297× → ok；1.6 → 7.351× warn；10 → 45.943× reject。\n"
+                                            + "教训：验收口径里的每一个数都要先用真实配置验算一遍，别等实现完了才发现口径自相矛盾。",
+                                    "",
+                                    List.of("数值", "阈值", "自洽", "需求缺陷"), "2026-10-03"),
+                            devEntry("loot-w3-08",
+                                    "CDP 验 antd v5：modal / toast 的类名全变了；且「保存」写的是草稿不是快照",
+                                    "W3 · 验收方法", "pitfall",
+                                    "无头走查一连四个坑：① waitForSelector(\".ant-modal-content\") 超时 10s，但弹窗明明已打开；"
+                                            + "② toast 用 .ant-message-notice-content 也取不到；③ antd InputNumber 用 click({clickCount:3}) "
+                                            + "选不中已有文本，Backspace+type 变成追加（0.5 → 0.53）；④ 保存后读匿名接口验证「没生效」。",
+                                    "① antd v5 新结构里 Modal 根节点是 .ant-modal、内容层是 .ant-modal-container，**没有 .ant-modal-content**；"
+                                            + "② 本项目 toast 走 antd message（lib/toast.ts 门面 + ToastHost），实际容器是 .ant-message-notice；"
+                                            + "③ clickCount:3 在无头下选不中文本；④ B 端「保存」只更新 ui_config.loot（**草稿**），"
+                                            + "要点「发布到 C 端」才更新 loot_published，而 /api/c/loot/content（匿名）读的是**快照** —— "
+                                            + "所以保存后读匿名接口必然读到旧值。",
+                                    "① 先 dump document.querySelectorAll(\"[class*=modal]\") / [class*=message] 的 className 列表再定选择器；"
+                                            + "② InputNumber 用 Ctrl+A 全选再输入（keyboard.down(\"Control\") → press(\"KeyA\") → up → type），"
+                                            + "改完**必须回读** input.value 确认；③ 断言要么读登录接口 /api/loot-content（草稿），要么显式调一次 publish；"
+                                            + "④ 改过线上配置的验收脚本一定要把值改回去，最后做一次「草稿 vs 快照」全切片比对（本次五项全部一致才算干净）。",
+                                    "await el.click()\n"
+                                            + "await page.keyboard.down(\"Control\"); await page.keyboard.press(\"KeyA\"); await page.keyboard.up(\"Control\")\n"
+                                            + "await page.keyboard.type(String(v)); await page.keyboard.press(\"Tab\")",
+                                    List.of("验收", "cdp", "antd", "选择器"), "2026-10-03")
                     ))
     );
 
