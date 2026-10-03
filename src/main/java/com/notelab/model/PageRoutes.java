@@ -47,6 +47,8 @@ public final class PageRoutes {
             new String[]{"/loot-editor/tables", "摸金·掉落表"},
             new String[]{"/loot-editor/maps", "摸金·地图配置"},
             new String[]{"/loot-editor/balance", "摸金·全局参数"},
+            // 项目实践 → 项目开发总结（与 MenuTree.g_practice 一一对应；漏这里叶子会被 RBAC 过滤）
+            new String[]{"/practice/dev-summary", "项目实践·开发总结"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
             new String[]{"/user/invites", "邀请码"},

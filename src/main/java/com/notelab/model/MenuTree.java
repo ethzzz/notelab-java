@@ -57,6 +57,10 @@ public final class MenuTree {
                     menu("lowcode", "低代码平台", "🧱", "/lowcode", true),
                     menu("image", "文生图", "🎨", "/image", false),
                     menu("audio", "语音转文字", "🎤", "/audio", false))),
+            // 项目实践：把做项目时踩到的技术难点沉淀成结构化记录（现象 / 原因 / 解决方案 / 代码）。
+            // 内容存 ui_config.dev_notes（见 DevNoteController），不是 C 端消费的配置，编辑即生效、无发布快照。
+            group("g_practice", "项目实践", "🧪", List.of(
+                    menu("dev-summary", "项目开发总结", "📓", "/practice/dev-summary", true))),
             group("g_users", "用户管理", "👥", List.of(
                     menu("user-accounts", "账户管理", "👤", "/user/accounts", true),
                     menu("user-roles", "角色组管理", "🗂️", "/user/roles", true),
