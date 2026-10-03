@@ -89,7 +89,7 @@
   - 无 group_code 回落：请求拦截伪造 me 无 group_code → 按 default 处理（武诸葛锁定）✅
   - 匿名：/games/spire 被既有 RequireAuth 回跳 /games/login（未改动守卫）；匿名接口透出 charAccess ✅
   - 各场景浏览器控制台无 error（仅守卫探测 me 的 401 资源日志，属既有行为）✅
-- 回归：/games、/games/vs、/games/thunder、/games/trpg、/games/utils/translate、/admin/c-users、/admin/dashboard、/admin/perm 均 200；`/api/menu`、`/api/ui-config`、`/api/c/config/background` 均 200 ✅
+- 回归：/games、/games/vs、/games/thunder、/games/trpg、/utils/translate、/admin/c-users、/admin/dashboard、/admin/perm 均 200（2026-10-03 起工具改走 /utils/*，旧 /games/utils/translate 会 308 到 /utils/translate）；`/api/menu`、`/api/ui-config`、`/api/c/config/background` 均 200 ✅
 - 截图（未入库，存服务器）：`/root/backups/spire-gating-shots-2026-09-24/`（c-default-pick / c-vip-pick / c-vip-run / c-failopen / c-fallback-default / c-anon-guard / b-access-default / b-access-vip / b-access-saved 等 10 张）
 - MySQL 备份：`/root/backups/pre-spire-gating-2026-09-24.sql`（c_user_groups / ui_config / c_users）
 

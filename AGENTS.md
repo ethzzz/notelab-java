@@ -8,7 +8,7 @@ NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 
 
 | 项 | 值 |
 |---|---|
-| 服务器目录 | `/root/notelab-java`（含 git 历史） |
+| 服务器目录 | `/root/Notelab/notelab-java`（含 git 历史） |
 | pm2 进程 | `notelab-java` |
 | 端口 | **127.0.0.1:8001**（只绑本地，写死在 `src/main/resources/application.properties`） |
 | nginx | `location /api/` 与 `location = /api` 直达本服务；SSE 已配 `proxy_buffering off` |
@@ -21,9 +21,9 @@ NoteLab 唯一在用的 API 后端。Python FastAPI 版（`/root/notelab`，原 
 # 本地：改完提交推送
 git push origin main
 # 服务器：同步 + mvn package + 重启 + 探活一条命令搞定
-ssh myapp "/root/notelab-java/ops/sync-deploy.sh notelab-java"
+ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-java"
 ```
-- **不要在 `/root/notelab-java` 里手改代码**——服务器是只读部署目标；脚本发现工作区脏会直接拒绝执行。完整行为与参数见根 `AGENTS.md`「开发流程」。
+- **不要在 `/root/Notelab/notelab-java` 里手改代码**——服务器是只读部署目标；脚本发现工作区脏会直接拒绝执行。完整行为与参数见根 `AGENTS.md`「开发流程」。
 - **`ops/sync-deploy.sh` 这个脚本本身就在本仓**（`E:\code\NoteLab\notelab-java\ops\sync-deploy.sh`），服务器执行的是仓内副本；改它要走「本地改 → push → 对 `notelab-java` 同步」自己这套流程。
 - 脚本只在**有变更**时构建；仅文档变更自动跳过（强制构建加 `--build`）；**构建失败不会重启服务**，老进程继续服务。
 - Maven 镜像已配在 `/root/.m2/settings.xml`，**不要改镜像**。
@@ -51,13 +51,13 @@ src/main/java/com/notelab/
 ## 配置加载顺序（排查配置问题先看这里）
 `AppConfig` 的优先序：**进程环境变量 > 本目录 `.env` > `/root/notelab/.env` > 代码默认值**。
 
-⚠️ `.env` 是按**进程 cwd** 相对加载的（`Paths.get(".env")`）。所以用 jshell 之类的方式直连测试时，**必须先 `cd /root/notelab-java`**，否则只会加载到 Python 版那份 `.env`（典型症状：候选 key 数量不对）。
+⚠️ `.env` 是按**进程 cwd** 相对加载的（`Paths.get(".env")`）。所以用 jshell 之类的方式直连测试时，**必须先 `cd /root/Notelab/notelab-java`**，否则只会加载到 Python 版那份 `.env`（典型症状：候选 key 数量不对）。
 
 ## LLM 调用
 - `infra/QwenClient`（`complete` 非流式 / `streamChat` 流式）+ `infra/QwenKeys`（多 key 轮换）。
 - 网关为 OpenAI 兼容协议，靠 `QWEN_BASE_URL` / `QWEN_MODEL` / `QWEN_API_KEYS`（逗号分隔）三个环境变量定位。
 - key 失效判定在 `QwenKeys.unusableReason(status, body)`：**401 无效 / 429 配额耗尽 / 403 无该模型权限**，命中即 `markUnusable` 换下一把；标记 30 分钟后自动重试。新增判定请扩展这个方法，不要在调用方散写判断。
-- 换 key **无需改代码**：改 `/root/notelab-java/.env` 的三个变量 → `pm2 restart notelab-java`（进程内的不可用标记随重启清空）。
+- 换 key **无需改代码**：改 `/root/Notelab/notelab-java/.env` 的三个变量 → `pm2 restart notelab-java`（进程内的不可用标记随重启清空）。
 
 ## 双身份体系（别混淆）
 | 端 | 用户表 | 会话机制 |
@@ -144,7 +144,7 @@ src/main/java/com/notelab/
 
 B 端浏览器**读不到 C 端仓库**（两个独立 Next 应用、两个 basePath），而素材的真相源就是
 C 端 `public/spire` 下的真实文件。后端与 C 端同机部署，于是直接扫盘：
-`AppConfig.spireAssetRoot()`（默认 `/root/notelab-c/public/spire`）→ 分组清单 + `manifest.json` 元数据。
+`AppConfig.spireAssetRoot()`（默认 `/root/Notelab/notelab-c/public/spire`）→ 分组清单 + `manifest.json` 元数据。
 
 - **不接受任何路径入参**（因此无穿越风险）；深度上限 3、条目上限 2000、跳过点开头的隐藏项。
 - 目录不存在时返回 `available:false` + warning，**不抛错** —— 本地开发或 C 端未部署时不该把 B 端页面打挂。
@@ -165,7 +165,7 @@ C 端 `public/spire` 下的真实文件。后端与 C 端同机部署，于是�
 
 ## 纪律与禁区
 - **共享 MySQL = 生产数据**：任何 DROP / DELETE / 改表结构前先 `mysqldump` 备份。对共享表（尤其 `ui_config`）的写操作就是生产操作。
-- 密钥只在服务器 `/etc/environment` 与 `/root/notelab-java/.env`，**严禁硬编码或提交**。`.env` 已在 `.gitignore`；含密钥的备份文件要放到仓库外（如 `/root/env-backups/`，chmod 600）。
+- 密钥只在服务器 `/etc/environment` 与 `/root/Notelab/notelab-java/.env`，**严禁硬编码或提交**。`.env` 已在 `.gitignore`；含密钥的备份文件要放到仓库外（如 `/root/env-backups/`，chmod 600）。
 - **不动** `/root/notelab`（Python 版源码，只作历史参考）、`/root/myapp`（旧前端）。
 - `ops/daily-iteration/` 下的巡检与备份脚本是每日机制的**权威副本**，cron 直接执行仓内脚本，改脚本即改生产行为。
 
