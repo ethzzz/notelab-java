@@ -93,7 +93,7 @@ public class AnalyticsController {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
         int d = daysOf(days);
         int lim = limitOf(limit);
-        String to = LocalDate.now();
+        LocalDate to = LocalDate.now();
         String from = to.minusDays(d - 1L).toString();
         String toS = to.toString();
         String a = appOf(app);
@@ -197,11 +197,11 @@ public class AnalyticsController {
 
     // ==================== 工具 ====================
 
-    private static Map<String, Object> ok(Object data) {
+    private static ResponseEntity<Map<String, Object>> ok(Object data) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("ok", true);
         m.put("data", data);
-        return m;
+        return ResponseEntity.ok(m);
     }
 
     private static int daysOf(String days) {

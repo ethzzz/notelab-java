@@ -22,6 +22,8 @@ public final class PageRoutes {
             new String[]{"/audio", "语音转文字"},
             new String[]{"/extract", "结构化抽取"},
             new String[]{"/tools", "AI工具库"},
+            // 数据看板（PRD-P0 §6.2）：接口 /api/analytics/** 属受限前缀（仅超管）
+            new String[]{"/analytics", "数据看板"},
             new String[]{"/stress-test", "接口压测"},
             new String[]{"/lowcode", "低代码平台"},
             // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除

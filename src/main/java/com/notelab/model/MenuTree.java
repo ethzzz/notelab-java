@@ -67,6 +67,7 @@ public final class MenuTree {
                     menu("user-invites", "邀请码", "🎟️", "/user/invites", true),
                     menu("c-users", "C端用户管理", "🙋", "/c-users", true))),
             group("g_system", "系统管理", "⚙️", List.of(
+                    menu("analytics", "数据看板", "📈", "/analytics", true),
                     menu("ui", "界面配置", "🎛️", "/ui", true),
                     menu("perm", "权限管理", "🔐", "/perm", true),
                     // 运维看板：只读展示进程/端口/git/资源 + 发布自检，仅超管（见 PermService 默认排除）
