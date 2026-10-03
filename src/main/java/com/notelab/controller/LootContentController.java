@@ -211,8 +211,10 @@ public class LootContentController {
         m.put("rescueCooldownSec", 86400);
         m.put("extractHoldMs", 5000);
         m.put("riskPerSlot", 1);
-        m.put("evWarnRatio", 1.15);
-        m.put("evRejectRatio", 3.0);
+        // ⚠️ 与设计目标区间 [1.5, 3.5] 自洽：warn = 区间上限（超了才提示），reject = 10× 门槛（崩到这个
+        //    量级才拒绝保存）。旧值 1.15/3.0 会让健康图（1.7×/2.3×）常驻告警，且手改 valueMult 一点就被拒。
+        m.put("evWarnRatio", 3.5);
+        m.put("evRejectRatio", 10.0);
         return m;
     }
 
@@ -538,8 +540,8 @@ public class LootContentController {
         out.put("rescueCooldownSec", clampInt(node.get("rescueCooldownSec"), 0, 30 * 86400, 86400));
         out.put("extractHoldMs", clampInt(node.get("extractHoldMs"), 500, 60_000, 5000));
         out.put("riskPerSlot", clampInt(node.get("riskPerSlot"), 0, 10, 1));
-        out.put("evWarnRatio", clampDbl(node.get("evWarnRatio"), 1, 100, 1.15));
-        out.put("evRejectRatio", clampDbl(node.get("evRejectRatio"), 1, 100, 3.0));
+        out.put("evWarnRatio", clampDbl(node.get("evWarnRatio"), 1, 100, 3.5));
+        out.put("evRejectRatio", clampDbl(node.get("evRejectRatio"), 1, 100, 10.0));
         return out;
     }
 
