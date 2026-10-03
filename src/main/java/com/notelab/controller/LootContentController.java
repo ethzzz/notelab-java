@@ -1,0 +1,563 @@
+package com.notelab.controller;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonUtil;
+import com.notelab.service.UiConfigService;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 摸金行动（Loot Raid）内容工坊：GET|POST /api/loot-content。
+ *
+ * <p>物品 / 容器 / 掉落表 / 地图 / 全局参数 五切片存 ui_config JSON 的 "loot" 键，不新建表。
+ * 结构与写法照抄 {@link SpireContentController}（爬塔已验证过的范式）：
+ * <ul>
+ *   <li><b>手工白名单</b>：save() 里逐键 put，没登记的键会被**静默丢弃**（爬塔踩过的坑）；</li>
+ *   <li><b>懒 seed</b>：库中某切片为空则回内置默认（BASE_*），保证 B 端页面首次打开就有东西可编辑；</li>
+ *   <li><b>整包覆盖写</b>：POST 提交全量五切片；</li>
+ *   <li><b>发布快照</b>：publish 把 lootOf() 的结果快照进 ui_config.loot_published，C 端只读快照。</li>
+ * </ul>
+ *
+ * <p>净化只做<b>结构与体积</b>校验，不做玩法裁决（平衡/EV 归 C 端引擎与 B 端模拟器）。
+ * 一条不合法就丢该条，不让整包 400。
+ *
+ * <p>LLM 依赖：无。本 Controller 全程确定性计算。
+ */
+@RestController
+@RequestMapping("/api/loot-content")
+public class LootContentController {
+
+    /** 稀有度档位（顺序不可变：权重与保底都依赖它，两端硬编码同一份顺序） */
+    private static final List<String> RARITIES = List.of("common", "uncommon", "rare", "epic", "legendary");
+    private static final Set<String> RARITY_SET = Set.copyOf(RARITIES);
+
+    /** loot JSON 体积上限（字符）。与爬塔同口径：库里是 mediumtext(16MB)，1MB 距上限很远 */
+    private static final int MAX_LOOT_CHARS = 1_000_000;
+    private static final int MAX_ITEMS = 500;
+    private static final int MAX_CONTAINERS = 200;
+    private static final int MAX_TABLES = 200;
+    private static final int MAX_MAPS = 50;
+    private static final int MAX_POOL_PER_TABLE = 200;
+
+    // ==================================================================================
+    // 内置默认内容（只读镜像 / 懒 seed 初值）
+    // 内容口径 = docs/TASK-PROMPT-LOOT.md 附录 A + docs/PRD/PRD-P3-loot-raid.md §5。
+    // ⚠️ C 端 lib/loot-engine.ts 的 DEFAULT_LOOT 必须与此**逐字段一致**，否则两端不一致。
+    // ==================================================================================
+
+    private static Map<String, Object> item(String id, String name, String rarity, int baseValue,
+            Integer recycleValue, int stack, String emoji, List<String> tags, String desc) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("rarity", rarity); m.put("baseValue", baseValue);
+        m.put("recycleValue", recycleValue); m.put("stack", stack); m.put("emoji", emoji);
+        m.put("tags", tags); m.put("desc", desc);
+        return m;
+    }
+
+    private static Map<String, Object> weights(double c, double u, double r, double e, double l) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("common", c); m.put("uncommon", u); m.put("rare", r); m.put("epic", e); m.put("legendary", l);
+        return m;
+    }
+
+    private static Map<String, Object> pity(int afterRuns, String minRarity) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("afterRuns", afterRuns); m.put("minRarity", minRarity);
+        return m;
+    }
+
+    private static Map<String, Object> container(String id, String name, int slots, int slotMs,
+            Map<String, Object> rarityWeights, int riskCost, Map<String, Object> pity, String tableId, String emoji) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("slots", slots); m.put("slotMs", slotMs);
+        m.put("rarityWeights", rarityWeights); m.put("riskCost", riskCost);
+        m.put("pity", pity); m.put("tableId", tableId); m.put("emoji", emoji);
+        return m;
+    }
+
+    private static Map<String, Object> poolItem(String itemId, int weight) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("itemId", itemId); m.put("weight", weight);
+        return m;
+    }
+
+    private static Map<String, Object> table(String id, String name, List<Map<String, Object>> pool) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("pool", pool);
+        return m;
+    }
+
+    private static Map<String, Object> entry(int coins, int minExtracts) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("coins", coins); m.put("items", new ArrayList<>()); m.put("minExtracts", minExtracts);
+        m.put("groups", new ArrayList<>());
+        return m;
+    }
+
+    private static Map<String, Object> ctnCount(String containerId, int count) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("containerId", containerId); m.put("count", count);
+        return m;
+    }
+
+    private static Map<String, Object> mapDef(String id, String name, int timeLimitSec, int riskLimit,
+            double valueMult, double tierBoost, Map<String, Object> entry,
+            List<Map<String, Object>> containers, int extractPoints) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("timeLimitSec", timeLimitSec); m.put("riskLimit", riskLimit);
+        m.put("valueMult", valueMult); m.put("tierBoost", tierBoost); m.put("entry", entry);
+        m.put("containers", containers); m.put("extractPoints", extractPoints);
+        return m;
+    }
+
+    /** 24 件物品：common 8 / uncommon 6 / rare 5 / epic 3 / legendary 2 */
+    private static final List<Map<String, Object>> BASE_ITEMS = List.of(
+            item("it-001", "旧手表", "common", 60, null, 1, "⌚", List.of("junk"), ""),
+            item("it-002", "生锈扳手", "common", 55, null, 1, "🔧", List.of("junk"), ""),
+            item("it-003", "罐头食品", "common", 45, null, 3, "🥫", List.of("supply"), ""),
+            item("it-004", "铜线卷", "common", 70, null, 2, "🔌", List.of("mat"), ""),
+            item("it-005", "军用水壶", "common", 50, null, 1, "🍶", List.of("supply"), ""),
+            item("it-006", "破旧地图", "common", 85, null, 1, "🗺️", List.of("info"), ""),
+            item("it-007", "打火机", "common", 65, null, 1, "🔥", List.of("supply"), ""),
+            item("it-008", "零件盒", "common", 95, null, 2, "🧰", List.of("mat"), ""),
+            item("it-009", "急救包", "uncommon", 220, null, 2, "🩹", List.of("med"), ""),
+            item("it-010", "便携电台", "uncommon", 260, null, 1, "📻", List.of("tech"), ""),
+            item("it-011", "军用望远镜", "uncommon", 300, null, 1, "🔭", List.of("optics"), ""),
+            item("it-012", "精钢匕首", "uncommon", 180, null, 1, "🗡️", List.of("weapon"), ""),
+            item("it-013", "防毒面具", "uncommon", 340, null, 1, "😷", List.of("gear"), ""),
+            item("it-014", "加密硬盘", "uncommon", 380, null, 1, "💽", List.of("tech", "info"), ""),
+            item("it-015", "夜视仪", "rare", 850, null, 1, "🕶️", List.of("optics", "gear"), ""),
+            item("it-016", "金条", "rare", 1000, null, 5, "🧱", List.of("treasure"), ""),
+            item("it-017", "稀有电路板", "rare", 620, null, 3, "🔲", List.of("tech", "mat"), ""),
+            item("it-018", "古董怀表", "rare", 700, null, 1, "🕰️", List.of("treasure"), ""),
+            item("it-019", "军用手枪", "rare", 1150, null, 1, "🔫", List.of("weapon"), ""),
+            item("it-020", "黄金雕像", "epic", 2200, null, 1, "🗿", List.of("treasure"), ""),
+            item("it-021", "实验样本", "epic", 1800, null, 1, "🧪", List.of("tech"), ""),
+            item("it-022", "稀有芯片组", "epic", 2700, null, 2, "💠", List.of("tech"), ""),
+            item("it-023", "黑箱核心", "legendary", 6000, null, 1, "⬛", List.of("artifact"), ""),
+            item("it-024", "王冠宝石", "legendary", 8500, null, 1, "👑", List.of("treasure"), "")
+    );
+
+    /** 6 种容器（id 与表 id 对应） */
+    private static final List<Map<String, Object>> BASE_CONTAINERS = List.of(
+            container("ct-crate", "木箱", 2, 600, weights(55, 28, 12, 4.5, 0.5), 1, null, "lt-crate", "📦"),
+            container("ct-tool", "工具柜", 3, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧"),
+            container("ct-ammo", "弹药箱", 2, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨"),
+            container("ct-med", "医疗柜", 2, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺"),
+            container("ct-safe", "保险柜", 1, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic"), "lt-safe", "🔐"),
+            container("ct-cage", "储物笼", 4, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️")
+    );
+
+    /** 6 张掉落表；池子每档至少 1 件候选（否则该档轮盘抽空 → 槽位空手） */
+    private static final List<Map<String, Object>> BASE_TABLES = List.of(
+            table("lt-crate", "木箱掉落", List.of(
+                    poolItem("it-001", 22), poolItem("it-002", 20), poolItem("it-003", 24), poolItem("it-004", 16),
+                    poolItem("it-009", 10), poolItem("it-012", 12),
+                    poolItem("it-017", 6), poolItem("it-021", 2), poolItem("it-023", 1))),
+            table("lt-tool", "工具柜掉落", List.of(
+                    poolItem("it-002", 20), poolItem("it-004", 22), poolItem("it-008", 18),
+                    poolItem("it-010", 14), poolItem("it-012", 10), poolItem("it-014", 8),
+                    poolItem("it-017", 8), poolItem("it-022", 2), poolItem("it-023", 1))),
+            table("lt-ammo", "弹药箱掉落", List.of(
+                    poolItem("it-002", 30), poolItem("it-008", 26),
+                    poolItem("it-011", 16), poolItem("it-012", 14),
+                    poolItem("it-019", 10), poolItem("it-021", 2), poolItem("it-024", 1))),
+            table("lt-med", "医疗柜掉落", List.of(
+                    poolItem("it-003", 28), poolItem("it-005", 26),
+                    poolItem("it-009", 24), poolItem("it-013", 18),
+                    poolItem("it-015", 8), poolItem("it-021", 2), poolItem("it-024", 1))),
+            table("lt-safe", "保险柜掉落", List.of(
+                    poolItem("it-007", 20), poolItem("it-014", 24),
+                    poolItem("it-015", 20), poolItem("it-016", 22), poolItem("it-018", 18),
+                    poolItem("it-020", 12), poolItem("it-021", 10), poolItem("it-022", 6),
+                    poolItem("it-023", 3), poolItem("it-024", 2))),
+            table("lt-cage", "储物笼掉落", List.of(
+                    poolItem("it-001", 22), poolItem("it-003", 24), poolItem("it-005", 20),
+                    poolItem("it-006", 18), poolItem("it-007", 22),
+                    poolItem("it-009", 10), poolItem("it-017", 4), poolItem("it-021", 1), poolItem("it-023", 1)))
+    );
+
+    /** 2 张图 */
+    private static final List<Map<String, Object>> BASE_MAPS = List.of(
+            mapDef("depot", "仓库区", 300, 20, 0.35, 0, entry(200, 0),
+                    List.of(ctnCount("ct-crate", 4), ctnCount("ct-safe", 1)), 2),
+            mapDef("port", "港口集装箱", 240, 30, 0.50, 0.4, entry(900, 3),
+                    List.of(ctnCount("ct-crate", 3), ctnCount("ct-tool", 3), ctnCount("ct-ammo", 2),
+                            ctnCount("ct-med", 2), ctnCount("ct-safe", 2), ctnCount("ct-cage", 2)), 3)
+    );
+
+    /** 全局参数（懒 seed 默认值） */
+    private static Map<String, Object> baseBalance() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("recycleRate", 0.6);
+        m.put("extractRate", 0.55);
+        m.put("backpackCap", 8);
+        m.put("initialCoins", 500);
+        m.put("rescueCoins", 200);
+        m.put("rescueCooldownSec", 86400);
+        m.put("extractHoldMs", 5000);
+        m.put("riskPerSlot", 1);
+        m.put("evWarnRatio", 1.15);
+        m.put("evRejectRatio", 3.0);
+        return m;
+    }
+
+    // ==================================================================================
+    // 接口
+    // ==================================================================================
+
+    @GetMapping
+    public ResponseEntity<Map<String, Object>> get(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> body = lootOf(UiConfigService.getConfig());
+        // 只读常量：供 B 端展示"内置默认"，不落库（publish 快照不含这些键）
+        body.put("baseBalance", baseBalance());
+        return ResponseEntity.ok(body);
+    }
+
+    @PostMapping
+    public ResponseEntity<Map<String, Object>> save(@RequestBody(required = false) String raw,
+                                                    HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        JsonNode node;
+        try {
+            if (raw == null || raw.isBlank()) throw new IllegalArgumentException("empty");
+            node = JsonUtil.parse(raw);
+        } catch (Exception e) {
+            return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        }
+        if (!node.isObject()) return ResponseEntity.status(400).body(Map.of("error", "body 必须是对象"));
+
+        // ⚠️ 手工白名单：这里没 put 的键会被静默丢弃（B 端存了刷新就没了且不报错）
+        Map<String, Object> loot = new LinkedHashMap<>();
+        loot.put("items", sanitizeItems(node.get("items")));
+        loot.put("containers", sanitizeContainers(node.get("containers")));
+        loot.put("tables", sanitizeTables(node.get("tables")));
+        loot.put("maps", sanitizeMaps(node.get("maps")));
+        loot.put("balance", sanitizeBalance(node.get("balance")));
+
+        String lootJson = JsonUtil.write(loot);
+        if (lootJson.length() > MAX_LOOT_CHARS) {
+            return ResponseEntity.status(400).body(Map.of("error",
+                    "自定义内容过大（>" + (MAX_LOOT_CHARS / 1000) + "KB），删几件物品/容器再保存"));
+        }
+        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
+        cfg.put("loot", loot);
+        try {
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
+        }
+        UiConfigService.invalidate();
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** 已发布快照是否存在的轻量查询（B 端用于提示"改了但没发布"） */
+    @GetMapping("/published")
+    public ResponseEntity<Map<String, Object>> published(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Object snap = UiConfigService.getConfig().get("loot_published");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("published", snap instanceof Map);
+        return ResponseEntity.ok(out);
+    }
+
+    /** 发布：把当前编辑内容整体快照写入顶层键 loot_published（合并写，保留其它键） */
+    @PostMapping("/publish")
+    public ResponseEntity<Map<String, Object>> publish(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
+        cfg.put("loot_published", lootOf(cfg));
+        try {
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
+        }
+        UiConfigService.invalidate();
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** 下架：删除 loot_published 键（C 端回落内置默认包） */
+    @PostMapping("/unpublish")
+    public ResponseEntity<Map<String, Object>> unpublish(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
+        cfg.remove("loot_published");
+        try {
+            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
+        }
+        UiConfigService.invalidate();
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** loot 出口（GET 与 publish 快照共用）。库中某切片为空 → 回内置默认（懒 seed） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> lootOf(Map<String, Object> cfg) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", new ArrayList<>(BASE_ITEMS));
+        out.put("containers", new ArrayList<>(BASE_CONTAINERS));
+        out.put("tables", new ArrayList<>(BASE_TABLES));
+        out.put("maps", new ArrayList<>(BASE_MAPS));
+        out.put("balance", baseBalance());
+        Object o = cfg.get("loot");
+        if (o instanceof Map) {
+            Map<String, Object> m = (Map<String, Object>) o;
+            Object it = m.get("items");
+            if (it instanceof List && !((List<?>) it).isEmpty()) out.put("items", it);
+            Object ct = m.get("containers");
+            if (ct instanceof List && !((List<?>) ct).isEmpty()) out.put("containers", ct);
+            Object tb = m.get("tables");
+            if (tb instanceof List && !((List<?>) tb).isEmpty()) out.put("tables", tb);
+            Object mp = m.get("maps");
+            if (mp instanceof List && !((List<?>) mp).isEmpty()) out.put("maps", mp);
+            Object ba = m.get("balance");
+            if (ba instanceof Map) out.put("balance", mergeBalance((Map<String, Object>) ba));
+        }
+        return out;
+    }
+
+    // ==================================================================================
+    // 净化（只做结构与体积校验；不合法丢该条）
+    // ==================================================================================
+
+    private static List<Map<String, Object>> sanitizeItems(JsonNode node) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (node == null || !node.isArray()) return out;
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode it : node) {
+            if (out.size() >= MAX_ITEMS) break;
+            if (it == null || !it.isObject()) continue;
+            String id = str(it, "id");
+            String name = str(it, "name");
+            String rarity = str(it, "rarity");
+            if (id.isEmpty() || name.isEmpty() || !RARITY_SET.contains(rarity) || seen.contains(id)) continue;
+            seen.add(id);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("name", name);
+            m.put("rarity", rarity);
+            m.put("baseValue", clampInt(it.get("baseValue"), 1, 9_999_999, 50));
+            JsonNode rv = it.get("recycleValue");
+            m.put("recycleValue", (rv != null && rv.isNumber()) ? clampInt(rv, 0, 9_999_999, 0) : null);
+            m.put("stack", clampInt(it.get("stack"), 1, 99, 1));
+            m.put("emoji", it.has("emoji") && it.get("emoji").isTextual() ? it.get("emoji").asText() : "📦");
+            List<String> tags = new ArrayList<>();
+            JsonNode tg = it.get("tags");
+            if (tg != null && tg.isArray()) {
+                for (JsonNode t : tg) if (t != null && t.isTextual() && !t.asText().trim().isEmpty()) tags.add(t.asText().trim());
+            }
+            m.put("tags", tags);
+            m.put("desc", it.has("desc") && it.get("desc").isTextual() ? it.get("desc").asText() : "");
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> sanitizeContainers(JsonNode node) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (node == null || !node.isArray()) return out;
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode c : node) {
+            if (out.size() >= MAX_CONTAINERS) break;
+            if (c == null || !c.isObject()) continue;
+            String id = str(c, "id");
+            String name = str(c, "name");
+            String tableId = str(c, "tableId");
+            if (id.isEmpty() || name.isEmpty() || tableId.isEmpty() || seen.contains(id)) continue;
+            Map<String, Object> rw = sanitizeRarityWeights(c.get("rarityWeights"));
+            if (rw == null) continue;   // 五档不全或总和为 0 → 丢该条
+            seen.add(id);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("name", name);
+            m.put("slots", clampInt(c.get("slots"), 1, 6, 1));
+            m.put("slotMs", clampInt(c.get("slotMs"), 100, 10_000, 800));
+            m.put("rarityWeights", rw);
+            m.put("riskCost", clampInt(c.get("riskCost"), 0, 10, 1));
+            JsonNode p = c.get("pity");
+            Map<String, Object> pm = null;
+            if (p != null && p.isObject()) {
+                String minRarity = str(p, "minRarity");
+                if (RARITY_SET.contains(minRarity)) {
+                    pm = new LinkedHashMap<>();
+                    pm.put("afterRuns", clampInt(p.get("afterRuns"), 2, 50, 12));
+                    pm.put("minRarity", minRarity);
+                }
+            }
+            m.put("pity", pm);
+            m.put("tableId", tableId);
+            m.put("emoji", c.has("emoji") && c.get("emoji").isTextual() ? c.get("emoji").asText() : "📦");
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 五档权重：必须五档全在、每档 ≥ 0、总和 > 0；否则返回 null（丢该条） */
+    private static Map<String, Object> sanitizeRarityWeights(JsonNode node) {
+        if (node == null || !node.isObject()) return null;
+        Map<String, Object> out = new LinkedHashMap<>();
+        double sum = 0;
+        for (String r : RARITIES) {
+            if (!node.has(r) || !node.get(r).isNumber()) return null;
+            double v = Math.max(0, Math.min(999, node.get(r).asDouble()));
+            out.put(r, v);
+            sum += v;
+        }
+        return sum > 0 ? out : null;
+    }
+
+    private static List<Map<String, Object>> sanitizeTables(JsonNode node) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (node == null || !node.isArray()) return out;
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode t : node) {
+            if (out.size() >= MAX_TABLES) break;
+            if (t == null || !t.isObject()) continue;
+            String id = str(t, "id");
+            if (id.isEmpty() || seen.contains(id)) continue;
+            seen.add(id);
+            List<Map<String, Object>> pool = new ArrayList<>();
+            JsonNode pn = t.get("pool");
+            if (pn != null && pn.isArray()) {
+                for (JsonNode p : pn) {
+                    if (pool.size() >= MAX_POOL_PER_TABLE) break;
+                    if (p == null || !p.isObject()) continue;
+                    String itemId = str(p, "itemId");
+                    if (itemId.isEmpty()) continue;
+                    Map<String, Object> pm = new LinkedHashMap<>();
+                    pm.put("itemId", itemId);
+                    pm.put("weight", clampInt(p.get("weight"), 0, 999, 1));
+                    pool.add(pm);
+                }
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("name", str(t, "name").isEmpty() ? id : str(t, "name"));
+            m.put("pool", pool);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 地图净化：entry / containers 逐层净化；id 缺或重复丢弃该条 */
+    private static List<Map<String, Object>> sanitizeMaps(JsonNode node) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (node == null || !node.isArray()) return out;
+        Set<String> seen = new LinkedHashSet<>();
+        for (JsonNode mp : node) {
+            if (out.size() >= MAX_MAPS) break;
+            if (mp == null || !mp.isObject()) continue;
+            String id = str(mp, "id");
+            if (id.isEmpty() || seen.contains(id)) continue;
+            seen.add(id);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", id);
+            m.put("name", str(mp, "name").isEmpty() ? id : str(mp, "name"));
+            m.put("timeLimitSec", clampInt(mp.get("timeLimitSec"), 30, 3600, 300));
+            m.put("riskLimit", clampInt(mp.get("riskLimit"), 1, 999, 20));
+            m.put("valueMult", clampDbl(mp.get("valueMult"), 0.01, 100, 0.35));
+            m.put("tierBoost", clampDbl(mp.get("tierBoost"), 0, 10, 0));
+            m.put("entry", sanitizeEntry(mp.get("entry")));
+            List<Map<String, Object>> ctns = new ArrayList<>();
+            JsonNode cn = mp.get("containers");
+            if (cn != null && cn.isArray()) {
+                for (JsonNode c : cn) {
+                    if (c == null || !c.isObject()) continue;
+                    String cid = str(c, "containerId");
+                    if (cid.isEmpty()) continue;
+                    Map<String, Object> cm = new LinkedHashMap<>();
+                    cm.put("containerId", cid);
+                    cm.put("count", clampInt(c.get("count"), 0, 99, 1));
+                    ctns.add(cm);
+                }
+            }
+            m.put("containers", ctns);
+            m.put("extractPoints", clampInt(mp.get("extractPoints"), 1, 9, 2));
+            out.add(m);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> sanitizeEntry(JsonNode node) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("coins", 0);
+        out.put("items", new ArrayList<>());
+        out.put("minExtracts", 0);
+        out.put("groups", new ArrayList<>());
+        if (node == null || !node.isObject()) return out;
+        out.put("coins", clampInt(node.get("coins"), 0, 9_999_999, 0));
+        out.put("minExtracts", clampInt(node.get("minExtracts"), 0, 9999, 0));
+        List<Map<String, Object>> items = new ArrayList<>();
+        JsonNode in = node.get("items");
+        if (in != null && in.isArray()) {
+            for (JsonNode it : in) {
+                if (it == null || !it.isObject()) continue;
+                String itemId = str(it, "itemId");
+                if (itemId.isEmpty()) continue;
+                Map<String, Object> im = new LinkedHashMap<>();
+                im.put("itemId", itemId);
+                im.put("qty", clampInt(it.get("qty"), 1, 99, 1));
+                items.add(im);
+            }
+        }
+        out.put("items", items);
+        List<String> groups = new ArrayList<>();
+        JsonNode gn = node.get("groups");
+        if (gn != null && gn.isArray()) {
+            for (JsonNode g : gn) if (g != null && g.isTextual() && !g.asText().trim().isEmpty()) groups.add(g.asText().trim());
+        }
+        out.put("groups", groups);
+        return out;
+    }
+
+    /** 全局参数净化：缺字段用内置默认补齐，保证 C 端无脑消费不会拿到 null */
+    private static Map<String, Object> sanitizeBalance(JsonNode node) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (node == null || !node.isObject()) return baseBalance();
+        out.put("recycleRate", clampDbl(node.get("recycleRate"), 0, 1, 0.6));
+        out.put("extractRate", clampDbl(node.get("extractRate"), 0, 1, 0.55));
+        out.put("backpackCap", clampInt(node.get("backpackCap"), 1, 50, 8));
+        out.put("initialCoins", clampInt(node.get("initialCoins"), 0, 9_999_999, 500));
+        out.put("rescueCoins", clampInt(node.get("rescueCoins"), 0, 9_999_999, 200));
+        out.put("rescueCooldownSec", clampInt(node.get("rescueCooldownSec"), 0, 30 * 86400, 86400));
+        out.put("extractHoldMs", clampInt(node.get("extractHoldMs"), 500, 60_000, 5000));
+        out.put("riskPerSlot", clampInt(node.get("riskPerSlot"), 0, 10, 1));
+        out.put("evWarnRatio", clampDbl(node.get("evWarnRatio"), 1, 100, 1.15));
+        out.put("evRejectRatio", clampDbl(node.get("evRejectRatio"), 1, 100, 3.0));
+        return out;
+    }
+
+    /** 库中有 balance map 时用库值覆盖内置（缺字段保留内置），再走净化口径 */
+    private static Map<String, Object> mergeBalance(Map<String, Object> lib) {
+        Map<String, Object> merged = new LinkedHashMap<>(baseBalance());
+        for (String k : merged.keySet()) {
+            if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
+        }
+        return sanitizeBalance(JsonUtil.MAPPER.valueToTree(merged));
+    }
+
+    private static String str(JsonNode n, String field) {
+        JsonNode v = n == null ? null : n.get(field);
+        return v == null || !v.isTextual() ? "" : v.asText().trim();
+    }
+
+    private static int clampInt(JsonNode n, int lo, int hi, int dft) {
+        if (n == null || !n.isNumber()) return dft;
+        return Math.max(lo, Math.min(hi, n.asInt()));
+    }
+
+    private static double clampDbl(JsonNode n, double lo, double hi, double dft) {
+        if (n == null || !n.isNumber()) return dft;
+        return Math.max(lo, Math.min(hi, n.asDouble()));
+    }
+}
