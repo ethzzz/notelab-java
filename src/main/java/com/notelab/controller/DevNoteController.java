@@ -387,6 +387,108 @@ public class DevNoteController {
                                             + "await page.keyboard.down(\"Control\"); await page.keyboard.press(\"KeyA\"); await page.keyboard.up(\"Control\")\n"
                                             + "await page.keyboard.type(String(v)); await page.keyboard.press(\"Tab\")",
                                     List.of("验收", "cdp", "antd", "选择器"), "2026-10-03")
+                    )),
+            devProject("analytics", "数据看板（Analytics）",
+                    "全站数据闭环（PRD-P0）：服务端旁路 + 客户端埋点 → 单表 analytics_events → /api/analytics 五个查询口 → /admin/analytics 看板。LLM 零依赖。",
+                    List.of(
+                            devEntry("an-s1-01",
+                                    "ui_config 是单行表而不是键值表：所有配置挤在一行 JSON 里",
+                                    "S1 · 存储设计", "note",
+                                    "想核对线上内容配置，写了 SELECT md5(config) FROM ui_config WHERE k IN ('loot','loot_published')，"
+                                            + "报 ERROR 1054 (42S22) Unknown column 'value' in 'field list'；改列名后改报 Unknown column 'k'。",
+                                    "该表只有 id / config / updated_at 三列，id 是 int 主键且**恒只有一行**（id=1）。"
+                                            + "所谓「ui_config.spire 键 / ui_config.loot 键」指的是这一行 JSON 的**顶层字段**，不是行。"
+                                            + "任何 WHERE id='spire' 都会静默返回空集（'spire' 被转成整数 0），看起来像「配置不存在」。",
+                                    "读写「键」一律走 JSON 路径函数，别当行查：JSON_EXTRACT(config,'$.loot')；"
+                                            + "重发布前先比 md5(JSON_EXTRACT(config,'$.loot')) 与 '$.loot_published'。"
+                                            + "实测：loot 草稿 == 快照（重发布是 no-op，可安全作验收探针），spire 草稿 != 快照"
+                                            + "（**因此绝不用 spire-publish 做验收**，会污染线上）。",
+                                    "SELECT JSON_KEYS(config) FROM ui_config WHERE id=1;\n"
+                                            + "SELECT md5(JSON_EXTRACT(config,'$.loot')), md5(JSON_EXTRACT(config,'$.loot_published'));",
+                                    List.of("mysql", "存储结构", "认知修正"), "2026-10-03"),
+                            devEntry("an-s1-02",
+                                    "冗余 day 列不是冗余：按天聚合写 DATE(ts)=? 会让索引直接失效",
+                                    "S1 · 表设计", "note",
+                                    "几十个「按天看趋势 / 按天算留存」的查询，直觉上只存一个 ts 就够，查的时候 DATE(ts)='2026-10-03' 即可。",
+                                    "看板 90% 的查询条件都是「某天 / 某日期区间」。写成 WHERE DATE(ts)=? 时函数套在列上，"
+                                            + "ts 上的索引直接失效，退化成全表扫。",
+                                    "表里**同时**存 ts datetime(3)（算停留/去重窗口要用精确时刻）和冗余的 day date 列，"
+                                            + "索引建在 day 上：KEY idx_day_event (day, app, event)。写入时多算一列——服务端用 EventRecorder.today()，"
+                                            + "客户端事件按**钳制后的 ts** 重算 dayOf(ts)（不信客户端自报的 day）。",
+                                    "-- ❌ 索引失效\nWHERE DATE(ts) = '2026-10-03'\n-- ✅ 命中 idx_day_event\nWHERE day = '2026-10-03'",
+                                    List.of("mysql", "索引", "表设计"), "2026-10-03"),
+                            devEntry("an-s1-03",
+                                    "自己写的 bot 过滤把 curl 也挡了 → 验收脚本报「一条都没进库」",
+                                    "S1 · 验收方法", "pitfall",
+                                    "A1 验收要求「做 N 个动作 → 库里精确多 N 条」。动作接口全部返回 200，但查库 **0 条**。"
+                                            + "第一反应是代码 bug，翻 INSERT 翻了半天。",
+                                    "A5 要求「bot 不入库」，EventRecorder 的 UA 黑名单里包含 curl："
+                                            + "Pattern.compile(\"bot|crawler|spider|curl|wget|headless|...\", CASE_INSENSITIVE)。"
+                                            + "**验收脚本恰恰是 curl 发的** —— 自己写的正确过滤把自己挡在门外，表现和「代码写错了」一模一样。",
+                                    "二分定位：① 手工 INSERT 一条 → 能进（表/字段没问题）；② 上报口带真实浏览器 UA 再发 → {\"accepted\":1}。"
+                                            + "结论：所有埋点验收脚本都要显式带 Chrome UA（curl -A \"$UA\"），否则测的是过滤器不是业务。",
+                                    "UA=\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36\"\n"
+                                            + "curl -s -A \"$UA\" -X POST ...   # 少了 -A \"$UA\" 就是一条不进",
+                                    List.of("验收", "假阴性", "UA"), "2026-10-03"),
+                            devEntry("an-s2-01",
+                                    "sendBeacon 不能带自定义 header → 只能走 text/plain 传 JSON 字符串",
+                                    "S2 · 上报链路", "pitfall",
+                                    "页面卸载时想冲掉队列里的埋点。fetch 会因页面销毁被中断，改用 navigator.sendBeacon(url, payload)，"
+                                            + "但服务端 @RequestBody 拿到的永远是空 / 解析失败。",
+                                    "sendBeacon 的 body 只接受 Blob / ArrayBuffer / FormData / URLSearchParams / string，"
+                                            + "**没有任何参数可以设置自定义请求头**。想靠 Content-Type 让 Spring 自动绑定 map 就会在绑定阶段抛错。",
+                                    "统一用 text/plain 传 JSON **字符串**，服务端收 String 再手动 JsonUtil.parse —— 与既有 GameSaveController.save 同套路，"
+                                            + "不依赖内容协商。另配 fetch 兜底 + visibilitychange / pagehide 双触发，别只赌 unload。",
+                                    "const blob = new Blob([JSON.stringify(payload)], { type: 'text/plain;charset=UTF-8' })\n"
+                                            + "navigator.sendBeacon(endpoint(), blob)",
+                                    List.of("浏览器", "sendBeacon", "内容协商"), "2026-10-03"),
+                            devEntry("an-s2-02",
+                                    "上报端点必须挂在 /api/c/**，挂别的前缀会被默认拒绝策略挡成 403",
+                                    "S2 · 权限门禁", "pitfall",
+                                    "埋点上报要匿名可写（游客也要能报），后端需豁免鉴权。第一版打算挂 /api/analytics/track。",
+                                    "ApiPermInterceptor + PermGuard 是**默认拒绝**模型：只有登记过的路由才放行，"
+                                            + "而 /api/analytics/** 是「仅超管」的受限前缀（给看板查询用的），匿名端点挂在下面必然 403。"
+                                            + "而 /api/c/** 在拦截器里有天然豁免通道。",
+                                    "上报端点路径**必须**是 /api/c/track（@RequestMapping(\"/api/c/track\")）。"
+                                            + "看板查询 /api/analytics/** 与上报 /api/c/track 权限模型不同，别想省事合并。"
+                                            + "另注：新增 Controller 必须**重启后端**才进权限路由表（PermService.registerAllRoutes()）。",
+                                    "@RestController\n@RequestMapping(\"/api/c/track\")   // ✅ 天然豁免；❌ /api/analytics/track 会 403\npublic class CTrackController { ... }",
+                                    List.of("权限", "门禁", "spring"), "2026-10-03"),
+                            devEntry("an-s2-03",
+                                    "监听存在 ref 里的状态：effect 写了依赖数组 = 埋点永不触发",
+                                    "S2 · React 状态", "pitfall",
+                                    "爬塔要在「到达节点」时埋点：useEffect(() => { if (sp.current?.phase === 'reward') track(...) }, [sp])。"
+                                            + "结果埋点**一次都没上报**，页面行为完全正常、没有任何报错。",
+                                    "游戏主状态 sp = sp.current 存在 **ref** 里，变更靠 bump() 手动触发重渲染 —— "
+                                            + "**ref 对象的引用永远不变**。依赖数组 [sp] 因此永远判定「没变化」，effect 只在挂载时跑一次。"
+                                            + "把 [s]（从 ref 读出的快照）当依赖同理。",
+                                    "照抄同文件里已有的正确模式：**不写依赖数组** + 用 ref 记住上次处理过的标识做比对"
+                                            + "（爬塔页的 lastPhase 就是先例）。判据：连点两个不同节点，网络面板能看到两条不同 act-floor 的事件。",
+                                    "const nodeKeyRef = useRef<string>(\"\")\n"
+                                            + "useEffect(() => {                       // ✅ 无依赖数组，内部自己比对去重\n"
+                                            + "  const cur = sp.current\n"
+                                            + "  if (!cur?.[\"phase\"]) { nodeKeyRef.current = \"\"; return }\n"
+                                            + "  const key = `${cur.act}-${cur.floor}-${cur.phase}`\n"
+                                            + "  if (nodeKeyRef.current === key) return\n"
+                                            + "  nodeKeyRef.current = key\n"
+                                            + "  track(\"spire_node_reached\", { act: cur.act, depth: cur.floor })\n"
+                                            + "})",
+                                    List.of("react", "hooks", "静默失败"), "2026-10-03"),
+                            devEntry("an-s4-01",
+                                    "留存 cohort 是「当日活跃」不是「当日新增」；WAU/MAU 不能把每日 DAU 相加",
+                                    "S4 · 查询口径", "note",
+                                    "看板出数后要「数字可复算」（A2）—— 拿 API 返回值对照自己写的 SQL，第一轮对不上："
+                                            + "retentionD1.cohort 是 3，而按「10-01 新增 2 个用户」应该只算 2。",
+                                    "读 AnalyticsDao.retention 实现才确认，cohort 的定义是「**该天的活跃人数**」，不是「该天新增人数」："
+                                            + "COUNT(DISTINCT a.k) 且 a 是窗口内每天的全部活跃者，LEFT JOIN 自身 on b.day = DATE_ADD(a.day, INTERVAL ? DAY)。"
+                                            + "要和 API 对上必须照这份定义复算，凭直觉写「新增 cohort」永远对不上。",
+                                    "另两个必须先想清楚的口径：① **WAU/MAU 不能把每日 DAU 相加**（同一人活跃 3 天会被算 3 次），"
+                                            + "必须一次 COUNT(DISTINCT COALESCE(user_id,anon_id)) 圈定整窗口；"
+                                            + "② **留存率要剔除窗口最后 offset 天**（那几天还等不到 D+offset 数据，留在分母会把留存稀释成假低值）。"
+                                            + "判据：构造数据灌表后 API 返回 cohort=3 / retained=1 / rate=33.3%，与手写 SQL 的 10-01: 2/1、10-02: 1/0 逐行一致。",
+                                    "LocalDate cutoff = LocalDate.parse(to).minusDays(offset);\n"
+                                            + "if (day.isAfter(cutoff)) continue;   // 少这一行，rate 会明显偏低",
+                                    List.of("统计", "口径", "留存"), "2026-10-03")
                     ))
     );
 
