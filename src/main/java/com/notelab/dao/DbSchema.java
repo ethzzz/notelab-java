@@ -16,6 +16,43 @@ final class DbSchema {
         for (String s : ENGLISH_SCHEMA) Db.exec(s);
         migrateSchema();
         translateSchema();
+        analyticsSchema();
+    }
+
+    /**
+     * 全站数据闭环（PRD-P0）单表：analytics_events。
+     *
+     * <p>只增不改：CREATE TABLE IF NOT EXISTS，重启幂等。
+     *
+     * <p>⚠️ **冗余 day 列不是偷懒，是索引必需品**：所有看板查询都按天聚合，写了冗余列才能
+     * {@code WHERE day=? } 命中 {@code idx_day_event}；若图省事写 {@code DATE(ts)=?}，函数套在列上
+     * 会让 ts 索引直接失效（4GB 机器上就是全表扫）。
+     *
+     * <p>⚠️ {@code session_id}/{@code anon_id} 用 CHAR(16) 且 NOT NULL：客户端事件一定带；
+     * 服务端旁路事件（登录/发布等）没有会话上下文时写空串 ""，**不是 NULL** ——
+     * 这样 DAU 的 {@code COALESCE(user_id, anon_id)} 不会把服务端事件误当游客，
+     * 且这些事件本来就带 user_id。
+     */
+    private static void analyticsSchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ts          DATETIME(3)  NOT NULL,
+                day         DATE         NOT NULL,
+                app         VARCHAR(8)   NOT NULL,
+                event       VARCHAR(64)  NOT NULL,
+                session_id  CHAR(16)     NOT NULL,
+                anon_id     CHAR(16)     NOT NULL,
+                user_id     BIGINT       NULL,
+                path        VARCHAR(255) NULL,
+                props       VARCHAR(2000) NULL,
+                ip_hash     CHAR(16)     NULL,
+                ua          VARCHAR(255) NULL,
+                KEY idx_day_event (day, event),
+                KEY idx_anon_day (anon_id, day),
+                KEY idx_user (user_id, day),
+                KEY idx_session (session_id, ts)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /**

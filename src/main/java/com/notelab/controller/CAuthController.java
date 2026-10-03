@@ -6,6 +6,7 @@ import com.notelab.common.Session;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
 import com.notelab.dao.InviteCodeDao;
+import com.notelab.service.EventRecorder;
 import com.notelab.service.RateLimit;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -54,6 +55,8 @@ public class CAuthController {
             return ResponseEntity.status(403).body(Map.of("error", "账号已被禁用"));
         }
         Session.setCookieC(response, Session.makeCToken(((Number) u.get("id")).longValue()));
+        // 服务端旁路埋点（PRD-P0 §4.3）：登录是权威指标，一律以服务端记的为准，前端不要再记一次
+        EventRecorder.recordLoginAndBackfill("c", request, ((Number) u.get("id")).longValue(), "login_success");
         return ResponseEntity.ok(loginBody(u));
     }
 
@@ -78,6 +81,7 @@ public class CAuthController {
     /** 注册：受开关 C_REGISTER_OPEN 控制，默认关闭 */
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(@RequestBody(required = false) CAuthReq req,
+                                                        HttpServletRequest request,
                                                         HttpServletResponse response) {
         if (!"true".equalsIgnoreCase(AppConfig.get("C_REGISTER_OPEN", "false").trim())) {
             return ResponseEntity.status(403).body(Map.of("error", "注册未开放"));
@@ -117,6 +121,9 @@ public class CAuthController {
         }
         Map<String, Object> u = CUserDao.getCUserById(uid);
         Session.setCookieC(response, Session.makeCToken(uid));
+        // 服务端旁路埋点：注册成功（via 记来源，第一版只有邀请码一条路）
+        EventRecorder.recordLoginAndBackfill("c", request, uid, "register_success",
+                Map.of("via", "invite"));
         return ResponseEntity.ok(loginBody(u));
     }
 

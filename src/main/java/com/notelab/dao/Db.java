@@ -64,6 +64,16 @@ public final class Db {
         }
     }
 
+    /** 同 exec，但返回受影响行数（埋点身份回填/清理定时需要打印 deleted 行数，别静默）。 */
+    static int execCount(String sql, Object... args) {
+        try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
+            bind(ps, args);
+            return ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     static Map<String, Object> queryOne(String sql, Object... args) {
         try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
             bind(ps, args);

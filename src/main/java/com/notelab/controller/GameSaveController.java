@@ -3,6 +3,7 @@ package com.notelab.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.GameSaveDao;
+import com.notelab.service.EventRecorder;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -77,6 +78,9 @@ public class GameSaveController {
         JsonNode dataNode = node.has("data") ? node.get("data") : JsonUtil.MAPPER.createObjectNode();
         String dataJson = dataNode.isNull() ? "{}" : dataNode.toString();
         GameSaveDao.upsert(CAuthUtil.userId(user), game, dataJson);
+        // 服务端旁路埋点（PRD-P0 §4.3）：存档写入是「真在玩」的强信号，客户端拿不到可靠口径
+        EventRecorder.record("c", "game_save", CAuthUtil.userId(user), request,
+                Map.of("game_code", game));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 

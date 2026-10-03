@@ -1,5 +1,6 @@
 package com.notelab.controller;
 
+import com.notelab.service.EventRecorder;
 import com.notelab.service.GradeEngine;
 import com.notelab.service.TranslateService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -88,6 +89,14 @@ public class TranslateController {
             return ResponseEntity.status(500).body(Map.of("error", "保存判分结果失败，请稍后重试"));
         }
 
+        // 服务端旁路埋点（PRD-P0 §4.3）：判分提交是权威事件，前端不要再记一次。
+        // grade_mode 必带 —— 它是验证「LLM 不可用时是否真的降级到本地判分」的唯一信号。
+        Object tierObj = sentence.get("tier");
+        EventRecorder.record("c", "translate_submit", uid, request,
+                Map.of("tier", tierObj instanceof Number ? ((Number) tierObj).intValue() : 0,
+                        "score_bucket", scoreBucket(grade.score),
+                        "grade_mode", grade.mode == null ? "" : grade.mode));
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("sentence_id", req.sentence_id);
         body.put("date", today.toString());
@@ -173,5 +182,14 @@ public class TranslateController {
         body.put("items", items);
         body.put("total", items.size());
         return ResponseEntity.ok(body);
+    }
+
+    /** 分数分桶（PRD-P0 §4.2）：把连续分数压成 4 档，便于看板统计分布；未判分 → "na"。 */
+    private static String scoreBucket(Integer score) {
+        if (score == null) return "na";
+        if (score >= 100) return "100";
+        if (score >= 90) return "90-99";
+        if (score >= 60) return "60-89";
+        return "<60";
     }
 }

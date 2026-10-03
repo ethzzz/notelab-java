@@ -2,6 +2,7 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonUtil;
+import com.notelab.service.EventRecorder;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -281,15 +282,19 @@ public class LootContentController {
     /** 发布：把当前编辑内容整体快照写入顶层键 loot_published（合并写，保留其它键） */
     @PostMapping("/publish")
     public ResponseEntity<Map<String, Object>> publish(HttpServletRequest request) {
-        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> user = AuthUtil.user(request);
+        if (user == null) return AuthUtil.unauth();
         Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.put("loot_published", lootOf(cfg));
+        Map<String, Object> snapshot = lootOf(cfg);
+        cfg.put("loot_published", snapshot);
         try {
             UiConfigService.saveUiConfig(JsonUtil.write(cfg));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
         UiConfigService.invalidate();
+        // 服务端旁路埋点（PRD-P0 §4.2）：与 spire_publish 同口径，后台发了没人玩 = 白干
+        EventRecorder.record("b", "loot_publish", AuthUtil.userId(user), request, snapshotStat(snapshot));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -567,5 +572,15 @@ public class LootContentController {
     private static double clampDbl(JsonNode n, double lo, double hi, double dft) {
         if (n == null || !n.isNumber()) return dft;
         return Math.max(lo, Math.min(hi, n.asDouble()));
+    }
+
+    /** 发布快照的规模统计（埋点 props）：slices = 非空的顶层切片数，chars = 序列化字符数。 */
+    private static Map<String, Object> snapshotStat(Map<String, Object> snap) {
+        int slices = 0;
+        for (Object v : snap.values()) {
+            if (v instanceof java.util.Collection<?> c && !c.isEmpty()) slices++;
+            else if (v instanceof Map<?, ?> m && !m.isEmpty()) slices++;
+        }
+        return Map.of("slices", slices, "chars", JsonUtil.write(snap).length());
     }
 }
