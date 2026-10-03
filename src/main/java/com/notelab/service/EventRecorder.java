@@ -120,23 +120,24 @@ public final class EventRecorder {
     }
 
     /**
-     * 由 C 端上报端点调用：把客户端攒好的一条写成行（客户端已做白名单过滤，这里只兜长度）。
+     * 由上报端点调用：把客户端攒好的一条写成行（客户端已做白名单过滤，这里只兜长度）。
      *
      * <p>⚠️ {@code tsMillis} **必须用客户端的事件时间**，不能用服务器收到的时间：一格里攒的
      * 多条事件会在同一毫秒到达，全用服务器时间的话「页面停留」= 全部 0 毫秒，指标直接废掉。
      * 代价是不可信的时钟 —— 所以做一次合法性钳制（偏离服务器时间超过 {@code SKEW_MS} 就用服务器时间），
      * 并按**钳制后的时间**重算 {@code day}（PRD §5 坑 4：日界必须用服务器时区算，不能信客户端给的 day）。
      *
+     * @param app 'c' = C 端 / 'b' = B 端（B 端也要 page_view，走同一个上报口）
      * @return 真的落库了返回 true；被 bot 过滤或异常吞掉返回 false（供上报端点回 accepted 计数）
      */
-    public static boolean recordClient(String event, long tsMillis, String sessionId, String anonId, Long userId,
-                                       String path, String propsJson, String ipHash, String ua) {
+    public static boolean recordClient(String app, String event, long tsMillis, String sessionId, String anonId,
+                                       Long userId, String path, String propsJson, String ipHash, String ua) {
         try {
             if (event == null || event.isEmpty()) return false;
             if (ua != null && BOT.matcher(ua).find()) return false;
             long now = System.currentTimeMillis();
             long ts = Math.abs(tsMillis - now) > SKEW_MS ? now : tsMillis;
-            AnalyticsDao.insert(ts, dayOf(ts), "c", event,
+            AnalyticsDao.insert(ts, dayOf(ts), "b".equals(app) ? "b" : "c", event,
                     sessionId, anonId, userId,
                     clip(path, MAX_PATH),
                     propsJson == null || propsJson.length() > MAX_PROPS_CHARS ? null : propsJson,

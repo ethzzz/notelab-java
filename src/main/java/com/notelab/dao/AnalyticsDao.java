@@ -81,6 +81,16 @@ public final class AnalyticsDao {
                 app, from, to));
     }
 
+    /**
+     * 窗口活跃人数（WAU / MAU）：窗口内**任一天**活跃过就算一个。
+     * ⚠️ 口径陷阱（PRD §5）：不能把每天的 DAU 相加 —— 那样同一人活跃 3 天会被算 3 次。
+     * 正确写法就是一次 {@code COUNT(DISTINCT)} 圈定整个窗口。
+     */
+    public static long rangeActive(String app, String from, String to) {
+        return num(Db.queryOne("SELECT COUNT(DISTINCT COALESCE(user_id, anon_id)) AS n "
+                + "FROM analytics_events WHERE app=? AND day BETWEEN ? AND ?", app, from, to));
+    }
+
     /** 每日活跃：day / dau / events（趋势图与指标卡共用）。 */
     public static List<Map<String, Object>> dailyActive(String app, String from, String to) {
         return Db.queryAll("SELECT day, COUNT(DISTINCT COALESCE(user_id, anon_id)) AS dau, COUNT(*) AS events "

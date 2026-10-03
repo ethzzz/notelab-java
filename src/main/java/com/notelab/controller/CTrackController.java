@@ -66,7 +66,10 @@ public class CTrackController {
             Map.entry("loot_raid_start", List.of("map_id", "entry_coins")),
             Map.entry("loot_raid_settle", List.of("map_id", "success", "reason_code", "haul", "items", "risk", "containers", "duration_ms")),
             Map.entry("loot_stash_recycle", List.of("items", "gained")),
-            Map.entry("loot_rescue_claim", List.of("amount"))
+            Map.entry("loot_rescue_claim", List.of("amount")),
+            // —— B 端（走同一上报口，app='b'）——
+            Map.entry("content_save", List.of("entity", "ok")),
+            Map.entry("admin_crud", List.of("entity", "ok"))
     );
 
     /** 批量上报。返回 {ok:true, accepted:n, skipped:n}；非法 payload → 400 且不落库。 */
@@ -97,8 +100,7 @@ public class CTrackController {
         // 先全量校验再落库：任一条不合法 → 整批 400，不产生半截数据（A3）
         String ua = request.getHeader("User-Agent");
         String ipHash = null;   // 懒算：有可落库的条时才 hash
-        Map<String, Object> user = CAuthUtil.user(request);
-        Long sessionUid = user == null ? null : CAuthUtil.userId(user);
+        Long sessionUid = sessionUserId(request);
 
         List<JsonNode> pending = new java.util.ArrayList<>();
         for (JsonNode ev : arr) {
@@ -113,13 +115,14 @@ public class CTrackController {
         int accepted = 0, skipped = 0;
         for (JsonNode ev : pending) {
             String event = ev.get("event").asText();
+            String app = "b".equals(str(ev, "app")) ? "b" : "c";
             String sessionId = str(ev, "session_id");
             String anonId = str(ev, "anon_id");
             if (AnalyticsDao.existsRecent(sessionId, event, DEDUP_SEC)) { skipped++; continue; }
             if (ipHash == null) ipHash = EventRecorder.ipHash(request);
             Long evUid = ev.hasNonNull("user_id") ? ev.get("user_id").asLong() : null;
             if (sessionUid != null) evUid = sessionUid;   // 有会话就以服务端为准，不信客户端自报
-            boolean stored = EventRecorder.recordClient(event,
+            boolean stored = EventRecorder.recordClient(app, event,
                     ev.hasNonNull("ts") ? ev.get("ts").asLong() : 0L,
                     ID16.matcher(sessionId).matches() ? sessionId : null,
                     ID16.matcher(anonId).matches() ? anonId : null,
@@ -168,6 +171,10 @@ public class CTrackController {
         if (ev == null || !ev.isObject()) throw new IllegalArgumentException("事件必须是对象");
         String event = str(ev, "event");
         if (!EVENT_RE.matcher(event).matches()) throw new IllegalArgumentException("event 非法: " + event);
+        String app = str(ev, "app");
+        if (!app.isEmpty() && !"b".equals(app) && !"c".equals(app)) {
+            throw new IllegalArgumentException("app 只能是 b 或 c");
+        }
         String path = str(ev, "path");
         if (path.length() > MAX_PATH_LEN) throw new IllegalArgumentException("path 过长");
         JsonNode props = ev.get("props");
@@ -198,5 +205,16 @@ public class CTrackController {
     private static String clip(String s, int max) {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    /**
+     * 当前请求的**权威**用户 id：先看 C 端会话（notelab_c_session），再看 B 端会话（notelab_session）。
+     * B 端也埋 page_view，走的是同一个上报口 —— 不认 B 会话的话后台的行为就归不到人。
+     */
+    private static Long sessionUserId(HttpServletRequest request) {
+        Map<String, Object> cu = CAuthUtil.user(request);
+        if (cu != null) return CAuthUtil.userId(cu);
+        Map<String, Object> bu = AuthUtil.user(request);
+        return bu == null ? null : AuthUtil.userId(bu);
     }
 }

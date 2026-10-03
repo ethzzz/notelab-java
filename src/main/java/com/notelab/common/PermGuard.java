@@ -51,7 +51,8 @@ public final class PermGuard {
             "/api/perm",        // 角色组 / 权限码 / 成员角色（对应 /perm 页面）
             "/api/c-admin",     // C 端用户管理与邀请码（对应 /c-users 页面）
             "/api/ui-config",   // 界面配置（对应 /ui 页面，可改全站菜单名/图标/背景）
-            "/api/admin"        // 运维/开发类管理接口（含接口压测 /api/admin/stress-test），仅 super_admin
+            "/api/admin",       // 运维/开发类管理接口（含接口压测 /api/admin/stress-test），仅 super_admin
+            "/api/analytics"    // 数据看板查询（PRD-P0 §6.3）：只有超管能看全站经营数据
     );
 
     /**
