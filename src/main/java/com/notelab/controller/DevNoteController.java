@@ -175,7 +175,87 @@ public class DevNoteController {
                                     "新增 C 端路由前先 grep next.config.ts 的 basePath 与服务器 nginx 的 location；"
                                             + "素材 URL 统一走一个 helper（如 spireAssetUrl），不要到处手写前缀拼字符串。",
                                     "# 确认 basePath 与 nginx 路由归属\ngrep -n \"basePath\" next.config.ts\nssh myapp \"nginx -T | grep -nE '^\\s*location'\"",
-                                    List.of("nextjs", "路由", "nginx", "环境"), "2026-10-03")
+                                    List.of("nextjs", "路由", "nginx", "环境"), "2026-10-03"),
+                            devEntry("loot-w2-01",
+                                    "用正文里会出现的短语当状态判据 → 无头验证假阳性",
+                                    "W2 · 验收方法", "pitfall",
+                                    "CDP 走查脚本用 /撤离成功|行动失败/ 判断「这一局已结算」。脚本报 已结算=true，控制台输出也对，"
+                                            + "但**截出来的图还在读条中**（按钮显示「撤离中… 3.7s」）—— 结论和证据互相矛盾。",
+                                    "撤离按钮下方那行说明文案是「撤离成功物品进仓库；松手或中途离开视为取消」，它**包含**「撤离成功」四个字。"
+                                            + "waitFor 拿整页 innerText 做正则匹配，第一次轮询就命中了这行静态提示，于是在真正结算前就返回 true。"
+                                            + "resultReason 同理，打印出的「结果」也是匹配到提示文案得来的。",
+                                    "状态判据必须选**该状态独有的元素**，不能用正文里可能出现的短语："
+                                            + "① 用该状态才有的交互元素（结算页有「回仓库」按钮，局内没有）；"
+                                            + "② 取结构化节点而不是全文（标题取 document.querySelector('h2')）；"
+                                            + "③ 截图与断言要能互相证伪 —— 图里出现了不该出现的元素（读条进度条）时，要反过来怀疑断言。"
+                                            + "教训：自动化验收里「跑绿了」不等于「验对了」。",
+                                    "// ❌ 提示文案里含「撤离成功」→ 读条中就已经 true\n"
+                                            + "/撤离成功|行动失败/.test(document.body.innerText)\n\n"
+                                            + "// ✅ 结算页独有元素\n"
+                                            + "Array.from(document.querySelectorAll('button'))\n"
+                                            + "  .some(b => /回仓库/.test(b.textContent))",
+                                    List.of("验收", "cdp", "假阳性"), "2026-10-03"),
+                            devEntry("loot-w2-02",
+                                    "风险只有「容器」一个来源时，风险条永远不动、张力为零",
+                                    "W2 · 数值设计", "pitfall",
+                                    "第一版把风险实现成「开一个容器 → +容器 riskCost」。两张图各摸满跑一遍：仓库区最高 7/20、港口 23/30，"
+                                            + "**两张图都摸不到上限**。风险条这一辈子不会满，riskLimit 这个配置项等于不存在，"
+                                            + "玩家永远没有「该收手了」的压力 —— 「风险来自贪」的设计目标完全落空。",
+                                    "风险只有一个来源（容器数量），而容器数量由地图配比固定死了、上限也就固定死了："
+                                            + "只要地图配比 < riskLimit 就永远安全。这是**只在跑数据时才看得出来的设计错误**，肉眼看代码完全正常。",
+                                    "改成两条线叠加，让「贪」直接进公式：① 开一个容器 +容器 riskCost（越高级的容器越危险）；"
+                                            + "② 每往背包塞一件东西 +balance.riskPerSlot（越贪越危险）。"
+                                            + "实测：仓库区摸满 = 8 件×1 + (4 木箱×1 + 1 保险柜×3) = 15/20（适度就安全）；"
+                                            + "港口摸满 = 31/30 → 触发清场（必须提前跑）。两张图给出完全不同的决策压力。",
+                                    "// 风险两条线\n"
+                                            + "if (firstSlot && def.riskCost > 0) risk += def.riskCost   // ① 开容器\n"
+                                            + "if (picked) risk += content.balance.riskPerSlot           // ② 贪（背包满被丢弃的不算）\n"
+                                            + "if (risk > raid.riskLimit) return finalize(base, { success: false,\n"
+                                            + "  reason: `风险累积超过上限（${risk}/${raid.riskLimit}），被清场` }, content)",
+                                    List.of("数值", "风险", "玩家体验"), "2026-10-03"),
+                            devEntry("loot-w2-03",
+                                    "用 Node 的 --experimental-strip-types 直接跑 TS 纯函数层做离线验证",
+                                    "W2 · 工程实践", "note",
+                                    "局内逻辑（进图 / 搜刮 / 结算 / 回收）写成纯函数放在 lib/loot-store.ts，"
+                                            + "目的是「不依赖浏览器也能跑」。要兑现这个设计，就得真的在没有 DOM 的环境里执行它。",
+                                    "裸 Node 不能直接 import TS；装 tsx/ts-node 又要往隔离环境里塞依赖。"
+                                            + "另外相对导入在后缀补全上的习惯差异会直接报 ERR_MODULE_NOT_FOUND。",
+                                    "Node 22 自带类型剥离，可以**直接执行 .ts**：node --experimental-strip-types sim.mts。"
+                                            + "两个必须知道的坑：① 相对导入必须写全 .ts 后缀（Node 的 ESM 解析不做扩展名补全）；"
+                                            + "② import type 会被完全擦除，所以目标文件不存在也没关系 —— 这正是把存档类型写成 "
+                                            + "import type { LootSave } from \"./loot-save.ts\" 就能跑的原因（它依赖 @/lib/api，裸 Node resolve 不了，"
+                                            + "但因为是类型导入压根没被加载）。做法：不污染源码，把文件复制到临时目录用 sed 补后缀。",
+                                    "cp lib/loot-engine.ts lib/loot-store.ts .workbuddy/tmp/loot-sim/\n"
+                                            + "sed -i 's#from \"./loot-engine\"#from \"./loot-engine.ts\"#; s#from \"./loot-save\"#from \"./loot-save.ts\"#' \\\n"
+                                            + "  .workbuddy/tmp/loot-sim/loot-store.ts\n"
+                                            + "node --experimental-strip-types .workbuddy/tmp/loot-sim/sim.mts",
+                                    List.of("node", "typescript", "验收", "纯函数"), "2026-10-03"),
+                            devEntry("loot-w2-04",
+                                    "三个 interval 与局内状态：别让 StrictMode 把确定性 RNG 多推一格",
+                                    "W2 · React 状态", "note",
+                                    "局内同时跑三个定时器：搜刮读条（按容器 slotMs）、按住撤离读条（extractHoldMs）、全局倒计时（250ms 一跳）。"
+                                            + "而随机数用的是「seed + cursor 游标」的确定性流 —— 多推一格整局结果就全变了，"
+                                            + "而确定性又是验收标准之一。",
+                                    "如果把「读条结束 → 推进一格」写成「now 变了就检查进度」的 useEffect，"
+                                            + "依赖数组里必然带着 raid/now，重渲染就会重跑；开发模式下 StrictMode 还会双调用 effect，"
+                                            + "一不留神就推进两格。",
+                                    "① 读条用 setInterval + 立即 clearInterval 的**自终止**结构，触发点在 interval 回调里，"
+                                            + "不在「响应状态变化的 effect」里 —— 一次性、不会因重渲染重放；"
+                                            + "② setRaid 用**函数式更新**保证读到最新状态；"
+                                            + "③ effect 依赖只放状态机开关（searching / hold / phase / seed），不放每帧都变的 now（now 只驱动进度条）；"
+                                            + "④ 结算写回存档用 ref 按 raid.seed 去重，避免重复入仓库。",
+                                    "useEffect(() => {\n"
+                                            + "  if (!searching) return\n"
+                                            + "  const id = setInterval(() => {\n"
+                                            + "    if (Date.now() - searching.start >= searching.ms) {\n"
+                                            + "      clearInterval(id)          // ← 先摘掉，保证只触发一次\n"
+                                            + "      applySearch(searching.key)\n"
+                                            + "      setSearching(null)\n"
+                                            + "    } else setNow(Date.now())     // 只驱动进度条\n"
+                                            + "  }, 80)\n"
+                                            + "  return () => clearInterval(id)\n"
+                                            + "}, [searching, applySearch])",
+                                    List.of("react", "定时器", "确定性", "rng"), "2026-10-03")
                     ))
     );
 
