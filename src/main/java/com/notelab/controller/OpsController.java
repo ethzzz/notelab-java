@@ -120,11 +120,12 @@ public class OpsController {
                 published ? "/api/c/spire/content 返回含 assets（" + cBody.length() + " 字节）" : "取不到已发布内容（未发布？）"));
         if (published) ok++; else warn++;
 
-        // ④ C 端页面可访问
-        String cPage = body(3010, "/games/spire");
+        // ④ C 端页面可访问。⚠️ 探测 /play/spire 而不是老的 /games/spire：
+        //    游戏台迁到 /play/* 后 /games/spire 只剩一条 308 重定向，这里要验的是"页面本身能不能开"。
+        String cPage = body(3010, "/play/spire");
         boolean pageOk = cPage != null && cPage.length() > 1000;
         items.add(item(pageOk ? "ok" : "fail", "C 端爬塔页可访问",
-                pageOk ? "/games/spire → 200（" + cPage.length() + " 字节）" : "/games/spire 打不开"));
+                pageOk ? "/play/spire → 200（" + cPage.length() + " 字节）" : "/play/spire 打不开"));
         if (pageOk) ok++; else fail++;
 
         // ⑤ B 端页面构建与"正在跑的构建"是否一致：页面 HTML 里的 BUILD_ID 必须等于磁盘上 .next/BUILD_ID
@@ -332,24 +333,53 @@ public class OpsController {
         }
     }
 
-    /** 取响应体（截断到 512KB，只用于关键字判定） */
+    /**
+     * 取响应体（截断到 512KB，只用于关键字判定）。
+     *
+     * <p>⚠️ 必须**手动**跟随 3xx：{@code HttpURLConnection} 的自动跟随不认 308，
+     * 而 C 端老路径（/games/spire → /play/spire）现在正是 308 —— 不跟随会把
+     * "页面搬过家"误报成"页面挂了"，自检天天一条红，真故障反而被淹没。
+     */
     private String body(int port, String path) {
-        try {
-            URL u = new URL("http://127.0.0.1:" + port + path);
-            HttpURLConnection c = (HttpURLConnection) u.openConnection();
-            c.setRequestMethod("GET");
-            c.setConnectTimeout(HTTP_TIMEOUT_MS);
-            c.setReadTimeout(HTTP_TIMEOUT_MS);
-            c.setInstanceFollowRedirects(true);
-            int code = c.getResponseCode();
-            if (code != 200) { c.disconnect(); return null; }
-            byte[] buf = c.getInputStream().readAllBytes();
-            c.disconnect();
-            String s = new String(buf, StandardCharsets.UTF_8);
-            return s.length() > 524_288 ? s.substring(0, 524_288) : s;
-        } catch (Exception e) {
-            return null;
+        String cur = path;
+        for (int hop = 0; hop < 3; hop++) {
+            try {
+                URL u = new URL("http://127.0.0.1:" + port + cur);
+                HttpURLConnection c = (HttpURLConnection) u.openConnection();
+                c.setRequestMethod("GET");
+                c.setConnectTimeout(HTTP_TIMEOUT_MS);
+                c.setReadTimeout(HTTP_TIMEOUT_MS);
+                c.setInstanceFollowRedirects(false);
+                int code = c.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String loc = c.getHeaderField("Location");
+                    c.disconnect();
+                    cur = sameHostPath(loc, port);
+                    if (cur == null) return null;
+                    continue;
+                }
+                if (code != 200) { c.disconnect(); return null; }
+                byte[] buf = c.getInputStream().readAllBytes();
+                c.disconnect();
+                String s = new String(buf, StandardCharsets.UTF_8);
+                return s.length() > 524_288 ? s.substring(0, 524_288) : s;
+            } catch (Exception e) {
+                return null;
+            }
         }
+        return null;
+    }
+
+    /** Location 可能是相对路径或完整 URL；只跟随同机同端口的跳转，跨站一律放弃（不给探测开出去的后门）。 */
+    private static String sameHostPath(String loc, int port) {
+        if (loc == null || loc.isEmpty()) return null;
+        if (loc.startsWith("/")) return loc;
+        String prefix = "http://127.0.0.1:" + port;
+        if (loc.startsWith(prefix)) {
+            int i = loc.indexOf('/', prefix.length());
+            return i < 0 ? "/" : loc.substring(i);
+        }
+        return null;
     }
 
     private static String readFirstLine(String path) {
