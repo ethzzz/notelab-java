@@ -36,8 +36,11 @@ public final class MenuTree {
                             menu("spire-map", "地图生成", "🗺️", "/spire-editor/map", true),
                             menu("spire-access", "角色授权", "👥", "/spire-editor/access", true))),
                     // 摸金行动（Loot Raid）：搜刮撤离类 H5，内容全部后台配置（见 LootContentController）。
-                    // 与 gc_spire 同构：5 个子页，路由同样登记在 PageRoutes.PAGE_ROUTES（漏登记会被 RBAC 过滤）。
+                    // 与 gc_spire 同构：6 个子页，路由同样登记在 PageRoutes.PAGE_ROUTES（漏登记会被 RBAC 过滤）。
+                    // ⚠️ rarities 放在**第一位**：它是其余几页的字典（档位/颜色/每格基准价都由它定义），
+                    //    先建档位再配物品才顺手。
                     group("gc_loot", "摸金行动", "🪙", List.of(
+                            menu("loot-rarities", "稀有度配置", "🌈", "/loot-editor/rarities", true),
                             menu("loot-items", "物品配置", "💎", "/loot-editor/items", true),
                             menu("loot-containers", "容器配置", "📦", "/loot-editor/containers", true),
                             menu("loot-tables", "掉落表", "🎰", "/loot-editor/tables", true),

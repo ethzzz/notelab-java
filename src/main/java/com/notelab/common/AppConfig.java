@@ -164,4 +164,19 @@ public final class AppConfig {
     public static String spireAssetUrlPrefix() {
         return get("SPIRE_ASSET_URL_PREFIX", "");
     }
+
+    // ---------- 摸金行动物品图片（B 端「物品配置」页的图片下拉候选） ----------
+    /**
+     * C 端摸金物品图片目录（public/loot 下的文件即线上 /loot/... 的来源）。
+     * 与爬塔素材同理：B 端浏览器读不到 C 端仓库，只能让同机的后端扫盘下发。
+     * 目录不存在时接口返回 available=false + files=[]，B 端静默退回 emoji，不报错。
+     */
+    public static String lootAssetRoot() {
+        return get("LOOT_ASSET_ROOT", "/root/notelab-c/public/loot");
+    }
+
+    /** 摸金图片 URL 前缀（C 端无 basePath，默认空 → /loot/xxx.png） */
+    public static String lootAssetUrlPrefix() {
+        return get("LOOT_ASSET_URL_PREFIX", "");
+    }
 }

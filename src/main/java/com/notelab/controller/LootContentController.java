@@ -12,23 +12,32 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
 /**
  * 摸金行动（Loot Raid）内容工坊：GET|POST /api/loot-content。
  *
- * <p>物品 / 容器 / 掉落表 / 地图 / 全局参数 五切片存 ui_config JSON 的 "loot" 键，不新建表。
+ * <p>稀有度 / 物品 / 容器 / 掉落表 / 地图 / 全局参数 六切片存 ui_config JSON 的 "loot" 键，不新建表。
  * 结构与写法照抄 {@link SpireContentController}（爬塔已验证过的范式）：
  * <ul>
  *   <li><b>手工白名单</b>：save() 里逐键 put，没登记的键会被**静默丢弃**（爬塔踩过的坑）；</li>
  *   <li><b>懒 seed</b>：库中某切片为空则回内置默认（BASE_*），保证 B 端页面首次打开就有东西可编辑；</li>
- *   <li><b>整包覆盖写</b>：POST 提交全量五切片；</li>
+ *   <li><b>整包覆盖写</b>：POST 提交全量六切片；</li>
  *   <li><b>发布快照</b>：publish 把 lootOf() 的结果快照进 ui_config.loot_published，C 端只读快照。</li>
  * </ul>
  *
  * <p>净化只做<b>结构与体积</b>校验，不做玩法裁决（平衡/EV 归 C 端引擎与 B 端模拟器）。
  * 一条不合法就丢该条，不让整包 400。
+ *
+ * <p>⚠️ <b>稀有度是动态的</b>（2026-10-06）：档位由 {@code loot.rarities} 数组定义，
+ * 数组顺序 = 由低到高。物品的 rarity、容器的 rarityWeights / pity.minRarity 都引用档位 key，
+ * 因此 <b>必须先净化 rarities 拿到 order，再净化其余切片</b> —— 顺序反了会把后台新增的档位
+ * 判成"非法稀有度"而整条丢掉（表现为"配的东西全没了但没报错"）。
+ *
+ * <p>⚠️ 三端同构：本文件的默认包、净化口径必须与
+ * {@code notelab-c/lib/loot-content.ts}、{@code notelab-b/.../loot-editor/_shared/model.ts} 一致。
  *
  * <p>LLM 依赖：无。本 Controller 全程确定性计算。
  */
@@ -36,29 +45,52 @@ import java.util.Set;
 @RequestMapping("/api/loot-content")
 public class LootContentController {
 
-    /** 稀有度档位（顺序不可变：权重与保底都依赖它，两端硬编码同一份顺序） */
-    private static final List<String> RARITIES = List.of("common", "uncommon", "rare", "epic", "legendary");
-    private static final Set<String> RARITY_SET = Set.copyOf(RARITIES);
+    /** 色板 key 白名单（与 B/C 端 PALETTE 一致；未登记的色一律回落 slate） */
+    private static final Set<String> PALETTE_KEYS = Set.of(
+            "slate", "blue", "cyan", "emerald", "amber", "purple", "rose", "red");
 
-    /** loot JSON 体积上限（字符）。与爬塔同口径：库里是 mediumtext(16MB)，1MB 距上限很远 */
+    /** 形状 id 白名单（与 B/C 端 SHAPES 一致；未登记的一律回落 1x1，绝不留非法值） */
+    private static final Set<String> SHAPE_IDS = Set.of("1x1", "1x2", "1x3", "2x2", "L", "J", "T", "S");
+
     private static final int MAX_LOOT_CHARS = 1_000_000;
     private static final int MAX_ITEMS = 500;
     private static final int MAX_CONTAINERS = 200;
     private static final int MAX_TABLES = 200;
     private static final int MAX_MAPS = 50;
     private static final int MAX_POOL_PER_TABLE = 200;
+    private static final int MAX_RARITIES = 12;
 
     // ==================================================================================
     // 内置默认内容（只读镜像 / 懒 seed 初值）
-    // 内容口径 = docs/TASK-PROMPT-LOOT.md 附录 A + docs/PRD/PRD-P3-loot-raid.md §5。
-    // ⚠️ C 端 lib/loot-engine.ts 的 DEFAULT_LOOT 必须与此**逐字段一致**，否则两端不一致。
+    // ⚠️ C 端 lib/loot-content.ts 的 DEFAULT_LOOT 必须与此**逐字段一致**。
     // ==================================================================================
 
+    private static Map<String, Object> rarity(String key, String label, String color, int unitValue) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("key", key); m.put("label", label); m.put("color", color); m.put("unitValue", unitValue);
+        return m;
+    }
+
+    /**
+     * 内置五档。unitValue = <b>每格基准价</b>：物品面值 ≈ 该档每格价 × 占格数，
+     * 于是「同等稀有度下占格越多越值钱」是配置出来的，不是代码写死的。
+     */
+    private static final List<Map<String, Object>> BASE_RARITIES = List.of(
+            rarity("common", "普通", "slate", 65),
+            rarity("uncommon", "精良", "blue", 280),
+            rarity("rare", "稀有", "purple", 830),
+            rarity("epic", "史诗", "amber", 2250),
+            rarity("legendary", "传说", "red", 7250));
+
+    private static final List<String> BASE_ORDER = List.of("common", "uncommon", "rare", "epic", "legendary");
+
     private static Map<String, Object> item(String id, String name, String rarity, int baseValue,
-            Integer recycleValue, int stack, String emoji, List<String> tags, String desc) {
+            Integer recycleValue, int stack, String emoji, String shape, String image,
+            List<String> tags, String desc) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id); m.put("name", name); m.put("rarity", rarity); m.put("baseValue", baseValue);
         m.put("recycleValue", recycleValue); m.put("stack", stack); m.put("emoji", emoji);
+        m.put("shape", shape); m.put("image", image);
         m.put("tags", tags); m.put("desc", desc);
         return m;
     }
@@ -75,12 +107,16 @@ public class LootContentController {
         return m;
     }
 
-    private static Map<String, Object> container(String id, String name, int slots, int slotMs,
-            Map<String, Object> rarityWeights, int riskCost, Map<String, Object> pity, String tableId, String emoji) {
+    private static Map<String, Object> container(String id, String name, int colsMin, int colsMax,
+            int rowsMin, int rowsMax, double fillRate, int slotMs,
+            Map<String, Object> rarityWeights, int riskCost, Map<String, Object> p, String tableId, String emoji) {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", id); m.put("name", name); m.put("slots", slots); m.put("slotMs", slotMs);
+        m.put("id", id); m.put("name", name);
+        m.put("colsMin", colsMin); m.put("colsMax", colsMax);
+        m.put("rowsMin", rowsMin); m.put("rowsMax", rowsMax);
+        m.put("fillRate", fillRate); m.put("slotMs", slotMs);
         m.put("rarityWeights", rarityWeights); m.put("riskCost", riskCost);
-        m.put("pity", pity); m.put("tableId", tableId); m.put("emoji", emoji);
+        m.put("pity", p); m.put("tableId", tableId); m.put("emoji", emoji);
         return m;
     }
 
@@ -110,54 +146,58 @@ public class LootContentController {
     }
 
     private static Map<String, Object> mapDef(String id, String name, int timeLimitSec, int riskLimit,
-            double valueMult, double tierBoost, Map<String, Object> entry,
+            double valueMult, double tierBoost, Map<String, Object> e,
             List<Map<String, Object>> containers, int extractPoints) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id); m.put("name", name); m.put("timeLimitSec", timeLimitSec); m.put("riskLimit", riskLimit);
-        m.put("valueMult", valueMult); m.put("tierBoost", tierBoost); m.put("entry", entry);
+        m.put("valueMult", valueMult); m.put("tierBoost", tierBoost); m.put("entry", e);
         m.put("containers", containers); m.put("extractPoints", extractPoints);
         return m;
     }
 
-    /** 24 件物品：common 8 / uncommon 6 / rare 5 / epic 3 / legendary 2 */
+    /**
+     * 24 件物品：面值 = 该档每格基准价 × 占格数。
+     * ⚠️ 唯一的故意例外是「王冠宝石」：1×1 却是传说档 —— 保留"小而极贵"的幻想。
+     */
     private static final List<Map<String, Object>> BASE_ITEMS = List.of(
-            item("it-001", "旧手表", "common", 60, null, 1, "⌚", List.of("junk"), ""),
-            item("it-002", "生锈扳手", "common", 55, null, 1, "🔧", List.of("junk"), ""),
-            item("it-003", "罐头食品", "common", 45, null, 3, "🥫", List.of("supply"), ""),
-            item("it-004", "铜线卷", "common", 70, null, 2, "🔌", List.of("mat"), ""),
-            item("it-005", "军用水壶", "common", 50, null, 1, "🍶", List.of("supply"), ""),
-            item("it-006", "破旧地图", "common", 85, null, 1, "🗺️", List.of("info"), ""),
-            item("it-007", "打火机", "common", 65, null, 1, "🔥", List.of("supply"), ""),
-            item("it-008", "零件盒", "common", 95, null, 2, "🧰", List.of("mat"), ""),
-            item("it-009", "急救包", "uncommon", 220, null, 2, "🩹", List.of("med"), ""),
-            item("it-010", "便携电台", "uncommon", 260, null, 1, "📻", List.of("tech"), ""),
-            item("it-011", "军用望远镜", "uncommon", 300, null, 1, "🔭", List.of("optics"), ""),
-            item("it-012", "精钢匕首", "uncommon", 180, null, 1, "🗡️", List.of("weapon"), ""),
-            item("it-013", "防毒面具", "uncommon", 340, null, 1, "😷", List.of("gear"), ""),
-            item("it-014", "加密硬盘", "uncommon", 380, null, 1, "💽", List.of("tech", "info"), ""),
-            item("it-015", "夜视仪", "rare", 850, null, 1, "🕶️", List.of("optics", "gear"), ""),
-            item("it-016", "金条", "rare", 1000, null, 5, "🧱", List.of("treasure"), ""),
-            item("it-017", "稀有电路板", "rare", 620, null, 3, "🔲", List.of("tech", "mat"), ""),
-            item("it-018", "古董怀表", "rare", 700, null, 1, "🕰️", List.of("treasure"), ""),
-            item("it-019", "军用手枪", "rare", 1150, null, 1, "🔫", List.of("weapon"), ""),
-            item("it-020", "黄金雕像", "epic", 2200, null, 1, "🗿", List.of("treasure"), ""),
-            item("it-021", "实验样本", "epic", 1800, null, 1, "🧪", List.of("tech"), ""),
-            item("it-022", "稀有芯片组", "epic", 2700, null, 2, "💠", List.of("tech"), ""),
-            item("it-023", "黑箱核心", "legendary", 6000, null, 1, "⬛", List.of("artifact"), ""),
-            item("it-024", "王冠宝石", "legendary", 8500, null, 1, "👑", List.of("treasure"), "")
-    );
+            item("it-001", "旧手表", "common", 60, null, 1, "⌚", "1x1", "", List.of("junk"), ""),
+            item("it-002", "生锈扳手", "common", 110, null, 1, "🔧", "1x2", "", List.of("junk"), ""),
+            item("it-003", "罐头食品", "common", 45, null, 3, "🥫", "1x1", "", List.of("supply"), ""),
+            item("it-004", "铜线卷", "common", 140, null, 2, "🔌", "1x2", "", List.of("mat"), ""),
+            item("it-005", "军用水壶", "common", 50, null, 1, "🍶", "1x1", "", List.of("supply"), ""),
+            item("it-006", "破旧地图", "common", 85, null, 1, "🗺️", "1x1", "", List.of("info"), ""),
+            item("it-007", "打火机", "common", 65, null, 1, "🔥", "1x1", "", List.of("supply"), ""),
+            item("it-008", "零件盒", "common", 380, null, 2, "🧰", "2x2", "", List.of("mat"), ""),
+            item("it-009", "急救包", "uncommon", 440, null, 2, "🩹", "1x2", "", List.of("med"), ""),
+            item("it-010", "便携电台", "uncommon", 520, null, 1, "📻", "1x2", "", List.of("tech"), ""),
+            item("it-011", "军用望远镜", "uncommon", 900, null, 1, "🔭", "1x3", "", List.of("optics"), ""),
+            item("it-012", "精钢匕首", "uncommon", 360, null, 1, "🗡️", "1x2", "", List.of("weapon"), ""),
+            item("it-013", "防毒面具", "uncommon", 1360, null, 1, "😷", "2x2", "", List.of("gear"), ""),
+            item("it-014", "加密硬盘", "uncommon", 380, null, 1, "💽", "1x1", "", List.of("tech", "info"), ""),
+            item("it-015", "夜视仪", "rare", 1700, null, 1, "🕶️", "1x2", "", List.of("optics", "gear"), ""),
+            item("it-016", "金条", "rare", 2000, null, 5, "🧱", "1x2", "", List.of("treasure"), ""),
+            item("it-017", "稀有电路板", "rare", 1240, null, 3, "🔲", "1x2", "", List.of("tech", "mat"), ""),
+            item("it-018", "古董怀表", "rare", 700, null, 1, "🕰️", "1x1", "", List.of("treasure"), ""),
+            item("it-019", "军用手枪", "rare", 3450, null, 1, "🔫", "1x3", "", List.of("weapon"), ""),
+            item("it-020", "黄金雕像", "epic", 8800, null, 1, "🗿", "2x2", "", List.of("treasure"), ""),
+            item("it-021", "实验样本", "epic", 3600, null, 1, "🧪", "1x2", "", List.of("tech"), ""),
+            item("it-022", "稀有芯片组", "epic", 2700, null, 2, "💠", "1x1", "", List.of("tech"), ""),
+            item("it-023", "黑箱核心", "legendary", 24000, null, 1, "⬛", "2x2", "", List.of("artifact"), ""),
+            item("it-024", "王冠宝石", "legendary", 8500, null, 1, "👑", "1x1", "", List.of("treasure"), ""));
 
-    /** 6 种容器（id 与表 id 对应） */
+    /**
+     * 6 种容器。网格尺寸给的是<b>区间</b>，开局按 seed 掷 —— 这就是"物资箱几×几是随机的"。
+     * fillRate &lt; 1 才会出现空格，别设成 1（那样永远是满的，"摸空"这条线就没了）。
+     */
     private static final List<Map<String, Object>> BASE_CONTAINERS = List.of(
-            container("ct-crate", "木箱", 2, 600, weights(55, 28, 12, 4.5, 0.5), 1, null, "lt-crate", "📦"),
-            container("ct-tool", "工具柜", 3, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧"),
-            container("ct-ammo", "弹药箱", 2, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨"),
-            container("ct-med", "医疗柜", 2, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺"),
-            container("ct-safe", "保险柜", 1, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic"), "lt-safe", "🔐"),
-            container("ct-cage", "储物笼", 4, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️")
-    );
+            container("ct-crate", "木箱", 2, 3, 2, 2, 0.8, 600, weights(55, 28, 12, 4.5, 0.5), 1, null, "lt-crate", "📦"),
+            container("ct-tool", "工具柜", 3, 3, 2, 2, 0.75, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧"),
+            container("ct-ammo", "弹药箱", 2, 2, 2, 3, 0.8, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨"),
+            container("ct-med", "医疗柜", 2, 3, 2, 2, 0.75, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺"),
+            container("ct-safe", "保险柜", 2, 2, 2, 2, 0.9, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic"), "lt-safe", "🔐"),
+            container("ct-cage", "储物笼", 3, 4, 2, 3, 0.7, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️"));
 
-    /** 6 张掉落表；池子每档至少 1 件候选（否则该档轮盘抽空 → 槽位空手） */
+    /** 6 张掉落表；池子每档至少 1 件候选（否则该档轮盘抽空 → 引擎降档） */
     private static final List<Map<String, Object>> BASE_TABLES = List.of(
             table("lt-crate", "木箱掉落", List.of(
                     poolItem("it-001", 22), poolItem("it-002", 20), poolItem("it-003", 24), poolItem("it-004", 16),
@@ -183,37 +223,36 @@ public class LootContentController {
             table("lt-cage", "储物笼掉落", List.of(
                     poolItem("it-001", 22), poolItem("it-003", 24), poolItem("it-005", 20),
                     poolItem("it-006", 18), poolItem("it-007", 22),
-                    poolItem("it-009", 10), poolItem("it-017", 4), poolItem("it-021", 1), poolItem("it-023", 1)))
-    );
+                    poolItem("it-009", 10), poolItem("it-017", 4), poolItem("it-021", 1), poolItem("it-023", 1))));
 
     /**
      * 2 张图。
-     * ⚠️ 门槛不能只看"全清毛收益"：玩家受背包上限约束（8 格），港口 33 个槽位里只能带走 8 格。
-     * 2026-10-03 W3 模拟（10,000 局）实测：门槛 900 时 EV 倍率只有 1.02×（打这张图不划算），
-     * 降到 400 后为 2.30×，落在设计区间 [1.5, 3.5]，且高于仓库区的 1.73×（难图收益更高）。
-     * 改这里必须同步 notelab-c/lib/loot-content.ts 的 DEFAULT_MAP_LIST，否则"未发布的手感"会不同。
+     * ⚠️ 2026-10-06 形状化后两个数值重调：
+     *   ① riskLimit：容器变网格后一格一格摸、风险按占格数累加，旧上限会开局就爆（20→22、30→40）；
+     *   ② valueMult：背包从「8 件」变成「15 格」，能带走的东西多了约 2.4 倍，
+     *      价值倍率必须同比下调（0.35→0.18、0.50→0.23），否则 EV 会飙到 4.2×（远超 [1.5, 3.5]）。
      */
     private static final List<Map<String, Object>> BASE_MAPS = List.of(
-            mapDef("depot", "仓库区", 300, 20, 0.35, 0, entry(200, 0),
+            mapDef("depot", "仓库区", 300, 22, 0.18, 0, entry(200, 0),
                     List.of(ctnCount("ct-crate", 4), ctnCount("ct-safe", 1)), 2),
-            mapDef("port", "港口集装箱", 240, 30, 0.50, 0.4, entry(400, 3),
+            mapDef("port", "港口集装箱", 240, 40, 0.23, 0.4, entry(400, 3),
                     List.of(ctnCount("ct-crate", 3), ctnCount("ct-tool", 3), ctnCount("ct-ammo", 2),
-                            ctnCount("ct-med", 2), ctnCount("ct-safe", 2), ctnCount("ct-cage", 2)), 3)
-    );
+                            ctnCount("ct-med", 2), ctnCount("ct-safe", 2), ctnCount("ct-cage", 2)), 3));
 
-    /** 全局参数（懒 seed 默认值） */
+    /** 全局参数（懒 seed 默认值）。背包 = 5×3 网格（15 格），旧版 backpackCap(8 件) 已废弃 */
     private static Map<String, Object> baseBalance() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("recycleRate", 0.6);
         m.put("extractRate", 0.55);
-        m.put("backpackCap", 8);
+        m.put("backpackCols", 5);
+        m.put("backpackRows", 3);
         m.put("initialCoins", 500);
         m.put("rescueCoins", 200);
         m.put("rescueCooldownSec", 86400);
         m.put("extractHoldMs", 5000);
         m.put("riskPerSlot", 1);
         // ⚠️ 与设计目标区间 [1.5, 3.5] 自洽：warn = 区间上限（超了才提示），reject = 10× 门槛（崩到这个
-        //    量级才拒绝保存）。旧值 1.15/3.0 会让健康图（1.7×/2.3×）常驻告警，且手改 valueMult 一点就被拒。
+        //    量级才拒绝保存）。旧值 1.15/3.0 会让健康图常驻告警，且手改 valueMult 一点就被拒。
         m.put("evWarnRatio", 3.5);
         m.put("evRejectRatio", 10.0);
         return m;
@@ -245,10 +284,16 @@ public class LootContentController {
         }
         if (!node.isObject()) return ResponseEntity.status(400).body(Map.of("error", "body 必须是对象"));
 
+        // ⚠️ 顺序不可换：rarities 先净化出 order，物品/容器才能按它校验稀有度 key。
+        //    反过来会把后台新增的档位判成非法 → 整条丢掉，且**不报错**。
+        List<Map<String, Object>> rarities = sanitizeRarities(node.get("rarities"));
+        List<String> order = orderOf(rarities);
+
         // ⚠️ 手工白名单：这里没 put 的键会被静默丢弃（B 端存了刷新就没了且不报错）
         Map<String, Object> loot = new LinkedHashMap<>();
-        loot.put("items", sanitizeItems(node.get("items")));
-        loot.put("containers", sanitizeContainers(node.get("containers")));
+        loot.put("rarities", rarities);
+        loot.put("items", sanitizeItems(node.get("items"), order));
+        loot.put("containers", sanitizeContainers(node.get("containers"), order));
         loot.put("tables", sanitizeTables(node.get("tables")));
         loot.put("maps", sanitizeMaps(node.get("maps")));
         loot.put("balance", sanitizeBalance(node.get("balance")));
@@ -317,6 +362,7 @@ public class LootContentController {
     @SuppressWarnings("unchecked")
     private static Map<String, Object> lootOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("rarities", new ArrayList<>(BASE_RARITIES));
         out.put("items", new ArrayList<>(BASE_ITEMS));
         out.put("containers", new ArrayList<>(BASE_CONTAINERS));
         out.put("tables", new ArrayList<>(BASE_TABLES));
@@ -325,6 +371,8 @@ public class LootContentController {
         Object o = cfg.get("loot");
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
+            Object rs = m.get("rarities");
+            if (rs instanceof List && !((List<?>) rs).isEmpty()) out.put("rarities", rs);
             Object it = m.get("items");
             if (it instanceof List && !((List<?>) it).isEmpty()) out.put("items", it);
             Object ct = m.get("containers");
@@ -339,22 +387,59 @@ public class LootContentController {
         return out;
     }
 
+    /** 档位 key 列表（数组顺序 = 由低到高） */
+    private static List<String> orderOf(List<Map<String, Object>> rarities) {
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> r : rarities) {
+            Object k = r.get("key");
+            if (k instanceof String && !((String) k).isEmpty()) out.add((String) k);
+        }
+        return out.isEmpty() ? new ArrayList<>(BASE_ORDER) : out;
+    }
+
     // ==================================================================================
     // 净化（只做结构与体积校验；不合法丢该条）
     // ==================================================================================
 
-    private static List<Map<String, Object>> sanitizeItems(JsonNode node) {
+    /** 稀有度档位：key 非空且唯一；color 不在色板里回落 slate；unitValue ≥ 0 */
+    private static List<Map<String, Object>> sanitizeRarities(JsonNode node) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (node != null && node.isArray()) {
+            Set<String> seen = new LinkedHashSet<>();
+            for (JsonNode r : node) {
+                if (out.size() >= MAX_RARITIES) break;
+                if (r == null || !r.isObject()) continue;
+                String key = str(r, "key");
+                if (key.isEmpty() || seen.contains(key)) continue;
+                seen.add(key);
+                String label = str(r, "label");
+                String color = str(r, "color").toLowerCase(Locale.ROOT);
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("key", key);
+                m.put("label", label.isEmpty() ? key : label);
+                m.put("color", PALETTE_KEYS.contains(color) ? color : "slate");
+                m.put("unitValue", clampInt(r.get("unitValue"), 0, 9_999_999, 0));
+                out.add(m);
+            }
+        }
+        return out.isEmpty() ? new ArrayList<>(BASE_RARITIES) : out;
+    }
+
+    private static List<Map<String, Object>> sanitizeItems(JsonNode node, List<String> order) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
+        Set<String> orderSet = new LinkedHashSet<>(order);
         for (JsonNode it : node) {
             if (out.size() >= MAX_ITEMS) break;
             if (it == null || !it.isObject()) continue;
             String id = str(it, "id");
             String name = str(it, "name");
             String rarity = str(it, "rarity");
-            if (id.isEmpty() || name.isEmpty() || !RARITY_SET.contains(rarity) || seen.contains(id)) continue;
+            // ⚠️ 稀有度必须属于当前 order：档位被删掉后属于它的物品会被整条丢弃（B 端删档前会提示影响面）
+            if (id.isEmpty() || name.isEmpty() || !orderSet.contains(rarity) || seen.contains(id)) continue;
             seen.add(id);
+            String shape = str(it, "shape");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("name", name);
@@ -364,6 +449,9 @@ public class LootContentController {
             m.put("recycleValue", (rv != null && rv.isNumber()) ? clampInt(rv, 0, 9_999_999, 0) : null);
             m.put("stack", clampInt(it.get("stack"), 1, 99, 1));
             m.put("emoji", it.has("emoji") && it.get("emoji").isTextual() ? it.get("emoji").asText() : "📦");
+            // 形状必须落在白名单里：写错的一律回落 1×1，绝不留非法值（放置算法会炸）
+            m.put("shape", SHAPE_IDS.contains(shape) ? shape : "1x1");
+            m.put("image", it.has("image") && it.get("image").isTextual() ? it.get("image").asText().trim() : "");
             List<String> tags = new ArrayList<>();
             JsonNode tg = it.get("tags");
             if (tg != null && tg.isArray()) {
@@ -376,7 +464,15 @@ public class LootContentController {
         return out;
     }
 
-    private static List<Map<String, Object>> sanitizeContainers(JsonNode node) {
+    /** 旧配置（只有标量 slots、没有网格字段）的迁移 —— 不迁移容器会被整条丢掉 */
+    private static int[] gridFromSlots(int slots) {
+        if (slots <= 1) return new int[]{1, 1, 1, 1};
+        if (slots == 2) return new int[]{2, 2, 1, 1};
+        if (slots <= 4) return new int[]{2, 2, 2, 2};
+        return new int[]{3, 3, 2, 2};
+    }
+
+    private static List<Map<String, Object>> sanitizeContainers(JsonNode node, List<String> order) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -387,13 +483,25 @@ public class LootContentController {
             String name = str(c, "name");
             String tableId = str(c, "tableId");
             if (id.isEmpty() || name.isEmpty() || tableId.isEmpty() || seen.contains(id)) continue;
-            Map<String, Object> rw = sanitizeRarityWeights(c.get("rarityWeights"));
-            if (rw == null) continue;   // 五档不全或总和为 0 → 丢该条
+            Map<String, Object> rw = sanitizeRarityWeights(c.get("rarityWeights"), order);
+            if (rw == null) continue;   // 各档不全或总和为 0 → 丢该条
             seen.add(id);
+            // 旧 slots 迁移：库里已发布的那份就是这种形态
+            int[] g = gridFromSlots(clampInt(c.get("slots"), 1, 64, -1) < 0 ? 1 : clampInt(c.get("slots"), 1, 64, 1));
+            boolean hasGrid = c.has("colsMin") || c.has("colsMax") || c.has("rowsMin") || c.has("rowsMax");
+            int defMin = hasGrid ? 1 : g[0];
+            int colsMin = clampInt(c.get("colsMin"), 1, 8, hasGrid ? 2 : g[0]);
+            int colsMax = clampInt(c.get("colsMax"), colsMin, 8, hasGrid ? 2 : g[1]);
+            int rowsMin = clampInt(c.get("rowsMin"), 1, 8, hasGrid ? 2 : g[2]);
+            int rowsMax = clampInt(c.get("rowsMax"), rowsMin, 8, hasGrid ? 2 : g[3]);
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("name", name);
-            m.put("slots", clampInt(c.get("slots"), 1, 6, 1));
+            m.put("colsMin", colsMin);
+            m.put("colsMax", colsMax);
+            m.put("rowsMin", rowsMin);
+            m.put("rowsMax", rowsMax);
+            m.put("fillRate", clampDbl(c.get("fillRate"), 0, 1, 0.75));
             m.put("slotMs", clampInt(c.get("slotMs"), 100, 10_000, 800));
             m.put("rarityWeights", rw);
             m.put("riskCost", clampInt(c.get("riskCost"), 0, 10, 1));
@@ -401,7 +509,7 @@ public class LootContentController {
             Map<String, Object> pm = null;
             if (p != null && p.isObject()) {
                 String minRarity = str(p, "minRarity");
-                if (RARITY_SET.contains(minRarity)) {
+                if (order.contains(minRarity)) {
                     pm = new LinkedHashMap<>();
                     pm.put("afterRuns", clampInt(p.get("afterRuns"), 2, 50, 12));
                     pm.put("minRarity", minRarity);
@@ -415,12 +523,12 @@ public class LootContentController {
         return out;
     }
 
-    /** 五档权重：必须五档全在、每档 ≥ 0、总和 > 0；否则返回 null（丢该条） */
-    private static Map<String, Object> sanitizeRarityWeights(JsonNode node) {
+    /** 各档权重：order 里每一档都必须是 ≥ 0 的有限数、总和 > 0；否则返回 null（丢该条） */
+    private static Map<String, Object> sanitizeRarityWeights(JsonNode node, List<String> order) {
         if (node == null || !node.isObject()) return null;
         Map<String, Object> out = new LinkedHashMap<>();
         double sum = 0;
-        for (String r : RARITIES) {
+        for (String r : order) {
             if (!node.has(r) || !node.get(r).isNumber()) return null;
             double v = Math.max(0, Math.min(999, node.get(r).asDouble()));
             out.put(r, v);
@@ -478,7 +586,7 @@ public class LootContentController {
             m.put("name", str(mp, "name").isEmpty() ? id : str(mp, "name"));
             m.put("timeLimitSec", clampInt(mp.get("timeLimitSec"), 30, 3600, 300));
             m.put("riskLimit", clampInt(mp.get("riskLimit"), 1, 999, 20));
-            m.put("valueMult", clampDbl(mp.get("valueMult"), 0.01, 100, 0.35));
+            m.put("valueMult", clampDbl(mp.get("valueMult"), 0.01, 100, 0.18));
             m.put("tierBoost", clampDbl(mp.get("tierBoost"), 0, 10, 0));
             m.put("entry", sanitizeEntry(mp.get("entry")));
             List<Map<String, Object>> ctns = new ArrayList<>();
@@ -539,7 +647,8 @@ public class LootContentController {
         if (node == null || !node.isObject()) return baseBalance();
         out.put("recycleRate", clampDbl(node.get("recycleRate"), 0, 1, 0.6));
         out.put("extractRate", clampDbl(node.get("extractRate"), 0, 1, 0.55));
-        out.put("backpackCap", clampInt(node.get("backpackCap"), 1, 50, 8));
+        out.put("backpackCols", clampInt(node.get("backpackCols"), 1, 8, 5));
+        out.put("backpackRows", clampInt(node.get("backpackRows"), 1, 8, 3));
         out.put("initialCoins", clampInt(node.get("initialCoins"), 0, 9_999_999, 500));
         out.put("rescueCoins", clampInt(node.get("rescueCoins"), 0, 9_999_999, 200));
         out.put("rescueCooldownSec", clampInt(node.get("rescueCooldownSec"), 0, 30 * 86400, 86400));

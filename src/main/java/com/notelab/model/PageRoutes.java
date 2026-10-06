@@ -43,7 +43,8 @@ public final class PageRoutes {
             new String[]{"/spire-editor/map", "爬塔·地图生成"},
             new String[]{"/spire-editor/access", "爬塔·角色授权"},
             // 摸金行动（Loot Raid）：与 MenuTree.gc_loot 一一对应；只加菜单不加这里 → 叶子被 RBAC 过滤看不到。
-            // 非超管角色需在「角色组管理」里重新勾选下面这 5 条。
+            // 非超管角色需在「角色组管理」里重新勾选下面这 6 条。
+            new String[]{"/loot-editor/rarities", "摸金·稀有度配置"},
             new String[]{"/loot-editor/items", "摸金·物品配置"},
             new String[]{"/loot-editor/containers", "摸金·容器配置"},
             new String[]{"/loot-editor/tables", "摸金·掉落表"},
