@@ -74,7 +74,11 @@ public class CConfigController {
 
     /**
      * 摸金行动（Loot Raid）：GET /api/c/loot/content → 已发布的 loot_published 快照。
-     * 五切片（items / containers / tables / maps / balance）未发布时**各回空**，C 端据此回落内置默认包。
+     * 六切片（rarities / items / containers / tables / maps / balance）未发布时**各回空**，
+     * C 端据此回落内置默认包。
+     *
+     * <p>⚠️ rarities 是 2026-10-06 新增的第六切片：档位（种类/颜色/每格基准价）由后台配置，
+     * 漏透传的话 C 端会一直用内置五档 —— 后台加的档位在前台"存在但不生效"，且不报错。
      *
      * <p>与 spire 同一口径：后端只负责原样透传，fail-open 的判定在 C 端（lib/loot-content.ts），
      * 不在这里兜底成默认值 —— 否则"未发布"与"发布了一套空内容"在 C 端看来无法区分。
@@ -87,6 +91,7 @@ public class CConfigController {
         Map<String, Object> out = new LinkedHashMap<>();
         if (o instanceof Map) {
             Map<String, Object> m = (Map<String, Object>) o;
+            out.put("rarities", m.getOrDefault("rarities", List.of()));
             out.put("items", m.getOrDefault("items", List.of()));
             out.put("containers", m.getOrDefault("containers", List.of()));
             out.put("tables", m.getOrDefault("tables", List.of()));
@@ -94,6 +99,7 @@ public class CConfigController {
             out.put("balance", m.getOrDefault("balance", Map.of()));
             return ResponseEntity.ok(out);
         }
+        out.put("rarities", List.of());
         out.put("items", List.of());
         out.put("containers", List.of());
         out.put("tables", List.of());
