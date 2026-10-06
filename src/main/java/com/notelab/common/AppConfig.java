@@ -20,6 +20,17 @@ public final class AppConfig {
     /** B/C 拆分阶段1：C 端独立会话 Cookie 名（与 B 端 notelab_session 隔离） */
     public static final String SESSION_COOKIE_C = "notelab_c_session";
 
+    /**
+     * 服务器工作副本根目录的默认值。⚠️ 大小写敏感：是 {@code /root/Notelab}（大写 N），
+     * <b>不是</b> {@code /root/notelab} —— 后者在这个服务器上根本不存在。
+     *
+     * <p>为什么值得单独抽成一个常量：扫盘（爬塔素材 / 摸金图片）与运维看板都要拼绝对路径，
+     * 各写一遍就会出现"一处大写一处小写"，而且失败形态是<em>静默</em>的 ——
+     * 目录不存在时接口只是返回空列表 / warn，不报错，看起来像"没素材"而不是"路径写错了"。
+     * 统一走 {@link #repoRoot()} 后只剩这一处可能写错。
+     */
+    public static final String DEFAULT_REPO_ROOT = "/root/Notelab";
+
     private static final Map<String, String> FILE_ENV = new LinkedHashMap<>();
     private static volatile boolean loaded = false;
 
@@ -29,7 +40,9 @@ public final class AppConfig {
         if (loaded) return;
         // 本目录 .env 优先于 Python 目录 .env
         loadDotEnv(Paths.get(".env").toAbsolutePath());
-        loadDotEnv(Paths.get("/root/notelab/.env"));
+        // ⚠️ 这里必须用常量而非 repoRoot()：repoRoot() 走 get() → ensureLoaded()，会无限递归爆栈。
+        // ⚠️ 大小写：服务器上是 /root/Notelab（大写 N），写小写会让这一档直接失效（文件不存在 → 静默跳过）。
+        loadDotEnv(Paths.get(DEFAULT_REPO_ROOT + "/.env"));
         loaded = true;
     }
 
@@ -81,7 +94,7 @@ public final class AppConfig {
 
     /**
      * 候选 key 列表（QwenKeys 轮换用）：QWEN_API_KEYS 逗号分隔；未配置时退化为单把 QWEN_API_KEY。
-     * 建议写在 /root/notelab-java/.env（仅 Java 生效，不影响 Python 版共用的 QWEN_API_KEY）。
+     * 建议写在 /root/Notelab/notelab-java/.env（仅 Java 生效，不影响 Python 版共用的 QWEN_API_KEY）。
      */
     public static java.util.List<String> qwenApiKeys() {
         java.util.List<String> keys = new java.util.ArrayList<>();
@@ -144,6 +157,20 @@ public final class AppConfig {
         return p;
     }
 
+    // ---------- 服务器路径基准 ----------
+    /**
+     * 服务器工作副本根目录（其下平铺 notelab-java / notelab-b / notelab-c 等仓）。
+     * 本地开发或不在这台机器上时用环境变量 {@code REPO_ROOT} 覆盖。
+     */
+    public static String repoRoot() {
+        return get("REPO_ROOT", DEFAULT_REPO_ROOT);
+    }
+
+    /** C 端仓库目录 —— B 端浏览器读不到它，素材/图片候选只能靠后端扫盘下发。 */
+    public static String cRepoDir() {
+        return repoRoot() + "/notelab-c";
+    }
+
     // ---------- 爬塔素材清单（B 端「素材资源」页的候选池） ----------
     /**
      * C 端爬塔素材所在目录。B 端浏览器**读不到 C 端仓库**，所以素材候选清单由后端直接扫盘下发；
@@ -151,7 +178,7 @@ public final class AppConfig {
      * 目录不存在时接口返回 available=false，不抛错（本地开发/未部署 C 端时不该把 B 端页面打挂）。
      */
     public static String spireAssetRoot() {
-        return get("SPIRE_ASSET_ROOT", "/root/notelab-c/public/spire");
+        return get("SPIRE_ASSET_ROOT", cRepoDir() + "/public/spire");
     }
 
     /**
@@ -172,9 +199,7 @@ public final class AppConfig {
      * 目录不存在时接口返回 available=false + files=[]，B 端静默退回 emoji，不报错。
      */
     public static String lootAssetRoot() {
-        // ⚠️ 大小写敏感：服务器上的仓目录是 /root/Notelab/notelab-c（大写 N），写小写会
-        //    直接判成"目录不存在"，B 端图片下拉永远空 —— 用 LOOT_ASSET_ROOT 覆盖即可。
-        return get("LOOT_ASSET_ROOT", "/root/Notelab/notelab-c/public/loot");
+        return get("LOOT_ASSET_ROOT", cRepoDir() + "/public/loot");
     }
 
     /** 摸金图片 URL 前缀（C 端无 basePath，默认空 → /loot/xxx.png） */

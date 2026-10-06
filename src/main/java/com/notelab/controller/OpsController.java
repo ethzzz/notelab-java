@@ -1,5 +1,6 @@
 package com.notelab.controller;
 
+import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
 import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,10 +43,16 @@ public class OpsController {
     /** 服务清单：pm2 进程名 / 展示名 / 监听端口 / 服务器工作副本目录 / 探活路径 */
     private record Svc(String pm2, String name, int port, String dir, String probe) {}
 
+    // ⚠️ 三个 Notelab 仓的目录必须走 AppConfig.repoRoot()（= /root/Notelab，大写 N）：
+    //    早年这里写的是小写 /root/notelab-*，而该目录在服务器上不存在 —— git() 取不到 HEAD，
+    //    看板上每条都报「目录不存在或不是 git 仓库」，看起来像"仓库没克隆"其实是路径拼错。
+    //    ai-lab 是平铺在 /root 下的独立仓，不在 repoRoot 里，所以单独写死。
+    private static final String R = AppConfig.repoRoot();
+
     private static final List<Svc> SVCS = List.of(
-            new Svc("notelab-java", "后端 API", 8001, "/root/notelab-java", "/api/menu"),
-            new Svc("notelab-b", "B 端后台", 3020, "/root/notelab-b", "/admin/login"),
-            new Svc("notelab-c", "C 端站点", 3010, "/root/notelab-c", "/"),
+            new Svc("notelab-java", "后端 API", 8001, R + "/notelab-java", "/api/menu"),
+            new Svc("notelab-b", "B 端后台", 3020, R + "/notelab-b", "/admin/login"),
+            new Svc("notelab-c", "C 端站点", 3010, R + "/notelab-c", "/"),
             new Svc("ai-lab", "AI 实验室", 8002, "/root/ai-lab", "/")
     );
 
@@ -122,10 +129,11 @@ public class OpsController {
 
         // ⑤ B 端页面构建与"正在跑的构建"是否一致：页面 HTML 里的 BUILD_ID 必须等于磁盘上 .next/BUILD_ID
         //    —— 这一步能抓到"构建成功但 pm2 没重启 / 重启的是旧进程"这类事故
-        String buildId = readFirstLine("/root/notelab-b/.next/BUILD_ID");
+        String buildIdPath = R + "/notelab-b/.next/BUILD_ID";
+        String buildId = readFirstLine(buildIdPath);
         String bPage = body(3020, "/admin/login");
         if (buildId == null || buildId.isEmpty()) {
-            items.add(item("warn", "B 端构建产物一致性", "读不到 /root/notelab-b/.next/BUILD_ID（未构建？）"));
+            items.add(item("warn", "B 端构建产物一致性", "读不到 " + buildIdPath + "（未构建？）"));
             warn++;
         } else if (bPage == null) {
             items.add(item("fail", "B 端构建产物一致性", "/admin/login 打不开"));
