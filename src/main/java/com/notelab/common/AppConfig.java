@@ -172,7 +172,9 @@ public final class AppConfig {
      * 目录不存在时接口返回 available=false + files=[]，B 端静默退回 emoji，不报错。
      */
     public static String lootAssetRoot() {
-        return get("LOOT_ASSET_ROOT", "/root/notelab-c/public/loot");
+        // ⚠️ 大小写敏感：服务器上的仓目录是 /root/Notelab/notelab-c（大写 N），写小写会
+        //    直接判成"目录不存在"，B 端图片下拉永远空 —— 用 LOOT_ASSET_ROOT 覆盖即可。
+        return get("LOOT_ASSET_ROOT", "/root/Notelab/notelab-c/public/loot");
     }
 
     /** 摸金图片 URL 前缀（C 端无 basePath，默认空 → /loot/xxx.png） */
