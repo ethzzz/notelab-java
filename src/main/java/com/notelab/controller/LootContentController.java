@@ -109,14 +109,15 @@ public class LootContentController {
 
     private static Map<String, Object> container(String id, String name, int colsMin, int colsMax,
             int rowsMin, int rowsMax, double fillRate, int slotMs,
-            Map<String, Object> rarityWeights, int riskCost, Map<String, Object> p, String tableId, String emoji) {
+            Map<String, Object> rarityWeights, int riskCost, Map<String, Object> p, String tableId,
+            String emoji, String image) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id); m.put("name", name);
         m.put("colsMin", colsMin); m.put("colsMax", colsMax);
         m.put("rowsMin", rowsMin); m.put("rowsMax", rowsMax);
         m.put("fillRate", fillRate); m.put("slotMs", slotMs);
         m.put("rarityWeights", rarityWeights); m.put("riskCost", riskCost);
-        m.put("pity", p); m.put("tableId", tableId); m.put("emoji", emoji);
+        m.put("pity", p); m.put("tableId", tableId); m.put("emoji", emoji); m.put("image", image);
         return m;
     }
 
@@ -160,42 +161,42 @@ public class LootContentController {
      * ⚠️ 唯一的故意例外是「王冠宝石」：1×1 却是传说档 —— 保留"小而极贵"的幻想。
      */
     private static final List<Map<String, Object>> BASE_ITEMS = List.of(
-            item("it-001", "旧手表", "common", 60, null, 1, "⌚", "1x1", "", List.of("junk"), ""),
-            item("it-002", "生锈扳手", "common", 110, null, 1, "🔧", "1x2", "", List.of("junk"), ""),
-            item("it-003", "罐头食品", "common", 45, null, 3, "🥫", "1x1", "", List.of("supply"), ""),
-            item("it-004", "铜线卷", "common", 140, null, 2, "🔌", "1x2", "", List.of("mat"), ""),
-            item("it-005", "军用水壶", "common", 50, null, 1, "🍶", "1x1", "", List.of("supply"), ""),
-            item("it-006", "破旧地图", "common", 85, null, 1, "🗺️", "1x1", "", List.of("info"), ""),
-            item("it-007", "打火机", "common", 65, null, 1, "🔥", "1x1", "", List.of("supply"), ""),
-            item("it-008", "零件盒", "common", 380, null, 2, "🧰", "2x2", "", List.of("mat"), ""),
-            item("it-009", "急救包", "uncommon", 440, null, 2, "🩹", "1x2", "", List.of("med"), ""),
-            item("it-010", "便携电台", "uncommon", 520, null, 1, "📻", "1x2", "", List.of("tech"), ""),
-            item("it-011", "军用望远镜", "uncommon", 900, null, 1, "🔭", "1x3", "", List.of("optics"), ""),
-            item("it-012", "精钢匕首", "uncommon", 360, null, 1, "🗡️", "1x2", "", List.of("weapon"), ""),
-            item("it-013", "防毒面具", "uncommon", 1360, null, 1, "😷", "2x2", "", List.of("gear"), ""),
-            item("it-014", "加密硬盘", "uncommon", 380, null, 1, "💽", "1x1", "", List.of("tech", "info"), ""),
-            item("it-015", "夜视仪", "rare", 1700, null, 1, "🕶️", "1x2", "", List.of("optics", "gear"), ""),
-            item("it-016", "金条", "rare", 2000, null, 5, "🧱", "1x2", "", List.of("treasure"), ""),
-            item("it-017", "稀有电路板", "rare", 1240, null, 3, "🔲", "1x2", "", List.of("tech", "mat"), ""),
-            item("it-018", "古董怀表", "rare", 700, null, 1, "🕰️", "1x1", "", List.of("treasure"), ""),
-            item("it-019", "军用手枪", "rare", 3450, null, 1, "🔫", "1x3", "", List.of("weapon"), ""),
-            item("it-020", "黄金雕像", "epic", 8800, null, 1, "🗿", "2x2", "", List.of("treasure"), ""),
-            item("it-021", "实验样本", "epic", 3600, null, 1, "🧪", "1x2", "", List.of("tech"), ""),
-            item("it-022", "稀有芯片组", "epic", 2700, null, 2, "💠", "1x1", "", List.of("tech"), ""),
-            item("it-023", "黑箱核心", "legendary", 24000, null, 1, "⬛", "2x2", "", List.of("artifact"), ""),
-            item("it-024", "王冠宝石", "legendary", 8500, null, 1, "👑", "1x1", "", List.of("treasure"), ""));
+            item("it-001", "旧手表", "common", 60, null, 1, "⌚", "1x1", "/loot/it-001.png", List.of("junk"), ""),
+            item("it-002", "生锈扳手", "common", 110, null, 1, "🔧", "1x2", "/loot/it-002.png", List.of("junk"), ""),
+            item("it-003", "罐头食品", "common", 45, null, 3, "🥫", "1x1", "/loot/it-003.png", List.of("supply"), ""),
+            item("it-004", "铜线卷", "common", 140, null, 2, "🔌", "1x2", "/loot/it-004.png", List.of("mat"), ""),
+            item("it-005", "军用水壶", "common", 50, null, 1, "🍶", "1x1", "/loot/it-005.png", List.of("supply"), ""),
+            item("it-006", "破旧地图", "common", 85, null, 1, "🗺️", "1x1", "/loot/it-006.png", List.of("info"), ""),
+            item("it-007", "打火机", "common", 65, null, 1, "🔥", "1x1", "/loot/it-007.png", List.of("supply"), ""),
+            item("it-008", "零件盒", "common", 380, null, 2, "🧰", "2x2", "/loot/it-008.png", List.of("mat"), ""),
+            item("it-009", "急救包", "uncommon", 440, null, 2, "🩹", "1x2", "/loot/it-009.png", List.of("med"), ""),
+            item("it-010", "便携电台", "uncommon", 520, null, 1, "📻", "1x2", "/loot/it-010.png", List.of("tech"), ""),
+            item("it-011", "军用望远镜", "uncommon", 900, null, 1, "🔭", "1x3", "/loot/it-011.png", List.of("optics"), ""),
+            item("it-012", "精钢匕首", "uncommon", 360, null, 1, "🗡️", "1x2", "/loot/it-012.png", List.of("weapon"), ""),
+            item("it-013", "防毒面具", "uncommon", 1360, null, 1, "😷", "2x2", "/loot/it-013.png", List.of("gear"), ""),
+            item("it-014", "加密硬盘", "uncommon", 380, null, 1, "💽", "1x1", "/loot/it-014.png", List.of("tech", "info"), ""),
+            item("it-015", "夜视仪", "rare", 1700, null, 1, "🕶️", "1x2", "/loot/it-015.png", List.of("optics", "gear"), ""),
+            item("it-016", "金条", "rare", 2000, null, 5, "🧱", "1x2", "/loot/it-016.png", List.of("treasure"), ""),
+            item("it-017", "稀有电路板", "rare", 1240, null, 3, "🔲", "1x2", "/loot/it-017.png", List.of("tech", "mat"), ""),
+            item("it-018", "古董怀表", "rare", 700, null, 1, "🕰️", "1x1", "/loot/it-018.png", List.of("treasure"), ""),
+            item("it-019", "军用手枪", "rare", 3450, null, 1, "🔫", "1x3", "/loot/it-019.png", List.of("weapon"), ""),
+            item("it-020", "黄金雕像", "epic", 8800, null, 1, "🗿", "2x2", "/loot/it-020.png", List.of("treasure"), ""),
+            item("it-021", "实验样本", "epic", 3600, null, 1, "🧪", "1x2", "/loot/it-021.png", List.of("tech"), ""),
+            item("it-022", "稀有芯片组", "epic", 2700, null, 2, "💠", "1x1", "/loot/it-022.png", List.of("tech"), ""),
+            item("it-023", "黑箱核心", "legendary", 24000, null, 1, "⬛", "2x2", "/loot/it-023.png", List.of("artifact"), ""),
+            item("it-024", "王冠宝石", "legendary", 8500, null, 1, "👑", "1x1", "/loot/it-024.png", List.of("treasure"), ""));
 
     /**
      * 6 种容器。网格尺寸给的是<b>区间</b>，开局按 seed 掷 —— 这就是"物资箱几×几是随机的"。
      * fillRate &lt; 1 才会出现空格，别设成 1（那样永远是满的，"摸空"这条线就没了）。
      */
     private static final List<Map<String, Object>> BASE_CONTAINERS = List.of(
-            container("ct-crate", "木箱", 2, 3, 2, 2, 0.8, 600, weights(55, 28, 12, 4.5, 0.5), 1, null, "lt-crate", "📦"),
-            container("ct-tool", "工具柜", 3, 3, 2, 2, 0.75, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧"),
-            container("ct-ammo", "弹药箱", 2, 2, 2, 3, 0.8, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨"),
-            container("ct-med", "医疗柜", 2, 3, 2, 2, 0.75, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺"),
-            container("ct-safe", "保险柜", 2, 2, 2, 2, 0.9, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic"), "lt-safe", "🔐"),
-            container("ct-cage", "储物笼", 3, 4, 2, 3, 0.7, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️"));
+            container("ct-crate", "木箱", 2, 3, 2, 2, 0.8, 600, weights(55, 28, 12, 4.5, 0.5), 1, null, "lt-crate", "📦", "/loot/ct-crate.png"),
+            container("ct-tool", "工具柜", 3, 3, 2, 2, 0.75, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧", "/loot/ct-tool.png"),
+            container("ct-ammo", "弹药箱", 2, 2, 2, 3, 0.8, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨", "/loot/ct-ammo.png"),
+            container("ct-med", "医疗柜", 2, 3, 2, 2, 0.75, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺", "/loot/ct-med.png"),
+            container("ct-safe", "保险柜", 2, 2, 2, 2, 0.9, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic", "/loot/ct-safe.png"), "lt-safe", "🔐"),
+            container("ct-cage", "储物笼", 3, 4, 2, 3, 0.7, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️", "/loot/ct-cage.png"));
 
     /** 6 张掉落表；池子每档至少 1 件候选（否则该档轮盘抽空 → 引擎降档） */
     private static final List<Map<String, Object>> BASE_TABLES = List.of(
@@ -518,6 +519,7 @@ public class LootContentController {
             m.put("pity", pm);
             m.put("tableId", tableId);
             m.put("emoji", c.has("emoji") && c.get("emoji").isTextual() ? c.get("emoji").asText() : "📦");
+            m.put("image", c.has("image") && c.get("image").isTextual() ? c.get("image").asText().trim() : "");
             out.add(m);
         }
         return out;
