@@ -195,7 +195,7 @@ public class LootContentController {
             container("ct-tool", "工具柜", 3, 3, 2, 2, 0.75, 1000, weights(45, 33, 15, 6, 1), 2, null, "lt-tool", "🔧", "/loot/ct-tool.png"),
             container("ct-ammo", "弹药箱", 2, 2, 2, 3, 0.8, 800, weights(50, 30, 14, 5, 1), 2, null, "lt-ammo", "🧨", "/loot/ct-ammo.png"),
             container("ct-med", "医疗柜", 2, 3, 2, 2, 0.75, 1200, weights(48, 32, 14, 5, 1), 2, null, "lt-med", "🩺", "/loot/ct-med.png"),
-            container("ct-safe", "保险柜", 2, 2, 2, 2, 0.9, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic", "/loot/ct-safe.png"), "lt-safe", "🔐"),
+            container("ct-safe", "保险柜", 2, 2, 2, 2, 0.9, 3000, weights(20, 30, 30, 15, 5), 3, pity(12, "epic"), "lt-safe", "🔐", "/loot/ct-safe.png"),
             container("ct-cage", "储物笼", 3, 4, 2, 3, 0.7, 500, weights(70, 20, 8, 1.5, 0.5), 1, null, "lt-cage", "🗄️", "/loot/ct-cage.png"));
 
     /** 6 张掉落表；池子每档至少 1 件候选（否则该档轮盘抽空 → 引擎降档） */
