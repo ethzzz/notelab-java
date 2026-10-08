@@ -155,16 +155,25 @@ public class CanvasController {
         return ResponseEntity.status(400).body(Map.of("error", msg));
     }
 
-    /** 通知协作服务删除房间内容（本机调用；服务未启动/超时一律忽略） */
+    /**
+     * 通知协作服务删除房间内容（本机调用）。
+     *
+     * <p>best-effort：协作服务不可达**不影响**删除元数据（room_id 随机不复用，残留只占磁盘）；
+     * 但失败必须**留痕**——静默吞掉的话，删画布"看起来成功"，实际垃圾在 SQLite 里越堆越多，
+     * 只能靠人肉查表发现。
+     */
     private static void purgeRoom(String roomId) {
         try {
             HttpRequest rq = HttpRequest.newBuilder(URI.create(COLLAB_BASE + "/rooms/" + roomId))
                     .timeout(Duration.ofSeconds(3))
                     .DELETE()
                     .build();
-            HTTP.send(rq, HttpResponse.BodyHandlers.discarding());
-        } catch (Exception ignore) {
-            // best-effort：协作服务不可达不影响删除元数据
+            HttpResponse<String> resp = HTTP.send(rq, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() >= 400) {
+                System.err.println("[canvas] 清理房间 " + roomId + " 返回 " + resp.statusCode() + "：" + resp.body());
+            }
+        } catch (Exception e) {
+            System.err.println("[canvas] 清理房间 " + roomId + " 失败：" + e);
         }
     }
 }
