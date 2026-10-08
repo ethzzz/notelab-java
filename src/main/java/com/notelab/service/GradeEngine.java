@@ -1,5 +1,6 @@
 package com.notelab.service;
 
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.infra.LlmHealth;
 
@@ -109,8 +110,8 @@ public final class GradeEngine {
     private static Map<String, Object> error(double ratio, String en, String ref) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", ratio >= 0.70 ? "用词" : "其它");
-        m.put("original", truncate(en, 200));
-        m.put("suggestion", truncate(ref, 200));
+        m.put("original", JsonSanitizer.truncate(en, 200));
+        m.put("suggestion", JsonSanitizer.truncate(ref, 200));
         m.put("note", "本地对照：相似度 " + pct(ratio) + "%，仅供参考；AI 批改恢复后会给出逐点讲解");
         return m;
     }
@@ -211,10 +212,5 @@ public final class GradeEngine {
     /** 百分比的**数字部分**（不带 % 号，由调用方拼接标点） */
     private static String pct(double r) {
         return String.valueOf(Math.round(r * 100));
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() <= max ? s : s.substring(0, max);
     }
 }

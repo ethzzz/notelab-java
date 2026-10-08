@@ -2,6 +2,7 @@ package com.notelab.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.TranslateDao;
 import com.notelab.infra.QwenClient;
@@ -110,7 +111,7 @@ public final class TranslateService {
             String explanation = text(node.path("explanation"));
             List<Map<String, Object>> errors = parseErrors(node.path("errors"));
             if (accurate) errors = List.of();
-            return new Grade(accurate, score, truncate(corrected, 500), explanation,
+            return new Grade(accurate, score, JsonSanitizer.truncate(corrected, 500), explanation,
                     JsonUtil.write(errors), errors, AppConfig.qwenModel());
         } catch (Exception e) {
             throw new GradeException("判分失败，请重试");
@@ -203,7 +204,7 @@ public final class TranslateService {
             if (zh.isEmpty()) zh = text(n.path("zh"));
             if (zh.isEmpty()) continue;
             if (zh.length() > 255) zh = zh.substring(0, 255);
-            out.add(new Generated(tier, zh, truncate(text(n.path("ref_en")), 500)));
+            out.add(new Generated(tier, zh, JsonSanitizer.truncate(text(n.path("ref_en")), 500)));
         }
         if (out.isEmpty()) throw new GenerateException("生成失败，请重试");
         return out;
@@ -501,12 +502,6 @@ public final class TranslateService {
         if (n == null || n.isMissingNode() || n.isNull()) return "";
         return n.asText("").trim();
     }
-
-    private static String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() <= max ? s : s.substring(0, max);
-    }
-
 
     // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
 

@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.AnalyticsDao;
 import com.notelab.service.EventRecorder;
@@ -115,9 +116,9 @@ public class CTrackController {
         int accepted = 0, skipped = 0;
         for (JsonNode ev : pending) {
             String event = ev.get("event").asText();
-            String app = "b".equals(str(ev, "app")) ? "b" : "c";
-            String sessionId = str(ev, "session_id");
-            String anonId = str(ev, "anon_id");
+            String app = "b".equals(JsonSanitizer.str(ev, "app")) ? "b" : "c";
+            String sessionId = JsonSanitizer.str(ev, "session_id");
+            String anonId = JsonSanitizer.str(ev, "anon_id");
             if (AnalyticsDao.existsRecent(sessionId, event, DEDUP_SEC)) { skipped++; continue; }
             if (ipHash == null) ipHash = EventRecorder.ipHash(request);
             Long evUid = ev.hasNonNull("user_id") ? ev.get("user_id").asLong() : null;
@@ -127,7 +128,7 @@ public class CTrackController {
                     ID16.matcher(sessionId).matches() ? sessionId : null,
                     ID16.matcher(anonId).matches() ? anonId : null,
                     evUid,
-                    clip(str(ev, "path"), MAX_PATH_LEN),
+                    JsonSanitizer.truncate(JsonSanitizer.str(ev, "path"), MAX_PATH_LEN),
                     ev.has("props") && ev.get("props").isObject() ? ev.get("props").toString() : null,
                     ipHash, ua);
             if (stored) accepted++;
@@ -155,7 +156,7 @@ public class CTrackController {
         } catch (Exception e) {
             return ResponseEntity.status(400).body(Map.of("error", "不是合法 JSON"));
         }
-        String anonId = root == null ? "" : str(root, "anon_id").toLowerCase();
+        String anonId = root == null ? "" : JsonSanitizer.str(root, "anon_id").toLowerCase();
         if (!ID16.matcher(anonId).matches()) {
             return ResponseEntity.status(400).body(Map.of("error", "anon_id 非法"));
         }
@@ -169,13 +170,13 @@ public class CTrackController {
     /** 单条事件校验（不合法抛 IllegalArgumentException → 上层 400）。 */
     private static void validate(JsonNode ev) {
         if (ev == null || !ev.isObject()) throw new IllegalArgumentException("事件必须是对象");
-        String event = str(ev, "event");
+        String event = JsonSanitizer.str(ev, "event");
         if (!EVENT_RE.matcher(event).matches()) throw new IllegalArgumentException("event 非法: " + event);
-        String app = str(ev, "app");
+        String app = JsonSanitizer.str(ev, "app");
         if (!app.isEmpty() && !"b".equals(app) && !"c".equals(app)) {
             throw new IllegalArgumentException("app 只能是 b 或 c");
         }
-        String path = str(ev, "path");
+        String path = JsonSanitizer.str(ev, "path");
         if (path.length() > MAX_PATH_LEN) throw new IllegalArgumentException("path 过长");
         JsonNode props = ev.get("props");
         if (props == null || props.isNull()) return;
@@ -195,16 +196,6 @@ public class CTrackController {
             if (v.isTextual() && v.asText().length() <= MAX_STR) continue;
             throw new IllegalArgumentException("props 值非法: " + k);
         }
-    }
-
-    private static String str(JsonNode n, String field) {
-        JsonNode v = n == null ? null : n.get(field);
-        return v == null || v.isNull() ? "" : v.asText("");
-    }
-
-    private static String clip(String s, int max) {
-        if (s == null) return null;
-        return s.length() <= max ? s : s.substring(0, max);
     }
 
     /**

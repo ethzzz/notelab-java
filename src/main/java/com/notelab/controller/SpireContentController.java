@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.service.EventRecorder;
 import com.notelab.service.UiConfigService;
@@ -375,7 +376,7 @@ public class SpireContentController {
         }
         UiConfigService.invalidate();
         // 服务端旁路埋点（PRD-P0 §4.2）：**价值最高的后台指标** —— 后台发了但 C 端没人玩就是白干
-        EventRecorder.record("b", "spire_publish", AuthUtil.userId(user), request, snapshotStat(snapshot));
+        EventRecorder.record("b", "spire_publish", AuthUtil.userId(user), request, JsonSanitizer.snapshotStat(snapshot));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -543,9 +544,9 @@ public class SpireContentController {
                 if (packs.size() >= MAX_PACKS) break;
                 if (p == null || !p.isObject()) continue;
                 Map<String, Object> pack = new LinkedHashMap<>();
-                pack.put("id", str(p, "id"));
-                pack.put("name", str(p, "name"));
-                pack.put("createdAt", str(p, "createdAt"));
+                pack.put("id", JsonSanitizer.str(p, "id"));
+                pack.put("name", JsonSanitizer.str(p, "name"));
+                pack.put("createdAt", JsonSanitizer.str(p, "createdAt"));
                 JsonNode params = p.get("params");
                 if (params != null && params.isObject()) {
                     pack.put("params", JsonUtil.MAPPER.convertValue(params, Map.class));
@@ -564,7 +565,7 @@ public class SpireContentController {
                 packs.add(pack);
             }
         }
-        out.put("defaultId", str(node, "defaultId"));
+        out.put("defaultId", JsonSanitizer.str(node, "defaultId"));
         out.put("packs", packs);
         return out;
     }
@@ -590,12 +591,6 @@ public class SpireContentController {
         return out;
     }
 
-    /** 取字符串字段，缺省为空串（避免 null 污染 JSON） */
-    private static String str(JsonNode n, String field) {
-        JsonNode v = n == null ? null : n.get(field);
-        return v == null || !v.isTextual() ? "" : v.asText();
-    }
-
     /**
      * 平衡/难度净化：totalActs 1-8、mapRows 1-400、actScaleStep 0-5（小数），actBossIds 为
      * 非空字符串数组（幕 BOSS 的敌人 id，C 端缺失时回退终幕 BOSS）。非法值回落内置默认，
@@ -604,9 +599,9 @@ public class SpireContentController {
     private static Map<String, Object> sanitizeBalance(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseBalance();
-        out.put("totalActs", clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS));
-        out.put("mapRows", clampInt(node.get("mapRows"), 1, MAX_NODES, BASE_MAP_ROWS));
-        out.put("actScaleStep", clampDbl(node.get("actScaleStep"), 0.0, 5.0, BASE_ACT_SCALE_STEP));
+        out.put("totalActs", JsonSanitizer.clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS));
+        out.put("mapRows", JsonSanitizer.clampInt(node.get("mapRows"), 1, MAX_NODES, BASE_MAP_ROWS));
+        out.put("actScaleStep", JsonSanitizer.clampDbl(node.get("actScaleStep"), 0.0, 5.0, BASE_ACT_SCALE_STEP));
         List<String> ids = new java.util.ArrayList<>();
         JsonNode ab = node.get("actBossIds");
         if (ab != null && ab.isArray()) {
@@ -617,7 +612,7 @@ public class SpireContentController {
             }
         }
         // 至少填到 totalActs 个：不足的用已收集的循环补齐（保证每幕都有 BOSS id，C 端不会越界）
-        int need = clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS);
+        int need = JsonSanitizer.clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS);
         if (ids.isEmpty()) ids.addAll(BASE_ACT_BOSS_IDS);
         while (ids.size() < need) ids.add(ids.get((ids.size() - 1) % ids.size()));
         out.put("actBossIds", new ArrayList<>(ids.subList(0, need)));
@@ -641,39 +636,39 @@ public class SpireContentController {
     private static Map<String, Object> sanitizeMapRules(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseMapRules();
-        out.put("layers", clampInt(node.get("layers"), 4, 40, 16));
-        out.put("acts", clampInt(node.get("acts"), 1, 8, 3));
-        out.put("maxColumns", clampInt(node.get("maxColumns"), 2, 8, 4));
+        out.put("layers", JsonSanitizer.clampInt(node.get("layers"), 4, 40, 16));
+        out.put("acts", JsonSanitizer.clampInt(node.get("acts"), 1, 8, 3));
+        out.put("maxColumns", JsonSanitizer.clampInt(node.get("maxColumns"), 2, 8, 4));
         JsonNode pc = node.get("pathCount");
         out.put("pathCount", List.of(
-                clampInt(pc != null && pc.isArray() && pc.size() > 0 ? pc.get(0) : null, 1, 8, 4),
-                clampInt(pc != null && pc.isArray() && pc.size() > 1 ? pc.get(1) : null, 1, 8, 6)));
+                JsonSanitizer.clampInt(pc != null && pc.isArray() && pc.size() > 0 ? pc.get(0) : null, 1, 8, 4),
+                JsonSanitizer.clampInt(pc != null && pc.isArray() && pc.size() > 1 ? pc.get(1) : null, 1, 8, 6)));
         Map<String, Object> weights = new LinkedHashMap<>();
         JsonNode w = node.get("weights");
-        weights.put("enemy", clampInt(w != null && w.has("enemy") ? w.get("enemy") : null, 0, 999, 45));
-        weights.put("elite", clampInt(w != null && w.has("elite") ? w.get("elite") : null, 0, 999, 15));
-        weights.put("shop", clampInt(w != null && w.has("shop") ? w.get("shop") : null, 0, 999, 12));
-        weights.put("rest", clampInt(w != null && w.has("rest") ? w.get("rest") : null, 0, 999, 10));
-        weights.put("random", clampInt(w != null && w.has("random") ? w.get("random") : null, 0, 999, 18));
-        weights.put("event", clampInt(w != null && w.has("event") ? w.get("event") : null, 0, 999, 12));
+        weights.put("enemy", JsonSanitizer.clampInt(w != null && w.has("enemy") ? w.get("enemy") : null, 0, 999, 45));
+        weights.put("elite", JsonSanitizer.clampInt(w != null && w.has("elite") ? w.get("elite") : null, 0, 999, 15));
+        weights.put("shop", JsonSanitizer.clampInt(w != null && w.has("shop") ? w.get("shop") : null, 0, 999, 12));
+        weights.put("rest", JsonSanitizer.clampInt(w != null && w.has("rest") ? w.get("rest") : null, 0, 999, 10));
+        weights.put("random", JsonSanitizer.clampInt(w != null && w.has("random") ? w.get("random") : null, 0, 999, 18));
+        weights.put("event", JsonSanitizer.clampInt(w != null && w.has("event") ? w.get("event") : null, 0, 999, 12));
         out.put("weights", weights);
         Map<String, Object> minLayer = new LinkedHashMap<>();
         JsonNode ml = node.get("minLayer");
-        minLayer.put("enemy", clampInt(ml != null && ml.has("enemy") ? ml.get("enemy") : null, 0, 40, 0));
-        minLayer.put("elite", clampInt(ml != null && ml.has("elite") ? ml.get("elite") : null, 0, 40, 3));
-        minLayer.put("shop", clampInt(ml != null && ml.has("shop") ? ml.get("shop") : null, 0, 40, 2));
-        minLayer.put("rest", clampInt(ml != null && ml.has("rest") ? ml.get("rest") : null, 0, 40, 2));
-        minLayer.put("random", clampInt(ml != null && ml.has("random") ? ml.get("random") : null, 0, 40, 0));
-        minLayer.put("event", clampInt(ml != null && ml.has("event") ? ml.get("event") : null, 0, 40, 2));
+        minLayer.put("enemy", JsonSanitizer.clampInt(ml != null && ml.has("enemy") ? ml.get("enemy") : null, 0, 40, 0));
+        minLayer.put("elite", JsonSanitizer.clampInt(ml != null && ml.has("elite") ? ml.get("elite") : null, 0, 40, 3));
+        minLayer.put("shop", JsonSanitizer.clampInt(ml != null && ml.has("shop") ? ml.get("shop") : null, 0, 40, 2));
+        minLayer.put("rest", JsonSanitizer.clampInt(ml != null && ml.has("rest") ? ml.get("rest") : null, 0, 40, 2));
+        minLayer.put("random", JsonSanitizer.clampInt(ml != null && ml.has("random") ? ml.get("random") : null, 0, 40, 0));
+        minLayer.put("event", JsonSanitizer.clampInt(ml != null && ml.has("event") ? ml.get("event") : null, 0, 40, 2));
         out.put("minLayer", minLayer);
         Map<String, Object> revealPool = new LinkedHashMap<>();
         JsonNode rp = node.get("revealPool");
-        revealPool.put("normal", clampInt(rp != null && rp.has("normal") ? rp.get("normal") : null, 0, 999, 45));
-        revealPool.put("elite", clampInt(rp != null && rp.has("elite") ? rp.get("elite") : null, 0, 999, 15));
-        revealPool.put("shop", clampInt(rp != null && rp.has("shop") ? rp.get("shop") : null, 0, 999, 12));
-        revealPool.put("rest", clampInt(rp != null && rp.has("rest") ? rp.get("rest") : null, 0, 999, 10));
+        revealPool.put("normal", JsonSanitizer.clampInt(rp != null && rp.has("normal") ? rp.get("normal") : null, 0, 999, 45));
+        revealPool.put("elite", JsonSanitizer.clampInt(rp != null && rp.has("elite") ? rp.get("elite") : null, 0, 999, 15));
+        revealPool.put("shop", JsonSanitizer.clampInt(rp != null && rp.has("shop") ? rp.get("shop") : null, 0, 999, 12));
+        revealPool.put("rest", JsonSanitizer.clampInt(rp != null && rp.has("rest") ? rp.get("rest") : null, 0, 999, 10));
         out.put("revealPool", revealPool);
-        out.put("earlySafeLayers", clampInt(node.get("earlySafeLayers"), 0, 8, 2));
+        out.put("earlySafeLayers", JsonSanitizer.clampInt(node.get("earlySafeLayers"), 0, 8, 2));
         return out;
     }
 
@@ -684,19 +679,6 @@ public class SpireContentController {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
         }
         return sanitizeMapRules(JsonUtil.MAPPER.valueToTree(merged));
-    }
-
-    /** 取 Double 并夹到 [lo,hi]，非法/缺失返回 dft */
-    private static double clampDbl(JsonNode n, double lo, double hi, double dft) {
-        if (n == null || !n.isNumber()) return dft;
-        double v = n.asDouble();
-        return Math.max(lo, Math.min(hi, v));
-    }
-
-    /** 取整数并夹到 [lo,hi]，非法/缺失返回 dft（敌人血量、move 数值用） */
-    private static int clampInt(JsonNode n, int lo, int hi, int dft) {
-        if (n == null || !n.isNumber()) return dft;
-        return Math.max(lo, Math.min(hi, n.asInt()));
     }
 
     /** 意图类型白名单（与 C 端 Move.kind 对齐） */
@@ -713,14 +695,14 @@ public class SpireContentController {
         if (node == null || !node.isArray()) return out;
         for (JsonNode e : node) {
             if (e == null || !e.isObject()) continue;
-            String id = str(e, "id");
-            String name = str(e, "name");
+            String id = JsonSanitizer.str(e, "id");
+            String name = JsonSanitizer.str(e, "name");
             if (id.isEmpty() || name.isEmpty()) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("name", name);
             m.put("icon", e.has("icon") && e.get("icon").isTextual() ? e.get("icon").asText() : "👾");
-            m.put("hp", clampInt(e.get("hp"), 1, 999, 30));
+            m.put("hp", JsonSanitizer.clampInt(e.get("hp"), 1, 999, 30));
             JsonNode el = e.get("elite");
             if (el != null && el.isBoolean() && el.asBoolean()) m.put("elite", true);
             JsonNode bo = e.get("boss");
@@ -730,15 +712,15 @@ public class SpireContentController {
             if (mv != null && mv.isArray()) {
                 for (JsonNode mm : mv) {
                     if (mm == null || !mm.isObject()) continue;
-                    String kind = str(mm, "kind");
+                    String kind = JsonSanitizer.str(mm, "kind");
                     if (!MOVE_KINDS.contains(kind)) continue;
                     Map<String, Object> mv2 = new LinkedHashMap<>();
-                    mv2.put("name", str(mm, "name"));
+                    mv2.put("name", JsonSanitizer.str(mm, "name"));
                     mv2.put("kind", kind);
-                    mv2.put("amt", clampInt(mm.get("amt"), 0, 99, 1));
-                    mv2.put("hits", clampInt(mm.get("hits"), 1, 9, 1));
+                    mv2.put("amt", JsonSanitizer.clampInt(mm.get("amt"), 0, 99, 1));
+                    mv2.put("hits", JsonSanitizer.clampInt(mm.get("hits"), 1, 9, 1));
                     mv2.put("icon", mm.has("icon") && mm.get("icon").isTextual() ? mm.get("icon").asText() : "❓");
-                    String dk = str(mm, "debuffKind");
+                    String dk = JsonSanitizer.str(mm, "debuffKind");
                     if (dk.equals("weak") || dk.equals("vuln")) mv2.put("debuffKind", dk);
                     moves.add(mv2);
                 }
@@ -748,15 +730,5 @@ public class SpireContentController {
             out.add(m);
         }
         return out;
-    }
-
-    /** 发布快照的规模统计（埋点 props）：slices = 非空的顶层切片数，chars = 序列化字符数。 */
-    private static Map<String, Object> snapshotStat(Map<String, Object> snap) {
-        int slices = 0;
-        for (Object v : snap.values()) {
-            if (v instanceof java.util.Collection<?> c && !c.isEmpty()) slices++;
-            else if (v instanceof Map<?, ?> m && !m.isEmpty()) slices++;
-        }
-        return Map.of("slices", slices, "chars", JsonUtil.write(snap).length());
     }
 }

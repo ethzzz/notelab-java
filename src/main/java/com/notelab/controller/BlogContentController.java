@@ -2,6 +2,7 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
@@ -74,13 +75,13 @@ public class BlogContentController {
         } catch (Exception e) {
             return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
         }
-        String prompt = str(node, "prompt");
+        String prompt = JsonSanitizer.str(node, "prompt");
         if (prompt.isEmpty()) return ResponseEntity.status(400).body(Map.of("error", "prompt 不能为空"));
-        String category = str(node, "category");
-        String tags = str(node, "tags");
-        String persona = str(node, "persona");
+        String category = JsonSanitizer.str(node, "category");
+        String tags = JsonSanitizer.str(node, "tags");
+        String persona = JsonSanitizer.str(node, "persona");
         if (persona.isEmpty()) persona = "资深前端工程师，工作十年，一直保持做笔记的习惯";
-        int length = clampInt(node.get("length"), 800, 6000, 2500);
+        int length = JsonSanitizer.clampInt(node.get("length"), 800, 6000, 2500);
 
         String system = buildSystemPrompt(category, tags, persona, length);
         List<Map<String, String>> messages = List.of(
@@ -148,7 +149,7 @@ public class BlogContentController {
     // ===================== 实现 =====================
 
     private Map<String, Object> writeArticle(JsonNode node) throws Exception {
-        String rawMd = str(node, "raw_markdown");
+        String rawMd = JsonSanitizer.str(node, "raw_markdown");
         String title, category, description, tagsJoined;
         boolean draft;
         String body;
@@ -156,24 +157,24 @@ public class BlogContentController {
         if (!rawMd.isEmpty()) {
             // AI 确认发布：草稿已带 frontmatter，解析后覆盖 draft 为用户选择
             Frontmatter fm = parseFrontmatter(rawMd);
-            title = fm.title.isEmpty() ? str(node, "title") : fm.title;
-            category = fm.category.isEmpty() ? str(node, "category") : fm.category;
-            description = fm.description.isEmpty() ? str(node, "description") : fm.description;
-            tagsJoined = fm.tags.isEmpty() ? str(node, "tags") : fm.tags;
+            title = fm.title.isEmpty() ? JsonSanitizer.str(node, "title") : fm.title;
+            category = fm.category.isEmpty() ? JsonSanitizer.str(node, "category") : fm.category;
+            description = fm.description.isEmpty() ? JsonSanitizer.str(node, "description") : fm.description;
+            tagsJoined = fm.tags.isEmpty() ? JsonSanitizer.str(node, "tags") : fm.tags;
             draft = node.has("draft") ? node.get("draft").asBoolean() : fm.draft;
             body = fm.body;
         } else {
-            title = str(node, "title");
-            category = str(node, "category");
-            description = str(node, "description");
-            tagsJoined = str(node, "tags");
+            title = JsonSanitizer.str(node, "title");
+            category = JsonSanitizer.str(node, "category");
+            description = JsonSanitizer.str(node, "description");
+            tagsJoined = JsonSanitizer.str(node, "tags");
             draft = node.has("draft") ? node.get("draft").asBoolean() : true;
-            body = str(node, "content_md");
+            body = JsonSanitizer.str(node, "content_md");
         }
         if (title.isEmpty()) throw new IllegalArgumentException("title 不能为空");
         if (body.isEmpty()) throw new IllegalArgumentException("正文不能为空");
 
-        String slug = slugify(str(node, "slug"));
+        String slug = slugify(JsonSanitizer.str(node, "slug"));
         if (slug.isEmpty()) slug = slugify(title);
         if (slug.isEmpty()) slug = "post";
 
@@ -326,16 +327,6 @@ public class BlogContentController {
             }
         }
         return t;
-    }
-
-    private static String str(JsonNode n, String field) {
-        JsonNode v = n == null ? null : n.get(field);
-        return v == null || !v.isTextual() ? "" : v.asText().trim();
-    }
-
-    private static int clampInt(JsonNode n, int lo, int hi, int dft) {
-        if (n == null || !n.isNumber()) return dft;
-        return Math.max(lo, Math.min(hi, n.asInt()));
     }
 
     // ===================== 进程执行 =====================

@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -559,14 +560,14 @@ public class DevNoteController {
         for (JsonNode p : node) {
             if (out.size() >= MAX_PROJECTS) break;
             if (p == null || !p.isObject()) continue;
-            String code = str(p, "code", 64);
-            String name = str(p, "name", 100);
+            String code = JsonSanitizer.str(p, "code", 64);
+            String name = JsonSanitizer.str(p, "name", 100);
             if (code.isEmpty() || name.isEmpty() || seen.contains(code)) continue;
             seen.add(code);
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("code", code);
             m.put("name", name);
-            m.put("desc", str(p, "desc", 500));
+            m.put("desc", JsonSanitizer.str(p, "desc", 500));
             m.put("entries", sanitizeEntries(p.get("entries")));
             out.add(m);
         }
@@ -580,44 +581,24 @@ public class DevNoteController {
         for (JsonNode e : node) {
             if (out.size() >= MAX_ENTRIES_PER_PROJECT) break;
             if (e == null || !e.isObject()) continue;
-            String id = str(e, "id", 64);
-            String title = str(e, "title", 200);
+            String id = JsonSanitizer.str(e, "id", 64);
+            String title = JsonSanitizer.str(e, "title", 200);
             if (id.isEmpty() || title.isEmpty() || seen.contains(id)) continue;
             seen.add(id);
-            String severity = str(e, "severity", 16);
+            String severity = JsonSanitizer.str(e, "severity", 16);
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("title", title);
-            m.put("stage", str(e, "stage", 100));
+            m.put("stage", JsonSanitizer.str(e, "stage", 100));
             m.put("severity", SEVERITIES.contains(severity) ? severity : "pitfall");
-            m.put("symptom", str(e, "symptom", 4000));
-            m.put("cause", str(e, "cause", 4000));
-            m.put("solution", str(e, "solution", 8000));
-            m.put("code", str(e, "code", 20000));
-            m.put("tags", strList(e.get("tags"), MAX_TAGS, 32));
-            m.put("date", str(e, "date", 20));
+            m.put("symptom", JsonSanitizer.str(e, "symptom", 4000));
+            m.put("cause", JsonSanitizer.str(e, "cause", 4000));
+            m.put("solution", JsonSanitizer.str(e, "solution", 8000));
+            m.put("code", JsonSanitizer.str(e, "code", 20000));
+            m.put("tags", JsonSanitizer.strList(e.get("tags"), MAX_TAGS, 32));
+            m.put("date", JsonSanitizer.str(e, "date", 20));
             out.add(m);
         }
         return out;
-    }
-
-    private static List<String> strList(JsonNode node, int max, int itemMax) {
-        List<String> out = new ArrayList<>();
-        if (node == null || !node.isArray()) return out;
-        for (JsonNode t : node) {
-            if (out.size() >= max) break;
-            if (t == null || !t.isTextual()) continue;
-            String s = t.asText().trim();
-            if (s.isEmpty()) continue;
-            out.add(s.length() > itemMax ? s.substring(0, itemMax) : s);
-        }
-        return out;
-    }
-
-    private static String str(JsonNode n, String field, int max) {
-        JsonNode v = n == null ? null : n.get(field);
-        if (v == null || !v.isTextual()) return "";
-        String s = v.asText().trim();
-        return s.length() > max ? s.substring(0, max) : s;
     }
 }

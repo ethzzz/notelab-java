@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.service.EventRecorder;
 import com.notelab.service.UiConfigService;
@@ -340,7 +341,7 @@ public class LootContentController {
         }
         UiConfigService.invalidate();
         // 服务端旁路埋点（PRD-P0 §4.2）：与 spire_publish 同口径，后台发了没人玩 = 白干
-        EventRecorder.record("b", "loot_publish", AuthUtil.userId(user), request, snapshotStat(snapshot));
+        EventRecorder.record("b", "loot_publish", AuthUtil.userId(user), request, JsonSanitizer.snapshotStat(snapshot));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -410,16 +411,16 @@ public class LootContentController {
             for (JsonNode r : node) {
                 if (out.size() >= MAX_RARITIES) break;
                 if (r == null || !r.isObject()) continue;
-                String key = str(r, "key");
+                String key = JsonSanitizer.str(r, "key");
                 if (key.isEmpty() || seen.contains(key)) continue;
                 seen.add(key);
-                String label = str(r, "label");
-                String color = str(r, "color").toLowerCase(Locale.ROOT);
+                String label = JsonSanitizer.str(r, "label");
+                String color = JsonSanitizer.str(r, "color").toLowerCase(Locale.ROOT);
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("key", key);
                 m.put("label", label.isEmpty() ? key : label);
                 m.put("color", PALETTE_KEYS.contains(color) ? color : "slate");
-                m.put("unitValue", clampInt(r.get("unitValue"), 0, 9_999_999, 0));
+                m.put("unitValue", JsonSanitizer.clampInt(r.get("unitValue"), 0, 9_999_999, 0));
                 out.add(m);
             }
         }
@@ -434,21 +435,21 @@ public class LootContentController {
         for (JsonNode it : node) {
             if (out.size() >= MAX_ITEMS) break;
             if (it == null || !it.isObject()) continue;
-            String id = str(it, "id");
-            String name = str(it, "name");
-            String rarity = str(it, "rarity");
+            String id = JsonSanitizer.str(it, "id");
+            String name = JsonSanitizer.str(it, "name");
+            String rarity = JsonSanitizer.str(it, "rarity");
             // ⚠️ 稀有度必须属于当前 order：档位被删掉后属于它的物品会被整条丢弃（B 端删档前会提示影响面）
             if (id.isEmpty() || name.isEmpty() || !orderSet.contains(rarity) || seen.contains(id)) continue;
             seen.add(id);
-            String shape = str(it, "shape");
+            String shape = JsonSanitizer.str(it, "shape");
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("name", name);
             m.put("rarity", rarity);
-            m.put("baseValue", clampInt(it.get("baseValue"), 1, 9_999_999, 50));
+            m.put("baseValue", JsonSanitizer.clampInt(it.get("baseValue"), 1, 9_999_999, 50));
             JsonNode rv = it.get("recycleValue");
-            m.put("recycleValue", (rv != null && rv.isNumber()) ? clampInt(rv, 0, 9_999_999, 0) : null);
-            m.put("stack", clampInt(it.get("stack"), 1, 99, 1));
+            m.put("recycleValue", (rv != null && rv.isNumber()) ? JsonSanitizer.clampInt(rv, 0, 9_999_999, 0) : null);
+            m.put("stack", JsonSanitizer.clampInt(it.get("stack"), 1, 99, 1));
             m.put("emoji", it.has("emoji") && it.get("emoji").isTextual() ? it.get("emoji").asText() : "📦");
             // 形状必须落在白名单里：写错的一律回落 1×1，绝不留非法值（放置算法会炸）
             m.put("shape", SHAPE_IDS.contains(shape) ? shape : "1x1");
@@ -480,21 +481,21 @@ public class LootContentController {
         for (JsonNode c : node) {
             if (out.size() >= MAX_CONTAINERS) break;
             if (c == null || !c.isObject()) continue;
-            String id = str(c, "id");
-            String name = str(c, "name");
-            String tableId = str(c, "tableId");
+            String id = JsonSanitizer.str(c, "id");
+            String name = JsonSanitizer.str(c, "name");
+            String tableId = JsonSanitizer.str(c, "tableId");
             if (id.isEmpty() || name.isEmpty() || tableId.isEmpty() || seen.contains(id)) continue;
             Map<String, Object> rw = sanitizeRarityWeights(c.get("rarityWeights"), order);
             if (rw == null) continue;   // 各档不全或总和为 0 → 丢该条
             seen.add(id);
             // 旧 slots 迁移：库里已发布的那份就是这种形态
-            int[] g = gridFromSlots(clampInt(c.get("slots"), 1, 64, -1) < 0 ? 1 : clampInt(c.get("slots"), 1, 64, 1));
+            int[] g = gridFromSlots(JsonSanitizer.clampInt(c.get("slots"), 1, 64, -1) < 0 ? 1 : JsonSanitizer.clampInt(c.get("slots"), 1, 64, 1));
             boolean hasGrid = c.has("colsMin") || c.has("colsMax") || c.has("rowsMin") || c.has("rowsMax");
             int defMin = hasGrid ? 1 : g[0];
-            int colsMin = clampInt(c.get("colsMin"), 1, 8, hasGrid ? 2 : g[0]);
-            int colsMax = clampInt(c.get("colsMax"), colsMin, 8, hasGrid ? 2 : g[1]);
-            int rowsMin = clampInt(c.get("rowsMin"), 1, 8, hasGrid ? 2 : g[2]);
-            int rowsMax = clampInt(c.get("rowsMax"), rowsMin, 8, hasGrid ? 2 : g[3]);
+            int colsMin = JsonSanitizer.clampInt(c.get("colsMin"), 1, 8, hasGrid ? 2 : g[0]);
+            int colsMax = JsonSanitizer.clampInt(c.get("colsMax"), colsMin, 8, hasGrid ? 2 : g[1]);
+            int rowsMin = JsonSanitizer.clampInt(c.get("rowsMin"), 1, 8, hasGrid ? 2 : g[2]);
+            int rowsMax = JsonSanitizer.clampInt(c.get("rowsMax"), rowsMin, 8, hasGrid ? 2 : g[3]);
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
             m.put("name", name);
@@ -502,17 +503,17 @@ public class LootContentController {
             m.put("colsMax", colsMax);
             m.put("rowsMin", rowsMin);
             m.put("rowsMax", rowsMax);
-            m.put("fillRate", clampDbl(c.get("fillRate"), 0, 1, 0.75));
-            m.put("slotMs", clampInt(c.get("slotMs"), 100, 10_000, 800));
+            m.put("fillRate", JsonSanitizer.clampDbl(c.get("fillRate"), 0, 1, 0.75));
+            m.put("slotMs", JsonSanitizer.clampInt(c.get("slotMs"), 100, 10_000, 800));
             m.put("rarityWeights", rw);
-            m.put("riskCost", clampInt(c.get("riskCost"), 0, 10, 1));
+            m.put("riskCost", JsonSanitizer.clampInt(c.get("riskCost"), 0, 10, 1));
             JsonNode p = c.get("pity");
             Map<String, Object> pm = null;
             if (p != null && p.isObject()) {
-                String minRarity = str(p, "minRarity");
+                String minRarity = JsonSanitizer.str(p, "minRarity");
                 if (order.contains(minRarity)) {
                     pm = new LinkedHashMap<>();
-                    pm.put("afterRuns", clampInt(p.get("afterRuns"), 2, 50, 12));
+                    pm.put("afterRuns", JsonSanitizer.clampInt(p.get("afterRuns"), 2, 50, 12));
                     pm.put("minRarity", minRarity);
                 }
             }
@@ -546,7 +547,7 @@ public class LootContentController {
         for (JsonNode t : node) {
             if (out.size() >= MAX_TABLES) break;
             if (t == null || !t.isObject()) continue;
-            String id = str(t, "id");
+            String id = JsonSanitizer.str(t, "id");
             if (id.isEmpty() || seen.contains(id)) continue;
             seen.add(id);
             List<Map<String, Object>> pool = new ArrayList<>();
@@ -555,17 +556,17 @@ public class LootContentController {
                 for (JsonNode p : pn) {
                     if (pool.size() >= MAX_POOL_PER_TABLE) break;
                     if (p == null || !p.isObject()) continue;
-                    String itemId = str(p, "itemId");
+                    String itemId = JsonSanitizer.str(p, "itemId");
                     if (itemId.isEmpty()) continue;
                     Map<String, Object> pm = new LinkedHashMap<>();
                     pm.put("itemId", itemId);
-                    pm.put("weight", clampInt(p.get("weight"), 0, 999, 1));
+                    pm.put("weight", JsonSanitizer.clampInt(p.get("weight"), 0, 999, 1));
                     pool.add(pm);
                 }
             }
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
-            m.put("name", str(t, "name").isEmpty() ? id : str(t, "name"));
+            m.put("name", JsonSanitizer.str(t, "name").isEmpty() ? id : JsonSanitizer.str(t, "name"));
             m.put("pool", pool);
             out.add(m);
         }
@@ -580,32 +581,32 @@ public class LootContentController {
         for (JsonNode mp : node) {
             if (out.size() >= MAX_MAPS) break;
             if (mp == null || !mp.isObject()) continue;
-            String id = str(mp, "id");
+            String id = JsonSanitizer.str(mp, "id");
             if (id.isEmpty() || seen.contains(id)) continue;
             seen.add(id);
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", id);
-            m.put("name", str(mp, "name").isEmpty() ? id : str(mp, "name"));
-            m.put("timeLimitSec", clampInt(mp.get("timeLimitSec"), 30, 3600, 300));
-            m.put("riskLimit", clampInt(mp.get("riskLimit"), 1, 999, 20));
-            m.put("valueMult", clampDbl(mp.get("valueMult"), 0.01, 100, 0.18));
-            m.put("tierBoost", clampDbl(mp.get("tierBoost"), 0, 10, 0));
+            m.put("name", JsonSanitizer.str(mp, "name").isEmpty() ? id : JsonSanitizer.str(mp, "name"));
+            m.put("timeLimitSec", JsonSanitizer.clampInt(mp.get("timeLimitSec"), 30, 3600, 300));
+            m.put("riskLimit", JsonSanitizer.clampInt(mp.get("riskLimit"), 1, 999, 20));
+            m.put("valueMult", JsonSanitizer.clampDbl(mp.get("valueMult"), 0.01, 100, 0.18));
+            m.put("tierBoost", JsonSanitizer.clampDbl(mp.get("tierBoost"), 0, 10, 0));
             m.put("entry", sanitizeEntry(mp.get("entry")));
             List<Map<String, Object>> ctns = new ArrayList<>();
             JsonNode cn = mp.get("containers");
             if (cn != null && cn.isArray()) {
                 for (JsonNode c : cn) {
                     if (c == null || !c.isObject()) continue;
-                    String cid = str(c, "containerId");
+                    String cid = JsonSanitizer.str(c, "containerId");
                     if (cid.isEmpty()) continue;
                     Map<String, Object> cm = new LinkedHashMap<>();
                     cm.put("containerId", cid);
-                    cm.put("count", clampInt(c.get("count"), 0, 99, 1));
+                    cm.put("count", JsonSanitizer.clampInt(c.get("count"), 0, 99, 1));
                     ctns.add(cm);
                 }
             }
             m.put("containers", ctns);
-            m.put("extractPoints", clampInt(mp.get("extractPoints"), 1, 9, 2));
+            m.put("extractPoints", JsonSanitizer.clampInt(mp.get("extractPoints"), 1, 9, 2));
             out.add(m);
         }
         return out;
@@ -618,18 +619,18 @@ public class LootContentController {
         out.put("minExtracts", 0);
         out.put("groups", new ArrayList<>());
         if (node == null || !node.isObject()) return out;
-        out.put("coins", clampInt(node.get("coins"), 0, 9_999_999, 0));
-        out.put("minExtracts", clampInt(node.get("minExtracts"), 0, 9999, 0));
+        out.put("coins", JsonSanitizer.clampInt(node.get("coins"), 0, 9_999_999, 0));
+        out.put("minExtracts", JsonSanitizer.clampInt(node.get("minExtracts"), 0, 9999, 0));
         List<Map<String, Object>> items = new ArrayList<>();
         JsonNode in = node.get("items");
         if (in != null && in.isArray()) {
             for (JsonNode it : in) {
                 if (it == null || !it.isObject()) continue;
-                String itemId = str(it, "itemId");
+                String itemId = JsonSanitizer.str(it, "itemId");
                 if (itemId.isEmpty()) continue;
                 Map<String, Object> im = new LinkedHashMap<>();
                 im.put("itemId", itemId);
-                im.put("qty", clampInt(it.get("qty"), 1, 99, 1));
+                im.put("qty", JsonSanitizer.clampInt(it.get("qty"), 1, 99, 1));
                 items.add(im);
             }
         }
@@ -647,17 +648,17 @@ public class LootContentController {
     private static Map<String, Object> sanitizeBalance(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseBalance();
-        out.put("recycleRate", clampDbl(node.get("recycleRate"), 0, 1, 0.6));
-        out.put("extractRate", clampDbl(node.get("extractRate"), 0, 1, 0.55));
-        out.put("backpackCols", clampInt(node.get("backpackCols"), 1, 8, 5));
-        out.put("backpackRows", clampInt(node.get("backpackRows"), 1, 8, 3));
-        out.put("initialCoins", clampInt(node.get("initialCoins"), 0, 9_999_999, 500));
-        out.put("rescueCoins", clampInt(node.get("rescueCoins"), 0, 9_999_999, 200));
-        out.put("rescueCooldownSec", clampInt(node.get("rescueCooldownSec"), 0, 30 * 86400, 86400));
-        out.put("extractHoldMs", clampInt(node.get("extractHoldMs"), 500, 60_000, 5000));
-        out.put("riskPerSlot", clampInt(node.get("riskPerSlot"), 0, 10, 1));
-        out.put("evWarnRatio", clampDbl(node.get("evWarnRatio"), 1, 100, 3.5));
-        out.put("evRejectRatio", clampDbl(node.get("evRejectRatio"), 1, 100, 10.0));
+        out.put("recycleRate", JsonSanitizer.clampDbl(node.get("recycleRate"), 0, 1, 0.6));
+        out.put("extractRate", JsonSanitizer.clampDbl(node.get("extractRate"), 0, 1, 0.55));
+        out.put("backpackCols", JsonSanitizer.clampInt(node.get("backpackCols"), 1, 8, 5));
+        out.put("backpackRows", JsonSanitizer.clampInt(node.get("backpackRows"), 1, 8, 3));
+        out.put("initialCoins", JsonSanitizer.clampInt(node.get("initialCoins"), 0, 9_999_999, 500));
+        out.put("rescueCoins", JsonSanitizer.clampInt(node.get("rescueCoins"), 0, 9_999_999, 200));
+        out.put("rescueCooldownSec", JsonSanitizer.clampInt(node.get("rescueCooldownSec"), 0, 30 * 86400, 86400));
+        out.put("extractHoldMs", JsonSanitizer.clampInt(node.get("extractHoldMs"), 500, 60_000, 5000));
+        out.put("riskPerSlot", JsonSanitizer.clampInt(node.get("riskPerSlot"), 0, 10, 1));
+        out.put("evWarnRatio", JsonSanitizer.clampDbl(node.get("evWarnRatio"), 1, 100, 3.5));
+        out.put("evRejectRatio", JsonSanitizer.clampDbl(node.get("evRejectRatio"), 1, 100, 10.0));
         return out;
     }
 
@@ -668,30 +669,5 @@ public class LootContentController {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
         }
         return sanitizeBalance(JsonUtil.MAPPER.valueToTree(merged));
-    }
-
-    private static String str(JsonNode n, String field) {
-        JsonNode v = n == null ? null : n.get(field);
-        return v == null || !v.isTextual() ? "" : v.asText().trim();
-    }
-
-    private static int clampInt(JsonNode n, int lo, int hi, int dft) {
-        if (n == null || !n.isNumber()) return dft;
-        return Math.max(lo, Math.min(hi, n.asInt()));
-    }
-
-    private static double clampDbl(JsonNode n, double lo, double hi, double dft) {
-        if (n == null || !n.isNumber()) return dft;
-        return Math.max(lo, Math.min(hi, n.asDouble()));
-    }
-
-    /** 发布快照的规模统计（埋点 props）：slices = 非空的顶层切片数，chars = 序列化字符数。 */
-    private static Map<String, Object> snapshotStat(Map<String, Object> snap) {
-        int slices = 0;
-        for (Object v : snap.values()) {
-            if (v instanceof java.util.Collection<?> c && !c.isEmpty()) slices++;
-            else if (v instanceof Map<?, ?> m && !m.isEmpty()) slices++;
-        }
-        return Map.of("slices", slices, "chars", JsonUtil.write(snap).length());
     }
 }
