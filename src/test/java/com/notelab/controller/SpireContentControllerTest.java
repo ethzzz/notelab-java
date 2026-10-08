@@ -149,7 +149,26 @@ class SpireContentControllerTest {
             assertNull(SpireContentController.sanitizeAct(json(
                     "{\"nodes\":[{\"id\":\"n1\",\"row\":1,\"col\":2,\"type\":\"enemy\"}]}")));       // 缺 next
             assertNull(SpireContentController.sanitizeAct(json(
-                    "{\"nodes\":[{\"id\":\"  \",\"row\":1,\"col\":2,\"type\":\"e\",\"next\":[]}]}"))); // id 空白
+                    "{\"nodes\":[{\"id\":\"\",\"row\":1,\"col\":2,\"type\":\"e\",\"next\":[]}]}")));  // id 空串
+        }
+
+        /**
+         * ⚠️ 实测差异（写测试时发现，非本次改动引入）：这里的 id 判据是
+         * {@code id.asText().isEmpty()}，**不 trim** —— 所以**纯空白 id（"  "）是被接受的**，
+         * 会连同空白一起存进库。
+         *
+         * <p>而 {@code sanitizeEnemies} / {@code sanitizeMaps} 的 id 走 {@code JsonSanitizer.str}
+         * （trim 后判断）→ 空白会被丢弃。**同一类字段两种口径**，与审查 §1.2
+         * 「同名判据不同」属同一类问题。
+         *
+         * <p>如实固化现状（而不是断言理想行为），免得后来者以为这里有 trim；
+         * 口径统一留给后续（不在「只放开可见性」的本轮范围内）。
+         */
+        @Test
+        @DisplayName("⚠️ 已固化差异：纯空白 id 当前被接受（与 sanitizeEnemies 的 trim 口径不一致）")
+        void blankIdIsCurrentlyAccepted() throws Exception {
+            assertNotNull(SpireContentController.sanitizeAct(json(
+                    "{\"nodes\":[{\"id\":\"  \",\"row\":1,\"col\":2,\"type\":\"e\",\"next\":[]}]}")));
         }
 
         @Test
