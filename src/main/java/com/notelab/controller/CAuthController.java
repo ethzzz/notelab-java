@@ -1,12 +1,14 @@
 package com.notelab.controller;
 
 import com.notelab.common.AppConfig;
+import com.notelab.common.ClientIp;
 import com.notelab.common.Passwords;
 import com.notelab.common.Session;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
 import com.notelab.dao.InviteCodeDao;
 import com.notelab.service.EventRecorder;
+import com.notelab.service.LoginAudit;
 import com.notelab.service.RateLimit;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -39,24 +41,37 @@ public class CAuthController {
     public ResponseEntity<Map<String, Object>> login(@RequestBody(required = false) CAuthReq req,
                                                      HttpServletRequest request,
                                                      HttpServletResponse response) {
-        String ip = AuthUtil.clientIp(request);
+        String ip = ClientIp.of(request);
         // 限流用法对齐 AuthController：同 IP 10 次 / 300s（独立计数桶，不与 B 端互相影响）
         if (!RateLimit.rateOk("c-login:" + ip, 10, 300)) {
+            LoginAudit.record("c", request, req == null ? null : req.username, null, LoginAudit.RATE_LIMITED);
             return ResponseEntity.status(429).body(Map.of("error", "尝试过于频繁，请 5 分钟后再试"));
         }
         if (req == null || req.username == null || req.password == null) {
+            LoginAudit.record("c", request, req == null ? null : req.username, null, LoginAudit.BAD_REQUEST);
             return badField();
         }
+        // ⚠️ 与 B 端同样拆成两个 if：响应与拆分前完全一致（都是同一句 401），
+        //    拆开只为审计能区分「没这个人」与「密码错」；C 端另有一个 disabled（密码对了但账号停用）。
+        //    三者**都回不同的响应码**（401/401/403）—— disabled 是既有行为，不是本次引入。
         Map<String, Object> u = CUserDao.getCUserByUsername(req.username.trim());
-        if (u == null || !Passwords.verify(req.password, (String) u.get("password_hash"))) {
+        if (u == null) {
+            LoginAudit.record("c", request, req.username, null, LoginAudit.NO_SUCH_USER);
+            return ResponseEntity.status(401).body(Map.of("error", "用户名或密码错误"));
+        }
+        long uid = ((Number) u.get("id")).longValue();
+        if (!Passwords.verify(req.password, (String) u.get("password_hash"))) {
+            LoginAudit.record("c", request, req.username, uid, LoginAudit.BAD_PASSWORD);
             return ResponseEntity.status(401).body(Map.of("error", "用户名或密码错误"));
         }
         if (!"active".equals(u.get("status"))) {
+            LoginAudit.record("c", request, req.username, uid, LoginAudit.DISABLED);
             return ResponseEntity.status(403).body(Map.of("error", "账号已被禁用"));
         }
-        Session.setCookieC(response, Session.makeCToken(((Number) u.get("id")).longValue()));
+        LoginAudit.record("c", request, req.username, uid, LoginAudit.SUCCESS);
+        Session.setCookieC(response, Session.makeCToken(uid));
         // 服务端旁路埋点（PRD-P0 §4.3）：登录是权威指标，一律以服务端记的为准，前端不要再记一次
-        EventRecorder.recordLoginAndBackfill("c", request, ((Number) u.get("id")).longValue(), "login_success");
+        EventRecorder.recordLoginAndBackfill("c", request, uid, "login_success");
         return ResponseEntity.ok(loginBody(u));
     }
 

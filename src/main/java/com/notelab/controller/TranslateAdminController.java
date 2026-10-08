@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.notelab.common.AppConfig;
+import com.notelab.common.ClientIp;
 import com.notelab.scheduler.TranslateScheduler;
 import com.notelab.service.PermService;
 import com.notelab.service.RateLimit;
@@ -378,7 +379,7 @@ public class TranslateAdminController {
         counts.put(3, normCount(req.counts == null ? null : req.counts.t3));
         int total = counts.get(1) + counts.get(2) + counts.get(3);
         if (total == 0) return ResponseEntity.status(400).body(Map.of("error", "请至少设置一个阶梯的生成数量"));
-        String ip = AuthUtil.clientIp(request);
+        String ip = ClientIp.of(request);
         if (!RateLimit.rateOk("entr-gen:" + ip, 6, 300)) {
             return ResponseEntity.status(429).body(Map.of("error", "生成过于频繁，请 5 分钟后再试"));
         }

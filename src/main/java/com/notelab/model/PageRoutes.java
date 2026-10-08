@@ -64,6 +64,9 @@ public final class PageRoutes {
             new String[]{"/perm", "权限管理"},
             // 运维看板（超管专属：接口在受限前缀 /api/admin/ops，且默认角色不含本页，见 PermService）
             new String[]{"/ops", "运维看板"},
+            // 登录审计（超管专属：接口在受限前缀 /api/admin/ops/login-audit）。
+            // ⚠️ 与 MenuTree.g_system 的 login-audit 一一对应：只加菜单不加这里 → 叶子被 RBAC 过滤看不到。
+            new String[]{"/login-audit", "登录审计"},
             // 博客管理 → 文章生成（B 端写入 ethzzz/blog 仓库，见 BlogContentController）
             new String[]{"/blog-gen", "博客·文章生成"},
             // 路径不含 /admin 前缀：PAGE_ROUTES 与前端 router.pathname 比对，

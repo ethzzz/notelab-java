@@ -17,6 +17,7 @@ final class DbSchema {
         migrateSchema();
         translateSchema();
         analyticsSchema();
+        loginAuditSchema();
     }
 
     /**
@@ -52,6 +53,45 @@ final class DbSchema {
                 KEY idx_anon_day (anon_id, day),
                 KEY idx_user (user_id, day),
                 KEY idx_session (session_id, ts)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+    }
+
+    /**
+     * 登录审计单表：login_audit。
+     *
+     * <p>与 {@code analytics_events}（见 {@link #analyticsSchema()}）**刻意不复用同一张表**，
+     * 尽管两者都有登录记录 —— 它们服务的目标恰好相反：
+     * <ul>
+     *   <li>{@code analytics_events} 是**业务指标**：只记成功登录（DAU/留存用），IP 只存**加盐哈希**
+     *       （隐私优先、故意不可逆），明细保留 90 天；</li>
+     *   <li>{@code login_audit} 是**安全取证**：**全部结果都记**（失败尝试才是攻击信号），IP 存**明文**
+     *       （取证要对得上人），保留 365 天。</li>
+     * </ul>
+     * 把这两套口径塞进一张表，必然要牺牲其中一边。宁可两张表，各自把一边做对。
+     *
+     * <p>⚠️ {@code day} 是**索引必需**的冗余列：页面按天筛，写 {@code WHERE day=?} 才命中
+     * {@code idx_day_result}；若图省事写 {@code DATE(ts)=?}，函数套在列上会让 ts 索引失效。
+     *
+     * <p>⚠️ {@code username} 存的是**用户输入的原样**，不是查到的账号 —— 攻击者尝试过的用户名列表
+     * 本身就是情报（能区分「定向打某个账号」与「广撒网撞库」）。所以账号不存在时也要落这一行。
+     *
+     * <p>⚠️ 本表**不存密码、不存 token**。任何情况下都不要加。
+     */
+    private static void loginAuditSchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS login_audit (
+                id        BIGINT AUTO_INCREMENT PRIMARY KEY,
+                ts        DATETIME(3)   NOT NULL,
+                day       DATE          NOT NULL,
+                app       VARCHAR(4)    NOT NULL,
+                username  VARCHAR(64)   NOT NULL,
+                user_id   BIGINT        NULL,
+                result    VARCHAR(24)   NOT NULL,
+                ip        VARCHAR(45)   NOT NULL,
+                ua        VARCHAR(255)  NULL,
+                KEY idx_day_result (day, result),
+                KEY idx_ip_ts (ip, ts),
+                KEY idx_username_ts (username, ts)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 

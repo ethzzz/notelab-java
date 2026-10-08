@@ -1,9 +1,11 @@
 package com.notelab.controller;
 
 import com.notelab.common.AppConfig;
+import com.notelab.common.ClientIp;
 import com.notelab.dao.Db;
 import com.notelab.common.Passwords;
 import com.notelab.service.RateLimit;
+import com.notelab.service.LoginAudit;
 import com.notelab.service.PermService;
 import com.notelab.common.Session;
 import jakarta.servlet.http.HttpServletRequest;
@@ -44,18 +46,30 @@ public class AuthController {
     public ResponseEntity<Map<String, Object>> login(@RequestBody(required = false) AuthReq req,
                                                      HttpServletRequest request,
                                                      HttpServletResponse response) {
-        String ip = AuthUtil.clientIp(request);
+        String ip = ClientIp.of(request);
         if (!RateLimit.rateOk("login:" + ip, 10, 300)) {
+            LoginAudit.record("b", request, req == null ? null : req.username, null, LoginAudit.RATE_LIMITED);
             return ResponseEntity.status(429).body(Map.of("error", "尝试过于频繁，请 5 分钟后再试"));
         }
         if (req == null || req.username == null || req.password == null) {
+            LoginAudit.record("b", request, req == null ? null : req.username, null, LoginAudit.BAD_REQUEST);
             return badField();
         }
+        // ⚠️ 这里从 `u == null || !verify(...)` 的短路拆成了两个 if：**响应与拆分前逐字节相同**
+        //    （都是同一句 401），拆开只是为了让审计能区分「没这个人」与「密码错」——
+        //    那个区分只进 login_audit，**绝不进响应**（否则等于送人一个用户名枚举接口）。
         Map<String, Object> u = UserDao.getUserByUsername(req.username.trim());
-        if (u == null || !Passwords.verify(req.password, (String) u.get("password_hash"))) {
+        if (u == null) {
+            LoginAudit.record("b", request, req.username, null, LoginAudit.NO_SUCH_USER);
             return ResponseEntity.status(401).body(Map.of("error", "用户名或密码错误"));
         }
-        Session.setCookie(response, Session.makeToken(((Number) u.get("id")).longValue()));
+        long uid = ((Number) u.get("id")).longValue();
+        if (!Passwords.verify(req.password, (String) u.get("password_hash"))) {
+            LoginAudit.record("b", request, req.username, uid, LoginAudit.BAD_PASSWORD);
+            return ResponseEntity.status(401).body(Map.of("error", "用户名或密码错误"));
+        }
+        LoginAudit.record("b", request, req.username, uid, LoginAudit.SUCCESS);
+        Session.setCookie(response, Session.makeToken(uid));
         return ResponseEntity.ok(Map.of("ok", true));
     }
 

@@ -2,11 +2,13 @@ package com.notelab.controller;
 
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
+import com.notelab.dao.LoginAuditDao;
 import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.BufferedReader;
@@ -17,8 +19,10 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 /**
  * 运维看板 / 发布自检：前缀 {@code /api/admin}（受限前缀，仅 super_admin）。
@@ -61,6 +65,9 @@ public class OpsController {
     private static final int CMD_TIMEOUT_SEC = 8;
     private static final int HTTP_TIMEOUT_MS = 4000;
 
+    /** 审计查询的 day 参数格式；不合法就忽略（回落到今天）而不是丢个空结果 —— 空结果看着像「没数据」 */
+    private static final Pattern DAY_RE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
+
     // ------------------------------------------------------------------ 接口
 
     /** 状态看板：进程 + 端口探活 + 各仓 git + 主机资源 */
@@ -78,6 +85,56 @@ public class OpsController {
         for (Svc s : SVCS) services.add(service(s));
         out.put("services", services);
         return ResponseEntity.ok(out);
+    }
+
+    /**
+     * 登录审计查询（**只读**）。
+     *
+     * <p>为什么要能查：修 SECRET_KEY 漏洞时发现最大的问题是「**判断不了那个洞有没有被利用过**」——
+     * 仓库里完全没有登录留痕（{@code analytics_events} 只记成功、且 IP 是哈希、90 天就删）。
+     * 这张表 + 这个接口补的就是「事后可回溯」。
+     *
+     * <p>⚠️ 只读，且与同类接口一样受 {@code /api/admin} 受限前缀（仅 super_admin）保护，
+     * 控制器内再校验一次（双保险）。查询条件全部走 DAO 的 {@code ?} 占位符。
+     *
+     * @param day      日期 {@code yyyy-MM-dd}，缺省或格式非法 = 今天
+     * @param ip       精确匹配
+     * @param username 精确匹配（用户输入的原样）
+     * @param result   success / bad_password / no_such_user / disabled / rate_limited / bad_request
+     */
+    @GetMapping("/login-audit")
+    public ResponseEntity<Map<String, Object>> loginAudit(
+            HttpServletRequest request,
+            @RequestParam(required = false) String day,
+            @RequestParam(required = false) String ip,
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String result,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (!PermService.isSuperAdmin(me)) return ResponseEntity.status(403).body(Map.of("error", "需要超级管理员权限"));
+
+        // 缺省 = 今天：审计的第一眼就是「今天有没有异常」
+        String d = (day != null && DAY_RE.matcher(day.trim()).matches()) ? day.trim() : LocalDate.now().toString();
+        String fIp = blankToNull(ip), fUser = blankToNull(username), fResult = blankToNull(result);
+
+        int p = Math.max(1, page);
+        int sz = Math.max(1, Math.min(LoginAuditDao.MAX_PAGE, size));
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("day", d);
+        out.put("page", p);
+        out.put("size", sz);
+        out.put("total", LoginAuditDao.count(d, fIp, fUser, fResult));
+        out.put("items", LoginAuditDao.search(d, fIp, fUser, fResult, sz, (p - 1) * sz));
+        // 当天各结果计数：[{result, n}]，页面顶部一眼看异常（bad_password/no_such_user 突然变多 = 有人在撞库）
+        out.put("byResult", LoginAuditDao.countByResult(d));
+        return ResponseEntity.ok(out);
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
     }
 
     /**

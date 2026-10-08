@@ -2,6 +2,7 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonSanitizer;
+import com.notelab.common.ClientIp;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.AnalyticsDao;
 import com.notelab.service.EventRecorder;
@@ -77,7 +78,7 @@ public class CTrackController {
     @PostMapping
     public ResponseEntity<Map<String, Object>> ingest(@RequestBody(required = false) String raw,
                                                       HttpServletRequest request) {
-        String ip = AuthUtil.clientIp(request);
+        String ip = ClientIp.of(request);
         if (!RateLimit.rateOk("c-track:" + ip, 60, 60)) {
             return ResponseEntity.status(429).body(Map.of("error", "上报过于频繁"));
         }

@@ -2,6 +2,7 @@ package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
+import com.notelab.common.ClientIp;
 import com.notelab.common.JsonUtil;
 import com.notelab.infra.QwenClient;
 import com.notelab.service.RateLimit;
@@ -63,7 +64,7 @@ public class TrpgController {
         if (req == null || (isBlank(req.background) && isBlank(req.event) && isBlank(req.characters))) {
             return ResponseEntity.status(422).body(Map.of("error", "请至少填写背景、人物或核心事件之一"));
         }
-        String ip = AuthUtil.clientIp(request);
+        String ip = ClientIp.of(request);
         if (!RateLimit.rateOk("trpg-gen:" + ip, 6, 300)) {
             return ResponseEntity.status(429).body(Map.of("error", "生成过于频繁，请 5 分钟后再试"));
         }

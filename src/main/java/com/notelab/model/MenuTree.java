@@ -77,7 +77,10 @@ public final class MenuTree {
                     menu("ui", "界面配置", "🎛️", "/ui", true),
                     menu("perm", "权限管理", "🔐", "/perm", true),
                     // 运维看板：只读展示进程/端口/git/资源 + 发布自检，仅超管（见 PermService 默认排除）
-                    menu("ops", "运维看板", "🩺", "/ops", true))),
+                    menu("ops", "运维看板", "🩺", "/ops", true),
+                    // 登录审计：每一次登录尝试（含失败）的留痕，用于事后回溯「有没有人在撞库 / 某个洞有没有被利用」。
+                    // 接口在受限前缀 /api/admin/ops/login-audit，同样仅超管；路由与 PageRoutes 一一对应。
+                    menu("login-audit", "登录审计", "🛡️", "/login-audit", true))),
             // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
             // 文章生成子页把手动输入 / AI 起草的文章提交到博客仓库（见 BlogContentController）。
             group("g_blog", "博客管理", "📖", List.of(

@@ -1,6 +1,7 @@
 package com.notelab.service;
 
 import com.notelab.common.AppConfig;
+import com.notelab.common.ClientIp;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.AnalyticsDao;
 import jakarta.servlet.http.HttpServletRequest;
@@ -187,7 +188,7 @@ public final class EventRecorder {
     /** IP 只存哈希：HmacSHA256(ip + 盐) 前 16 位。盐从 AppConfig 读（服务器 .env 设 ANALYTICS_IP_SALT）。 */
     public static String ipHash(HttpServletRequest request) {
         if (request == null) return null;
-        String ip = clientIp(request);
+        String ip = ClientIp.of(request);
         if (ip == null || ip.isEmpty()) return null;
         try {
             String salt = AppConfig.analyticsIpSalt();
@@ -200,13 +201,6 @@ public final class EventRecorder {
         } catch (Exception e) {
             return null;   // 哈希失败就不落 IP（宁缺勿明文）
         }
-    }
-
-    /** 取客户端 IP（与 AuthUtil.clientIp 同口径：优先 X-Forwarded-For 首个）。不动 controller 包。 */
-    private static String clientIp(HttpServletRequest request) {
-        String fwd = request.getHeader("x-forwarded-for");
-        if (fwd != null && !fwd.isEmpty()) return fwd.split(",")[0].trim();
-        return request.getRemoteAddr() == null ? "" : request.getRemoteAddr();
     }
 
     private static String clip(String s, int max) {
