@@ -305,14 +305,11 @@ public class LootContentController {
             return ResponseEntity.status(400).body(Map.of("error",
                     "自定义内容过大（>" + (MAX_LOOT_CHARS / 1000) + "KB），删几件物品/容器再保存"));
         }
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.put("loot", loot);
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.update("loot", loot);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -331,15 +328,12 @@ public class LootContentController {
     public ResponseEntity<Map<String, Object>> publish(HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        Map<String, Object> snapshot = lootOf(cfg);
-        cfg.put("loot_published", snapshot);
+        Map<String, Object> snapshot = lootOf(UiConfigService.getConfig());
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.update("loot_published", snapshot);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         // 服务端旁路埋点（PRD-P0 §4.2）：与 spire_publish 同口径，后台发了没人玩 = 白干
         EventRecorder.record("b", "loot_publish", AuthUtil.userId(user), request, JsonSanitizer.snapshotStat(snapshot));
         return ResponseEntity.ok(Map.of("ok", true));
@@ -349,14 +343,11 @@ public class LootContentController {
     @PostMapping("/unpublish")
     public ResponseEntity<Map<String, Object>> unpublish(HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.remove("loot_published");
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.remove("loot_published");
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 

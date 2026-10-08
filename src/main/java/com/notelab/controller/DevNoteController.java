@@ -525,14 +525,11 @@ public class DevNoteController {
             return ResponseEntity.status(400).body(Map.of("error",
                     "内容过大（>" + (MAX_DEVNOTES_CHARS / 1000) + "KB），精简几条记录再保存"));
         }
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.put("dev_notes", doc);
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.update("dev_notes", doc);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 

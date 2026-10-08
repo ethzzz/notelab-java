@@ -319,15 +319,14 @@ public class SpireContentController {
             return ResponseEntity.status(400).body(Map.of("error",
                     "自定义内容过大（>" + (MAX_SPIRE_CHARS / 1000) + "KB，多半是地图方案存太多，删几套再保存）"));
         }
-        // 合并进现有 ui_config（保留 background/menus 等其它键）
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.put("spire", spire);
+        // 原子合并进 ui_config 的 spire 键（保留 background/menus 等其它键）。
+        // ⚠️ 必须经 UiConfigService.update：它把「读-改-写」放进同一把锁、基底直读库
+        // （不经 30s 缓存），否则并发保存不同模块会互相整份覆盖且无报错。
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.update("spire", spire);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
@@ -360,21 +359,18 @@ public class SpireContentController {
 
     /**
      * B/C 拆分阶段2：发布——把当前 spire 工坊内容整体快照写入顶层键 spire_published
-     * （合并写，保留 background/menus/spire 等其它键，写法同 save）。
+     * （原子合并写：只碰这一个键，background/menus/spire 等由 UiConfigService.update 保留）。
      */
     @PostMapping("/publish")
     public ResponseEntity<Map<String, Object>> publish(HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        Map<String, Object> snapshot = spireOf(cfg);
-        cfg.put("spire_published", snapshot);
+        Map<String, Object> snapshot = spireOf(UiConfigService.getConfig());
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.update("spire_published", snapshot);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         // 服务端旁路埋点（PRD-P0 §4.2）：**价值最高的后台指标** —— 后台发了但 C 端没人玩就是白干
         EventRecorder.record("b", "spire_publish", AuthUtil.userId(user), request, JsonSanitizer.snapshotStat(snapshot));
         return ResponseEntity.ok(Map.of("ok", true));
@@ -384,14 +380,11 @@ public class SpireContentController {
     @PostMapping("/unpublish")
     public ResponseEntity<Map<String, Object>> unpublish(HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        Map<String, Object> cfg = new LinkedHashMap<>(UiConfigService.getConfig());
-        cfg.remove("spire_published");
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(cfg));
+            UiConfigService.remove("spire_published");
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 

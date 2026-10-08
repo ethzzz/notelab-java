@@ -45,24 +45,23 @@ public class UiConfigController {
             return ResponseEntity.status(400).body(Map.of("error", "config 必须是对象"));
         }
         Map<String, Object> defaults = UiConfigService.defaultConfig();
-        // 保留额外顶层键（如 spire 工坊内容），只覆盖 background/menus
-        Map<String, Object> clean = new LinkedHashMap<>(UiConfigService.getConfig());
-        clean.put("background", cfgNode.has("background")
+        // 本次要覆盖的键（其余顶层键，如 spire/loot 工坊内容，由 updateAll 保留）
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("background", cfgNode.has("background")
                 ? JsonUtil.MAPPER.convertValue(cfgNode.get("background"), LinkedHashMap.class)
                 : defaults.get("background"));
-        clean.put("menus", cfgNode.has("menus")
+        patch.put("menus", cfgNode.has("menus")
                 ? JsonUtil.MAPPER.convertValue(cfgNode.get("menus"), LinkedHashMap.class)
                 : defaults.get("menus"));
         // 游戏登录管理配置：仅当入参携带 game_access 时覆盖（其余情况保留库内已有值）
         if (cfgNode.has("game_access")) {
-            clean.put("game_access", JsonUtil.MAPPER.convertValue(cfgNode.get("game_access"), LinkedHashMap.class));
+            patch.put("game_access", JsonUtil.MAPPER.convertValue(cfgNode.get("game_access"), LinkedHashMap.class));
         }
         try {
-            UiConfigService.saveUiConfig(JsonUtil.write(clean));
+            UiConfigService.updateAll(patch);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        UiConfigService.invalidate();
         return ResponseEntity.ok(Map.of("ok", true));
     }
 }

@@ -65,15 +65,10 @@ public final class UiConfigService {
         }
         Map<String, Object> loaded = null;
         try {
-            String row = UiConfigDao.getUiConfigJson();
-            if (row != null && !row.isEmpty()) {
-                JsonNode node = JsonUtil.parse(row);
-                if (node.isObject()) {
-                    loaded = JsonUtil.MAPPER.convertValue(node, LinkedHashMap.class);
-                }
-            }
-        } catch (Exception e) {
-            loaded = null;
+            loaded = loadFromDb();
+        } catch (Exception ignored) {
+            // 读失败 / 库中内容损坏 → 回落默认配置。**仅读路径**如此（既有行为，保持）：
+            // 读路径拿到默认值顶多是显示不对；写路径若也这样回落，就会拿默认值覆盖真实配置。
         }
         if (loaded == null) {
             loaded = defaultConfig();
@@ -81,6 +76,28 @@ public final class UiConfigService {
         cacheAtMillis = now;
         cacheConfig = loaded;
         return loaded;
+    }
+
+    /**
+     * 读库中的 ui_config 原文并转成 Map（**不走 30 秒缓存**）。
+     *
+     * <p>返回 {@code null} = 「表里还没有行」（全新部署）；读失败或内容不是合法 JSON
+     * 对象则**抛异常**，由调用方决定怎么处理（读路径回落默认、写路径拒绝写入）。
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> loadFromDb() {
+        String row = UiConfigDao.getUiConfigJson();
+        if (row == null || row.isEmpty()) return null;
+        JsonNode node;
+        try {
+            node = JsonUtil.parse(row);
+        } catch (Exception e) {
+            throw new IllegalStateException("ui_config 内容不是合法 JSON", e);
+        }
+        if (!node.isObject()) {
+            throw new IllegalStateException("ui_config 内容不是 JSON 对象");
+        }
+        return JsonUtil.MAPPER.convertValue(node, LinkedHashMap.class);
     }
 
     public static synchronized void invalidate() {
@@ -135,10 +152,71 @@ public final class UiConfigService {
     }
 
 
-    // ---------- 数据访问收敛（ArchGuard no-bypass-existing-service）----------
+    // ---------- 唯一的写入口：读-改-写原子化（消除 §1.1 的并发丢更新）----------
 
-    /** ArchGuard 收敛：controller 不再直调 UiConfigDao，统一经 UiConfigService */
-    public static void saveUiConfig(String configJson) {
-        UiConfigDao.saveUiConfig(configJson);
-    }   // saveUiConfig(1)
+    /**
+     * 取库中**最新**内容作为写基底。
+     *
+     * <p>⚠️ 与读路径的关键差别：这里**不能**在失败时回落 {@link #defaultConfig()}。
+     * 那会把「读不到」变成「用默认配置覆盖真实配置」—— 比丢更新更严重的数据事故。
+     * 所以读失败直接抛，由 controller 转 500 让调用方重试；只有「表里确实还没有行」
+     * （全新部署）才允许以默认配置为基底。
+     */
+    private static Map<String, Object> loadForWrite() {
+        try {
+            Map<String, Object> loaded = loadFromDb();
+            return loaded != null ? loaded : defaultConfig();
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "读取 ui_config 失败，已拒绝本次写入以免覆盖现有配置：" + e.getMessage(), e);
+        }
+    }
+
+    /** 落库并失效缓存。只在持锁的写方法内调用。 */
+    private static void persist(Map<String, Object> cfg) {
+        UiConfigDao.saveUiConfig(JsonUtil.write(cfg));
+        invalidate();
+    }
+
+    /**
+     * 原子写入一个顶层键 —— ui_config 的**唯一业务写入口**。
+     *
+     * <p>此前的写法是每个写点各写一遍
+     * {@code new LinkedHashMap<>(getConfig()) → put(键) → saveUiConfig(JSON 整份)}，
+     * 而 {@code getConfig()} 带 30 秒缓存：两个管理员同时保存不同模块时，
+     * 后写的一方会用「自己读到的旧快照」把前者**整份覆盖，且没有任何报错**。
+     * 缓存把冲突窗口从毫秒放大到秒级，让这件事从"几乎不可能"变成"偶尔会发生"。
+     *
+     * <p>收敛后：{@code synchronized} 进程内串行 + 基底改走 {@link #loadFromDb()}
+     * 直读库（不经缓存），「读-改-写」因此是原子的，不会再丢掉别人刚写的键。
+     *
+     * <p>⚠️ 只解决**单进程内**的并发。将来若起多实例，需要 DB 侧行锁或
+     * {@code JSON_SET} 原子更新 —— 那时只换这一个方法的实现，调用方不动。
+     *
+     * @throws IllegalStateException 读不到现有配置（DB 异常 / 内容损坏）时抛出，调用方应转 500
+     */
+    public static synchronized void update(String key, Object value) {
+        Map<String, Object> cfg = loadForWrite();
+        cfg.put(key, value);
+        persist(cfg);
+    }
+
+    /** 原子删除一个顶层键（下架场景，如删 {@code spire_published}）。 */
+    public static synchronized void remove(String key) {
+        Map<String, Object> cfg = loadForWrite();
+        cfg.remove(key);
+        persist(cfg);
+    }
+
+    /**
+     * 原子写入多个顶层键（**一次**读-改-写）。
+     *
+     * <p>为什么不连调三次 {@link #update}：中间会有别的写点插进来，且变成写三次库。
+     * 需要「一起生效」的一组键必须走这里。
+     */
+    public static synchronized void updateAll(Map<String, Object> patch) {
+        Map<String, Object> cfg = loadForWrite();
+        cfg.putAll(patch);
+        persist(cfg);
+    }
 }
