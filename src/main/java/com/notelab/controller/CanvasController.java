@@ -165,6 +165,11 @@ public class CanvasController {
     private static void purgeRoom(String roomId) {
         try {
             HttpRequest rq = HttpRequest.newBuilder(URI.create(COLLAB_BASE + "/rooms/" + roomId))
+                    // ⚠️ 必须显式 HTTP/1.1：HttpClient 默认 HTTP_2，对明文 http:// 会先发
+                    //    h2c 升级探测（带 Connection: Upgrade 头）——Node 的 http server 见到
+                    //    Upgrade 头会走 'upgrade' 事件而不是 'request'，于是被协作服务的
+                    //    「非 WS 路径一律 404」逻辑拒掉，表现为清理永远 404（元数据删了、房间内容留着）
+                    .version(HttpClient.Version.HTTP_1_1)
                     .timeout(Duration.ofSeconds(3))
                     .DELETE()
                     .build();
