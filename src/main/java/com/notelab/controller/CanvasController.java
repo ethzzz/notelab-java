@@ -98,7 +98,12 @@ public class CanvasController {
         // ⚠️ 本接口同时是**协作服务握手的鉴权入口** —— collab/lib/auth.mjs 会转发用户 cookie
         //    调它，能读到元数据（200）才允许建立 WebSocket。改权限语义时务必兼顾这一处。
         if (!canAccess(me, roomId)) return noAccess();
-        return ResponseEntity.ok(CanvasDocDao.getByRoom(roomId));
+        // 超管会走到这一行（canAccess 里超管短路放行），所以仍要处理「画布不存在」——
+        // 否则会回 200 + null。普通用户到不了这里：不存在的画布在 canAccess 里就是 false
+        // → 403，因此这个 404 只可能被超管看到，不会被用来枚举 roomId 是否存在。
+        Map<String, Object> row = CanvasDocDao.getByRoom(roomId);
+        if (row == null) return ResponseEntity.status(404).body(Map.of("error", "画布不存在"));
+        return ResponseEntity.ok(row);
     }
 
     /** 新建画布（room_id 由服务端生成，客户端拿回后跳转编辑） */
