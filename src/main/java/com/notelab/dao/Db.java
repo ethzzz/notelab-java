@@ -19,9 +19,15 @@ import java.util.Map;
  * 连接池：Spring 托管的唯一 HikariCP Bean（common/DataSourceConfig，poolName=notelab-mysql，
  * max=10 / minIdle=1 / connectionTimeout=5000），本类经 init(DataSource) 持有，不再自建池。
  * 配置来自 MYSQL_HOST / MYSQL_PORT / MYSQL_USER / MYSQL_PASSWORD / MYSQL_DB
- * （进程环境变量 → ./.env → /root/notelab/.env，见 AppConfig）。
- * 建表 DDL 见 DbSchema；本类的 conn/exec/queryOne/queryAll 现仅供 DbSchema 建表/种子使用，
- * 业务数据访问已全量迁移到 MyBatis-Plus（mapper/ + 各静态 DAO 门面）。
+ * （进程环境变量 → ./.env → /root/Notelab/notelab-java/.env，见 AppConfig）。
+ *
+ * ⚠️ 本类**不是**「仅供建表」—— 除建表（DbSchema，42 处调用）外，以下两个业务域
+ * 仍走裸 JDBC，向 MyBatis-Plus 的迁移没有做完：
+ *   - dao/AnalyticsDao   18 处（analytics_events 写入与按天聚合）
+ *   - dao/ArchScanDao     9 处（arch_scan_* 快照落库）
+ * 其余业务域已迁到 MyBatis-Plus（mapper/ + 各静态 DAO 门面）。
+ * 删改本类 conn/exec/execCount/queryOne/queryAll 之前，先按上面清单核对调用点 ——
+ * 2026-10-08 的审查就是为了防止「照注释删方法」导致的编译失败。
  */
 public final class Db {
 
