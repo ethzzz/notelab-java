@@ -36,12 +36,12 @@ import java.util.Set;
 public class DevNoteController {
 
     /** 条目性质：阻断 / 缺陷 / 坑 / 备忘（展示用，不参与逻辑） */
-    private static final Set<String> SEVERITIES = Set.of("blocker", "bug", "pitfall", "note");
+    static final Set<String> SEVERITIES = Set.of("blocker", "bug", "pitfall", "note");
 
     private static final int MAX_DEVNOTES_CHARS = 1_000_000;
-    private static final int MAX_PROJECTS = 20;
-    private static final int MAX_ENTRIES_PER_PROJECT = 200;
-    private static final int MAX_TAGS = 20;
+    static final int MAX_PROJECTS = 20;
+    static final int MAX_ENTRIES_PER_PROJECT = 200;
+    static final int MAX_TAGS = 20;
 
     // ==================================================================================
     // 内置记录（懒 seed 初值）—— 摸金行动 W1 开发过程中真实踩到的技术难点。
@@ -550,7 +550,7 @@ public class DevNoteController {
     // 净化（只做结构与体积校验；不合法丢该条，不让整包 400）
     // ==================================================================================
 
-    private static List<Map<String, Object>> sanitizeProjects(JsonNode node) {
+    static List<Map<String, Object>> sanitizeProjects(JsonNode node) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -571,7 +571,7 @@ public class DevNoteController {
         return out;
     }
 
-    private static List<Map<String, Object>> sanitizeEntries(JsonNode node) {
+    static List<Map<String, Object>> sanitizeEntries(JsonNode node) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();

@@ -48,6 +48,16 @@
       <artifactId>poi-ooxml</artifactId>
       <version>5.2.5</version>
     </dependency>
+    <!--
+      单元测试：目前只覆盖净化规则（sanitizeXxx）—— 它们是纯函数（输入 JsonNode、输出 Map/List、
+      无 IO、无 Spring 依赖），是全部业务里最适合单测的部分。
+      版本由 spring-boot-starter-parent 管理。部署仍走 `mvn -DskipTests package`，不增加发布耗时。
+    -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
   <build>
     <finalName>notelab-java</finalName>

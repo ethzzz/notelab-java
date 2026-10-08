@@ -205,12 +205,12 @@ public class SpireContentController {
      * 可用默认值，且 C 端在无自定义 balance 时回落这些内置常量。
      * ⚠️ 调平衡改此处须同步 C 端 spire-engine.ts 的对应常量，否则两端不一致。
      */
-    private static final int BASE_TOTAL_ACTS = 3;
-    private static final int BASE_MAP_ROWS = 16;
-    private static final List<String> BASE_ACT_BOSS_IDS = List.of("king", "jadeGolem", "spireLord");
-    private static final double BASE_ACT_SCALE_STEP = 0.3;
+    static final int BASE_TOTAL_ACTS = 3;
+    static final int BASE_MAP_ROWS = 16;
+    static final List<String> BASE_ACT_BOSS_IDS = List.of("king", "jadeGolem", "spireLord");
+    static final double BASE_ACT_SCALE_STEP = 0.3;
 
-    private static Map<String, Object> baseBalance() {
+    static Map<String, Object> baseBalance() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("totalActs", BASE_TOTAL_ACTS);
         m.put("mapRows", BASE_MAP_ROWS);
@@ -226,8 +226,8 @@ public class SpireContentController {
      * ⚠️ 调地图规则改此处须同步 notelab-b/src/lib/spire-mapgen.ts 的 DEFAULT_PARAMS 与
      *     notelab-c/lib/spire-engine.ts 的 BASE_MAP_RULES，否则两端不一致。
      */
-    private static final Map<String, Object> BASE_MAP_RULES = baseMapRules();
-    private static Map<String, Object> baseMapRules() {
+    static final Map<String, Object> BASE_MAP_RULES = baseMapRules();
+    static Map<String, Object> baseMapRules() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("layers", 16);
         m.put("acts", 3);
@@ -259,11 +259,11 @@ public class SpireContentController {
     /** 单套方案幕数上限（本项目 3 幕，留点余量） */
     private static final int MAX_ACTS = 8;
     /** 单幕节点数上限（16 层 × 最多 ~6 列 ≈ 100，留足余量） */
-    private static final int MAX_NODES = 4000;
+    static final int MAX_NODES = 4000;
     /** 素材路径长度上限（只是个 URL/相对路径，防呆） */
-    private static final int MAX_ASSET_PATH = 500;
+    static final int MAX_ASSET_PATH = 500;
     /** 单个槽位的资源池条目上限（同类素材够用即可，防呆） */
-    private static final int MAX_POOL_PER_SLOT = 50;
+    static final int MAX_POOL_PER_SLOT = 50;
 
     @GetMapping
     public ResponseEntity<Map<String, Object>> get(HttpServletRequest request) {
@@ -444,7 +444,7 @@ public class SpireContentController {
      * charAccess 类型净化：非对象→{}；值非数组→[]；数组元素只保留非空字符串（trim 去重）。
      * 键为 C 端用户组码（c_user_groups.code），值是该组可选择的角色 id 白名单。
      */
-    private static Map<String, List<String>> sanitizeCharAccess(JsonNode node) {
+    static Map<String, List<String>> sanitizeCharAccess(JsonNode node) {
         Map<String, List<String>> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return out;
         node.fields().forEachRemaining(e -> {
@@ -472,7 +472,7 @@ public class SpireContentController {
      * <p>值形如 `/games/spire/art/icon-normal.png`：**带 C 端 basePath 前缀**，
      * 由 B 端从素材清单接口拿到的 url 原样写入，后端不校验其可解析性（C 端会做 fail-open）。
      */
-    private static Map<String, String> sanitizeAssets(JsonNode node) {
+    static Map<String, String> sanitizeAssets(JsonNode node) {
         Map<String, String> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return out;
         node.fields().forEachRemaining(e -> {
@@ -496,7 +496,7 @@ public class SpireContentController {
      * <p>净化规则：非对象→{}；值非数组→跳过；数组元素只保留合法路径字符串（trim、去重、保序），
      * 单槽位条目上限 MAX_POOL_PER_SLOT。键的规则与 assets 一致（槽位 key，见 B 端 ASSET_SLOTS）。
      */
-    private static Map<String, List<String>> sanitizeAssetPool(JsonNode node) {
+    static Map<String, List<String>> sanitizeAssetPool(JsonNode node) {
         Map<String, List<String>> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return out;
         node.fields().forEachRemaining(e -> {
@@ -523,7 +523,7 @@ public class SpireContentController {
      * <p>刻意做得比 C 端轻：地图语义（不交叉 / 无死路 / 唯一 BOSS …）的裁决权在生成器与 C 端加载器，
      * 后端只保证「形状合法 + 体积可控」，避免后端变成第二套地图规则真相源。
      */
-    private static Map<String, Object> sanitizeMaps(JsonNode node) {
+    static Map<String, Object> sanitizeMaps(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         List<Object> packs = new java.util.ArrayList<>();
         if (node == null || !node.isObject()) {
@@ -565,7 +565,7 @@ public class SpireContentController {
 
     /** 单幕净化：nodes 必须是数组且每个元素形状合法（id/row/col/type/next）；不合法返回 null */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> sanitizeAct(JsonNode a) {
+    static Map<String, Object> sanitizeAct(JsonNode a) {
         if (a == null || !a.isObject()) return null;
         JsonNode nodes = a.get("nodes");
         if (nodes == null || !nodes.isArray() || nodes.isEmpty() || nodes.size() > MAX_NODES) return null;
@@ -589,7 +589,7 @@ public class SpireContentController {
      * 非空字符串数组（幕 BOSS 的敌人 id，C 端缺失时回退终幕 BOSS）。非法值回落内置默认，
      * 缺字段用 baseBalance 补齐，保证 C 端无脑消费也不会拿到 null。
      */
-    private static Map<String, Object> sanitizeBalance(JsonNode node) {
+    static Map<String, Object> sanitizeBalance(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseBalance();
         out.put("totalActs", JsonSanitizer.clampInt(node.get("totalActs"), 1, MAX_ACTS, BASE_TOTAL_ACTS));
@@ -613,7 +613,7 @@ public class SpireContentController {
     }
 
     /** 库中有 balance map 时，用库值覆盖内置默认（缺字段保留内置），再走净化口径保证形状合法 */
-    private static Map<String, Object> mergeBalance(Map<String, Object> lib) {
+    static Map<String, Object> mergeBalance(Map<String, Object> lib) {
         Map<String, Object> merged = new LinkedHashMap<>(baseBalance());
         for (String k : new String[] { "totalActs", "mapRows", "actScaleStep", "actBossIds" }) {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
@@ -626,7 +626,7 @@ public class SpireContentController {
      * minLayer 0-40、revealPool 0-999、earlySafeLayers 0-8。缺字段/越界回落内置默认，保证 C 端
      * 无脑消费也不会拿到 null（fail-open）。口径与 B 端 spire-mapgen.ts 的 sanitizeParams 完全一致。
      */
-    private static Map<String, Object> sanitizeMapRules(JsonNode node) {
+    static Map<String, Object> sanitizeMapRules(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseMapRules();
         out.put("layers", JsonSanitizer.clampInt(node.get("layers"), 4, 40, 16));
@@ -666,7 +666,7 @@ public class SpireContentController {
     }
 
     /** 库中有 mapRules map 时，用库值覆盖内置默认（缺字段保留内置），再走净化口径保证形状合法 */
-    private static Map<String, Object> mergeMapRules(Map<String, Object> lib) {
+    static Map<String, Object> mergeMapRules(Map<String, Object> lib) {
         Map<String, Object> merged = new LinkedHashMap<>(baseMapRules());
         for (String k : new String[] { "layers", "acts", "maxColumns", "pathCount", "weights", "minLayer", "revealPool", "earlySafeLayers" }) {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
@@ -675,7 +675,7 @@ public class SpireContentController {
     }
 
     /** 意图类型白名单（与 C 端 Move.kind 对齐） */
-    private static final java.util.Set<String> MOVE_KINDS =
+    static final java.util.Set<String> MOVE_KINDS =
             java.util.Set.of("atk", "block", "buff", "debuff");
 
     /**
@@ -683,7 +683,7 @@ public class SpireContentController {
      * 不做战斗平衡裁决——平衡在 C 端引擎与 `actScale` 倍率）。move 必须 name/kind 合法，
      * kind 非白名单丢弃该 move；debuffKind 只接受 weak/vuln。
      */
-    private static List<Map<String, Object>> sanitizeEnemies(JsonNode node) {
+    static List<Map<String, Object>> sanitizeEnemies(JsonNode node) {
         List<Map<String, Object>> out = new java.util.ArrayList<>();
         if (node == null || !node.isArray()) return out;
         for (JsonNode e : node) {

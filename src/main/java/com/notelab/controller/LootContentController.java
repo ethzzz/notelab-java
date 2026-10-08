@@ -47,19 +47,19 @@ import java.util.Set;
 public class LootContentController {
 
     /** 色板 key 白名单（与 B/C 端 PALETTE 一致；未登记的色一律回落 slate） */
-    private static final Set<String> PALETTE_KEYS = Set.of(
+    static final Set<String> PALETTE_KEYS = Set.of(
             "slate", "blue", "cyan", "emerald", "amber", "purple", "rose", "red");
 
     /** 形状 id 白名单（与 B/C 端 SHAPES 一致；未登记的一律回落 1x1，绝不留非法值） */
-    private static final Set<String> SHAPE_IDS = Set.of("1x1", "1x2", "1x3", "2x2", "L", "J", "T", "S");
+    static final Set<String> SHAPE_IDS = Set.of("1x1", "1x2", "1x3", "2x2", "L", "J", "T", "S");
 
     private static final int MAX_LOOT_CHARS = 1_000_000;
-    private static final int MAX_ITEMS = 500;
-    private static final int MAX_CONTAINERS = 200;
-    private static final int MAX_TABLES = 200;
-    private static final int MAX_MAPS = 50;
-    private static final int MAX_POOL_PER_TABLE = 200;
-    private static final int MAX_RARITIES = 12;
+    static final int MAX_ITEMS = 500;
+    static final int MAX_CONTAINERS = 200;
+    static final int MAX_TABLES = 200;
+    static final int MAX_MAPS = 50;
+    static final int MAX_POOL_PER_TABLE = 200;
+    static final int MAX_RARITIES = 12;
 
     // ==================================================================================
     // 内置默认内容（只读镜像 / 懒 seed 初值）
@@ -76,7 +76,7 @@ public class LootContentController {
      * 内置五档。unitValue = <b>每格基准价</b>：物品面值 ≈ 该档每格价 × 占格数，
      * 于是「同等稀有度下占格越多越值钱」是配置出来的，不是代码写死的。
      */
-    private static final List<Map<String, Object>> BASE_RARITIES = List.of(
+    static final List<Map<String, Object>> BASE_RARITIES = List.of(
             rarity("common", "普通", "slate", 65),
             rarity("uncommon", "精良", "blue", 280),
             rarity("rare", "稀有", "purple", 830),
@@ -381,7 +381,7 @@ public class LootContentController {
     }
 
     /** 档位 key 列表（数组顺序 = 由低到高） */
-    private static List<String> orderOf(List<Map<String, Object>> rarities) {
+    static List<String> orderOf(List<Map<String, Object>> rarities) {
         List<String> out = new ArrayList<>();
         for (Map<String, Object> r : rarities) {
             Object k = r.get("key");
@@ -395,7 +395,7 @@ public class LootContentController {
     // ==================================================================================
 
     /** 稀有度档位：key 非空且唯一；color 不在色板里回落 slate；unitValue ≥ 0 */
-    private static List<Map<String, Object>> sanitizeRarities(JsonNode node) {
+    static List<Map<String, Object>> sanitizeRarities(JsonNode node) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node != null && node.isArray()) {
             Set<String> seen = new LinkedHashSet<>();
@@ -418,7 +418,7 @@ public class LootContentController {
         return out.isEmpty() ? new ArrayList<>(BASE_RARITIES) : out;
     }
 
-    private static List<Map<String, Object>> sanitizeItems(JsonNode node, List<String> order) {
+    static List<Map<String, Object>> sanitizeItems(JsonNode node, List<String> order) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -458,14 +458,14 @@ public class LootContentController {
     }
 
     /** 旧配置（只有标量 slots、没有网格字段）的迁移 —— 不迁移容器会被整条丢掉 */
-    private static int[] gridFromSlots(int slots) {
+    static int[] gridFromSlots(int slots) {
         if (slots <= 1) return new int[]{1, 1, 1, 1};
         if (slots == 2) return new int[]{2, 2, 1, 1};
         if (slots <= 4) return new int[]{2, 2, 2, 2};
         return new int[]{3, 3, 2, 2};
     }
 
-    private static List<Map<String, Object>> sanitizeContainers(JsonNode node, List<String> order) {
+    static List<Map<String, Object>> sanitizeContainers(JsonNode node, List<String> order) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -518,7 +518,7 @@ public class LootContentController {
     }
 
     /** 各档权重：order 里每一档都必须是 ≥ 0 的有限数、总和 > 0；否则返回 null（丢该条） */
-    private static Map<String, Object> sanitizeRarityWeights(JsonNode node, List<String> order) {
+    static Map<String, Object> sanitizeRarityWeights(JsonNode node, List<String> order) {
         if (node == null || !node.isObject()) return null;
         Map<String, Object> out = new LinkedHashMap<>();
         double sum = 0;
@@ -531,7 +531,7 @@ public class LootContentController {
         return sum > 0 ? out : null;
     }
 
-    private static List<Map<String, Object>> sanitizeTables(JsonNode node) {
+    static List<Map<String, Object>> sanitizeTables(JsonNode node) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -565,7 +565,7 @@ public class LootContentController {
     }
 
     /** 地图净化：entry / containers 逐层净化；id 缺或重复丢弃该条 */
-    private static List<Map<String, Object>> sanitizeMaps(JsonNode node) {
+    static List<Map<String, Object>> sanitizeMaps(JsonNode node) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (node == null || !node.isArray()) return out;
         Set<String> seen = new LinkedHashSet<>();
@@ -603,7 +603,7 @@ public class LootContentController {
         return out;
     }
 
-    private static Map<String, Object> sanitizeEntry(JsonNode node) {
+    static Map<String, Object> sanitizeEntry(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("coins", 0);
         out.put("items", new ArrayList<>());
@@ -636,7 +636,7 @@ public class LootContentController {
     }
 
     /** 全局参数净化：缺字段用内置默认补齐，保证 C 端无脑消费不会拿到 null */
-    private static Map<String, Object> sanitizeBalance(JsonNode node) {
+    static Map<String, Object> sanitizeBalance(JsonNode node) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (node == null || !node.isObject()) return baseBalance();
         out.put("recycleRate", JsonSanitizer.clampDbl(node.get("recycleRate"), 0, 1, 0.6));
@@ -654,7 +654,7 @@ public class LootContentController {
     }
 
     /** 库中有 balance map 时用库值覆盖内置（缺字段保留内置），再走净化口径 */
-    private static Map<String, Object> mergeBalance(Map<String, Object> lib) {
+    static Map<String, Object> mergeBalance(Map<String, Object> lib) {
         Map<String, Object> merged = new LinkedHashMap<>(baseBalance());
         for (String k : merged.keySet()) {
             if (lib.containsKey(k) && lib.get(k) != null) merged.put(k, lib.get(k));
