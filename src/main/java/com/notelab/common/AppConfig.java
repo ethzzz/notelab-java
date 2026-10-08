@@ -148,6 +148,17 @@ public final class AppConfig {
         return INSECURE_DEFAULT_ANALYTICS_SALT.equals(analyticsIpSalt());
     }
 
+    /**
+     * 是否给会话 Cookie 加 {@code Secure}（只允许 HTTPS 携带）。
+     *
+     * <p>线上全站 HTTPS（nginx:80 → 301，且已配 HSTS），所以生产应开 —— 见 .env 的
+     * {@code COOKIE_SECURE=1}。做成配置项而非写死：本地走 HTTP 时开了会**登录不上**
+     * （浏览器不会在明文请求里带上 Secure Cookie），这种取舍不该由代码替人决定。
+     */
+    public static boolean cookieSecure() {
+        return "1".equals(get("COOKIE_SECURE", "").trim());
+    }
+
     public static String redisHost() {
         return get("REDIS_HOST", "127.0.0.1");
     }

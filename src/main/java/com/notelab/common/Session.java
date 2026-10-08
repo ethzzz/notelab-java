@@ -70,27 +70,31 @@ public final class Session {
         return null;
     }
 
+    /**
+     * 统一的 Set-Cookie 构造：{@code SameSite=Lax} + {@code HttpOnly} 恒定；
+     * {@code Secure} 由 {@link AppConfig#cookieSecure()} 决定（生产 .env 开、本地 HTTP 开发关）。
+     *
+     * <p>抽成一个方法是因为四个出口（B/C 端 × 设置/清除）原先各抄了一遍同样的属性链 ——
+     * 想加一个安全属性就得改四处，漏一处就会出现「一半 Cookie 有保护」。
+     */
+    private static void writeCookie(HttpServletResponse resp, String name, String value, long maxAge) {
+        org.springframework.http.ResponseCookie.ResponseCookieBuilder b =
+                org.springframework.http.ResponseCookie.from(name, value)
+                        .maxAge(maxAge)
+                        .path("/")
+                        .sameSite("Lax")
+                        .httpOnly(true);
+        if (AppConfig.cookieSecure()) b.secure(true);
+        resp.addHeader("Set-Cookie", b.build().toString());
+    }
+
     public static void setCookie(HttpServletResponse resp, String token) {
-        // Python: resp.set_cookie(SESSION_COOKIE, token, max_age=SESSION_TTL, httponly=True, samesite="lax")
-        org.springframework.http.ResponseCookie rc = org.springframework.http.ResponseCookie
-                .from(AppConfig.SESSION_COOKIE, token)
-                .maxAge(AppConfig.SESSION_TTL)
-                .path("/")
-                .sameSite("Lax")
-                .httpOnly(true)
-                .build();
-        resp.addHeader("Set-Cookie", rc.toString());
+        // 对齐 Python：set_cookie(..., max_age=SESSION_TTL, httponly=True, samesite="lax")
+        writeCookie(resp, AppConfig.SESSION_COOKIE, token, AppConfig.SESSION_TTL);
     }
 
     public static void deleteCookie(HttpServletResponse resp) {
-        org.springframework.http.ResponseCookie rc = org.springframework.http.ResponseCookie
-                .from(AppConfig.SESSION_COOKIE, "")
-                .maxAge(0)
-                .path("/")
-                .sameSite("Lax")
-                .httpOnly(true)
-                .build();
-        resp.addHeader("Set-Cookie", rc.toString());
+        writeCookie(resp, AppConfig.SESSION_COOKIE, "", 0);
     }
 
     // ================= C 端（B/C 拆分阶段1）：独立 4 段 token，与 B 端 3 段天然互不认 =================
@@ -140,24 +144,10 @@ public final class Session {
     }
 
     public static void setCookieC(HttpServletResponse resp, String token) {
-        org.springframework.http.ResponseCookie rc = org.springframework.http.ResponseCookie
-                .from(AppConfig.SESSION_COOKIE_C, token)
-                .maxAge(AppConfig.SESSION_TTL)
-                .path("/")
-                .sameSite("Lax")
-                .httpOnly(true)
-                .build();
-        resp.addHeader("Set-Cookie", rc.toString());
+        writeCookie(resp, AppConfig.SESSION_COOKIE_C, token, AppConfig.SESSION_TTL);
     }
 
     public static void deleteCookieC(HttpServletResponse resp) {
-        org.springframework.http.ResponseCookie rc = org.springframework.http.ResponseCookie
-                .from(AppConfig.SESSION_COOKIE_C, "")
-                .maxAge(0)
-                .path("/")
-                .sameSite("Lax")
-                .httpOnly(true)
-                .build();
-        resp.addHeader("Set-Cookie", rc.toString());
+        writeCookie(resp, AppConfig.SESSION_COOKIE_C, "", 0);
     }
 }
