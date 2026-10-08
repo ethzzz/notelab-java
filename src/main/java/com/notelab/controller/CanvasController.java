@@ -21,14 +21,19 @@ import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
  * B 端协作画布：前缀 /api/canvas。
  *
- * <p><b>职责划分</b>：本控制器只管**元数据**（有哪些画布、叫什么名字、谁建的）；
- * 画布**内容**（tldraw 文档快照）由协作服务（notelab-b/collab，本机 :3030）的 SQLite 持有，
- * 两边靠 {@code room_id} 关联。这里不读写内容，避免把大快照塞进业务库。
+ * <p><b>职责划分</b>：本控制器只管**元数据**（有哪些画布、叫什么名字、用哪套引擎、谁建的）；
+ * 画布**内容**（tldraw 文档快照 / Excalidraw 场景）由协作服务（notelab-b/collab，本机 :3030）
+ * 的 SQLite 持有，两边靠 {@code room_id} 关联。这里不读写内容，避免把大快照塞进业务库。
+ *
+ * <p><b>两套引擎</b>：{@code engine} 是画布级属性，建好即固定（两套的文档格式不通用，要换就新建）。
+ * 新增引擎时需三处同步登记：本文件的 {@link #ENGINES}、notelab-b 前端 engines 注册表、
+ * collab 服务的 ENGINES —— 三处都是显式白名单，不做字符串猜引擎。
  *
  * <p>全部要求 B 端登录（AuthUtil）；路由由 PermService 启动时自动登记进 perm_routes
  * （⚠️ 新 Controller 必须重启后端才进权限表）。
@@ -43,6 +48,10 @@ public class CanvasController {
     private static final Pattern ROOM_ID = Pattern.compile("^[0-9a-f]{16}$");
     private static final SecureRandom RND = new SecureRandom();
 
+    /** 支持的画布引擎白名单（建库默认值也是它） */
+    private static final Set<String> ENGINES = Set.of("tldraw", "excalidraw");
+    private static final String DEFAULT_ENGINE = "tldraw";
+
     /** 协作服务本机地址：仅用于「删画布时顺带清房间」，公网不暴露 */
     private static final String COLLAB_BASE = "http://127.0.0.1:3030";
     private static final HttpClient HTTP = HttpClient.newBuilder()
@@ -50,6 +59,8 @@ public class CanvasController {
 
     public static class CanvasReq {
         public String title;
+        /** 可选：tldraw | excalidraw，缺省 tldraw */
+        public String engine;
     }
 
     // ================= CRUD =================
@@ -86,15 +97,18 @@ public class CanvasController {
         if (me == null) return AuthUtil.unauth();
         String title = normalizeTitle(req == null ? null : req.title, "未命名画布");
         if (title == null) return bad("标题过长（上限 " + MAX_TITLE_LEN + " 字）");
+        String engine = normalizeEngine(req == null ? null : req.engine);
+        if (engine == null) return bad("不支持的画布引擎（可选：" + String.join(" / ", ENGINES) + "）");
         Object idObj = me.get("id");
         Long createdBy = idObj instanceof Number n ? n.longValue() : null;
         String roomId = newRoomId();
-        long id = CanvasDocDao.create(roomId, title, createdBy);
+        long id = CanvasDocDao.create(roomId, title, engine, createdBy);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", id);
         body.put("roomId", roomId);
         body.put("title", title);
+        body.put("engine", engine);
         return ResponseEntity.ok(body);
     }
 
@@ -151,12 +165,27 @@ public class CanvasController {
         return t.length() > MAX_TITLE_LEN ? null : t;
     }
 
+    /**
+     * 引擎归一化：缺省 → {@link #DEFAULT_ENGINE}；不在白名单 → null（调用方转 400）。
+     *
+     * <p>刻意**不做**「不认识就落回默认」的宽容处理：引擎写错会导致前端拿一个没有实现的
+     * 名字去拼 WS 地址，表现为画布打开即白屏且没有任何报错——宁可建画布时就 400 掉。
+     */
+    private static String normalizeEngine(String raw) {
+        String e = raw == null ? "" : raw.trim().toLowerCase();
+        if (e.isEmpty()) return DEFAULT_ENGINE;
+        return ENGINES.contains(e) ? e : null;
+    }
+
     private static ResponseEntity<Map<String, Object>> bad(String msg) {
         return ResponseEntity.status(400).body(Map.of("error", msg));
     }
 
     /**
      * 通知协作服务删除房间内容（本机调用）。
+     *
+     * <p>协作服务会**遍历所有引擎**逐个清（tldraw 的 room_&lt;id&gt;_* 与 excalidraw 的
+     * exc_&lt;id&gt;_*），所以这里不需要知道这个画布用的是哪套引擎。
      *
      * <p>best-effort：协作服务不可达**不影响**删除元数据（room_id 随机不复用，残留只占磁盘）；
      * 但失败必须**留痕**——静默吞掉的话，删画布"看起来成功"，实际垃圾在 SQLite 里越堆越多，

@@ -261,17 +261,24 @@ final class DbSchema {
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- B 端协作画布（只增不改）：只存元数据，画布内容由协作服务(notelab-b/collab)的 SQLite 持有。
         //      room_id 为 16 位 hex 随机串，前端用它拼协作 ws 地址与页面参数；不复用、不顺序分配。
+        //      engine 决定这个画布由哪套引擎渲染（tldraw | excalidraw）：两套实现的文档格式不通用，
+        //      所以引擎是**画布级**属性、建好即固定（要换引擎就新建一个画布）。
         Db.exec("""
             CREATE TABLE IF NOT EXISTS canvas_doc (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 room_id CHAR(16) NOT NULL,
                 title VARCHAR(200) NOT NULL,
+                engine VARCHAR(16) NOT NULL DEFAULT 'tldraw',
                 created_by BIGINT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY uk_canvas_room (room_id),
                 KEY idx_canvas_updated (updated_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // engine 是后加的列：老库靠这一句补上（MySQL 没有 ADD COLUMN IF NOT EXISTS，先查再 ALTER，重启幂等）
+        if (!hasColumn("canvas_doc", "engine")) {
+            Db.exec("ALTER TABLE canvas_doc ADD COLUMN engine VARCHAR(16) NOT NULL DEFAULT 'tldraw'");
+        }
         // ---- C 端游戏存档（只增不改）：按 user_id + game_code 唯一，data_json 存各游戏自有结构 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS c_game_save (

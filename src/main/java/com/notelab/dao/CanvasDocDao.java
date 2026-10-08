@@ -17,13 +17,14 @@ public final class CanvasDocDao {
     private CanvasDocDao() {}
 
     /** 全列序（画布元数据没有大字段，列表与详情共用） */
-    private static final String[] COLS = {"id", "room_id", "title", "created_by", "created_at", "updated_at"};
+    private static final String[] COLS = {"id", "room_id", "title", "engine", "created_by", "created_at", "updated_at"};
 
     /** 新建画布，返回自增 id */
-    public static long create(String roomId, String title, Long createdBy) {
+    public static long create(String roomId, String title, String engine, Long createdBy) {
         CanvasDoc d = new CanvasDoc();
         d.setRoomId(roomId);
         d.setTitle(title);
+        d.setEngine(engine);
         d.setCreatedBy(createdBy);
         DaoSupport.canvasDoc().insert(d);
         return d.getId() == null ? 0L : d.getId();
