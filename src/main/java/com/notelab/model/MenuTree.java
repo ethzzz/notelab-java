@@ -54,6 +54,9 @@ public final class MenuTree {
                     menu("translate", "翻译句子库", "🌐", "/translate", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),
                     menu("docs", "文档编辑", "📝", "/docs", true),
+                    // 协作画布：tldraw 白板（画布 + 富文本卡片），多人实时协作；
+                    // 元数据存 canvas_doc（见 CanvasController），内容由协作服务 :3030 的 SQLite 持有。
+                    menu("canvas", "协作画布", "🖌️", "/canvas", true),
                     menu("notes", "笔记", "🗒️", "/notes", true),
                     menu("tools", "AI工具库", "🔧", "/tools", true),
                     menu("stress-test", "接口压测", "🔥", "/stress-test", true),

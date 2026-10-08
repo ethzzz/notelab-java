@@ -4,6 +4,7 @@ import com.notelab.mapper.ArchScanCycleMapper;
 import com.notelab.mapper.ArchScanRunMapper;
 import com.notelab.mapper.ArchScanViolationMapper;
 import com.notelab.mapper.ConversationMapper;
+import com.notelab.mapper.CanvasDocMapper;
 import com.notelab.mapper.CGameSaveMapper;
 import com.notelab.mapper.CUserGroupMapper;
 import com.notelab.mapper.CUserMapper;
@@ -62,6 +63,7 @@ public class DaoSupport {
     private static InviteCodeMapper inviteCodeMapper;
     private static DocumentMapper documentMapper;
     private static NoteMapper noteMapper;
+    private static CanvasDocMapper canvasDocMapper;
     private static EnTrGroupMapper enTrGroupMapper;
     private static EnTrSentenceMapper enTrSentenceMapper;
     private static EnTrSubmissionMapper enTrSubmissionMapper;
@@ -89,6 +91,7 @@ public class DaoSupport {
                       InviteCodeMapper inviteCodeMapper,
                       DocumentMapper documentMapper,
                       NoteMapper noteMapper,
+                      CanvasDocMapper canvasDocMapper,
                       EnTrGroupMapper enTrGroupMapper,
                       EnTrSentenceMapper enTrSentenceMapper,
                       EnTrSubmissionMapper enTrSubmissionMapper) {
@@ -115,6 +118,7 @@ public class DaoSupport {
         DaoSupport.inviteCodeMapper = inviteCodeMapper;
         DaoSupport.documentMapper = documentMapper;
         DaoSupport.noteMapper = noteMapper;
+        DaoSupport.canvasDocMapper = canvasDocMapper;
         DaoSupport.enTrGroupMapper = enTrGroupMapper;
         DaoSupport.enTrSentenceMapper = enTrSentenceMapper;
         DaoSupport.enTrSubmissionMapper = enTrSubmissionMapper;
@@ -153,6 +157,7 @@ public class DaoSupport {
     public static InviteCodeMapper inviteCode() { return inviteCodeMapper; }
     public static DocumentMapper document() { return documentMapper; }
     public static NoteMapper note() { return noteMapper; }
+    public static CanvasDocMapper canvasDoc() { return canvasDocMapper; }
     public static EnTrGroupMapper enTrGroup() { return enTrGroupMapper; }
     public static EnTrSentenceMapper enTrSentence() { return enTrSentenceMapper; }
     public static EnTrSubmissionMapper enTrSubmission() { return enTrSubmissionMapper; }

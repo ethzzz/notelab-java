@@ -259,6 +259,19 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- B 端协作画布（只增不改）：只存元数据，画布内容由协作服务(notelab-b/collab)的 SQLite 持有。
+        //      room_id 为 16 位 hex 随机串，前端用它拼协作 ws 地址与页面参数；不复用、不顺序分配。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS canvas_doc (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                room_id CHAR(16) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                created_by BIGINT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_canvas_room (room_id),
+                KEY idx_canvas_updated (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- C 端游戏存档（只增不改）：按 user_id + game_code 唯一，data_json 存各游戏自有结构 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS c_game_save (

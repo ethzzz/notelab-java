@@ -29,6 +29,10 @@ public final class PageRoutes {
             // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除
             new String[]{"/trpg/gen", "生成剧本"},
             new String[]{"/docs", "文档编辑"},
+            // 协作画布（与 MenuTree.g_tools 的 canvas 一一对应；漏这里叶子会被 RBAC 过滤看不到）。
+            // ⚠️ 编辑页用 /canvas?room=<roomId> 单页承载（守卫 pages.includes(pathname) 是**精确匹配**，
+            //    子路由 /canvas/xxx 不在表里会被判无权限），故本表只需登记 /canvas 一条。
+            new String[]{"/canvas", "协作画布"},
             new String[]{"/notes", "笔记"},
             // 爬塔工坊由单页 4 个 Tab 拆成 6 个子页（原 /spire-editor 现为 307 重定向，见 notelab-b/next.config.ts）。
             // ⚠️ 这里与 MenuTree.gc_spire 必须一一对应：只加菜单不加路由 → 叶子被 RBAC 过滤，谁都看不到；
