@@ -22,7 +22,6 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 /**
  * 运维看板 / 发布自检：前缀 {@code /api/admin}（受限前缀，仅 super_admin）。
@@ -64,9 +63,6 @@ public class OpsController {
     private static final int MAX_OUT = 200_000;
     private static final int CMD_TIMEOUT_SEC = 8;
     private static final int HTTP_TIMEOUT_MS = 4000;
-
-    /** 审计查询的 day 参数格式；不合法就忽略（回落到今天）而不是丢个空结果 —— 空结果看着像「没数据」 */
-    private static final Pattern DAY_RE = Pattern.compile("\\d{4}-\\d{2}-\\d{2}");
 
     // ------------------------------------------------------------------ 接口
 
@@ -116,7 +112,7 @@ public class OpsController {
         if (!PermService.isSuperAdmin(me)) return ResponseEntity.status(403).body(Map.of("error", "需要超级管理员权限"));
 
         // 缺省 = 今天：审计的第一眼就是「今天有没有异常」
-        String d = (day != null && DAY_RE.matcher(day.trim()).matches()) ? day.trim() : LocalDate.now().toString();
+        String d = normalizeDay(day);
         String fIp = blankToNull(ip), fUser = blankToNull(username), fResult = blankToNull(result);
 
         int p = Math.max(1, page);
@@ -135,6 +131,26 @@ public class OpsController {
 
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s.trim();
+    }
+
+    /**
+     * day 参数归一化。
+     *
+     * <p>⚠️ 必须用 {@link LocalDate#parse} 做**语义**校验，光校验形状（正则 {@code \d{4}-\d{2}-\d{2}}）
+     * 是不够的 —— {@code "2026-13-45"} 形状完全合法，透给 MySQL 会直接
+     * {@code Incorrect DATE value} → 走全局异常处理器 → **500**。
+     * （验收时就踩到了这一条。）
+     *
+     * <p>任何非法值一律**回落今天**，而不是报错或丢个空结果 —— 空结果看着像「今天没数据」，
+     * 比报错更容易误导人。
+     */
+    private static String normalizeDay(String day) {
+        if (day == null || day.isBlank()) return LocalDate.now().toString();
+        try {
+            return LocalDate.parse(day.trim()).toString();
+        } catch (Exception e) {
+            return LocalDate.now().toString();
+        }
     }
 
     /**
