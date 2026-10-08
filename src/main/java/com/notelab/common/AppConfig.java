@@ -31,6 +31,19 @@ public final class AppConfig {
      */
     public static final String DEFAULT_REPO_ROOT = "/root/Notelab";
 
+    /**
+     * 源码里公开的占位会话密钥。**绝不可用于生产**。
+     *
+     * <p>为什么把它抽成具名常量：2026-10-08 发现线上确实一度在用它（`.env` 里没有 SECRET_KEY），
+     * 而用它是**静默**的 —— 服务照常启动、接口照常 200，只是任何人拿这个公开字符串就能
+     * 伪造任意用户（含 super_admin uid=18）的会话。抽成常量后 {@link #secretKeyIsInsecure()}
+     * 与 `Bootstrap` 的启动自检都引用它，避免"检测逻辑里再抄一份字面量"。
+     */
+    public static final String INSECURE_DEFAULT_SECRET = "dev-secret-change-me";
+
+    /** 同上，用于分析库 IP 哈希的盐（危害小得多：只影响 IP 匿名性）。 */
+    public static final String INSECURE_DEFAULT_ANALYTICS_SALT = "notelab-analytics-salt";
+
     private static final Map<String, String> FILE_ENV = new LinkedHashMap<>();
     private static volatile boolean loaded = false;
 
@@ -106,8 +119,33 @@ public final class AppConfig {
         return keys;
     }
 
+    /**
+     * 会话签名密钥（HMAC-SHA256）—— B 端 {@code notelab_session} 与 C 端 {@code notelab_c_session} 共用。
+     *
+     * <p>⚠️ <b>生产必须在 .env 里显式配置</b>。未配置时回落 {@link #INSECURE_DEFAULT_SECRET}
+     * （源码里公开的字符串）→ {@link #secretKeyIsInsecure()} 为真 → `Bootstrap` **拒绝启动**。
+     *
+     * <p>⚠️ 改这个值 = 所有 B/C 端会话立即失效（用户需重新登录）；旁路服务（ai-lab 等）若
+     * 缓存了会话也要一并清理。
+     */
     public static String secretKey() {
-        return get("SECRET_KEY", "dev-secret-change-me");
+        return get("SECRET_KEY", INSECURE_DEFAULT_SECRET);
+    }
+
+    /** 会话密钥是否仍是公开占位值（或空）—— 生产环境为真即视为致命配置错误。 */
+    public static boolean secretKeyIsInsecure() {
+        String v = secretKey();
+        return v.isEmpty() || INSECURE_DEFAULT_SECRET.equals(v);
+    }
+
+    /** 分析库 IP 盐：IP 只存 {@code HmacSHA256(ip + 盐)} 的前 16 位，盐不入库。 */
+    public static String analyticsIpSalt() {
+        return get("ANALYTICS_IP_SALT", INSECURE_DEFAULT_ANALYTICS_SALT);
+    }
+
+    /** IP 盐是否仍是公开占位值 —— 只告警不阻断（影响力仅限 IP 匿名性，不影响认证）。 */
+    public static boolean analyticsSaltIsInsecure() {
+        return INSECURE_DEFAULT_ANALYTICS_SALT.equals(analyticsIpSalt());
     }
 
     public static String redisHost() {

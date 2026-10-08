@@ -190,7 +190,7 @@ public final class EventRecorder {
         String ip = clientIp(request);
         if (ip == null || ip.isEmpty()) return null;
         try {
-            String salt = AppConfig.get("ANALYTICS_IP_SALT", "notelab-analytics-salt");
+            String salt = AppConfig.analyticsIpSalt();
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(salt.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] d = mac.doFinal(ip.getBytes(StandardCharsets.UTF_8));
