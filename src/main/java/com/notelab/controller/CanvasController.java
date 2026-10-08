@@ -1,6 +1,7 @@
 package com.notelab.controller;
 
 import com.notelab.dao.CanvasDocDao;
+import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -65,15 +66,25 @@ public class CanvasController {
 
     // ================= CRUD =================
 
-    /** 列表：q 模糊匹配标题；按最近编辑倒序 */
+    /** 列表：q 模糊匹配标题；按最近编辑倒序。**超管看全部，其他人只看自己建的** */
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(@RequestParam(required = false) String q,
                                                     @RequestParam(defaultValue = "100") int limit,
                                                     HttpServletRequest request) {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
+        // ownerFilter = null 表示不过滤（只有超管能这样）；其他人强制按 created_by 收窄
+        Long ownerFilter = null;
+        if (!PermService.isSuperAdmin(me)) {
+            ownerFilter = meId(me);
+            // ⚠️ fail-closed：拿不到自己的 id 时**不放行**。宁可给空列表，
+            //    也绝不能让 ownerFilter 停在 null 退化成「看全部」。
+            if (ownerFilter == null) {
+                return ResponseEntity.status(403).body(Map.of("error", "无法识别当前账户"));
+            }
+        }
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", CanvasDocDao.list(q, limit));
+        body.put("items", CanvasDocDao.list(q, ownerFilter, limit));
         return ResponseEntity.ok(body);
     }
 
@@ -84,9 +95,10 @@ public class CanvasController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!ROOM_ID.matcher(roomId).matches()) return bad("房间号格式非法");
-        Map<String, Object> row = CanvasDocDao.getByRoom(roomId);
-        if (row == null) return ResponseEntity.status(404).body(Map.of("error", "画布不存在"));
-        return ResponseEntity.ok(row);
+        // ⚠️ 本接口同时是**协作服务握手的鉴权入口** —— collab/lib/auth.mjs 会转发用户 cookie
+        //    调它，能读到元数据（200）才允许建立 WebSocket。改权限语义时务必兼顾这一处。
+        if (!canAccess(me, roomId)) return noAccess();
+        return ResponseEntity.ok(CanvasDocDao.getByRoom(roomId));
     }
 
     /** 新建画布（room_id 由服务端生成，客户端拿回后跳转编辑） */
@@ -120,9 +132,7 @@ public class CanvasController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!ROOM_ID.matcher(roomId).matches()) return bad("房间号格式非法");
-        if (!CanvasDocDao.existsByRoom(roomId)) {
-            return ResponseEntity.status(404).body(Map.of("error", "画布不存在"));
-        }
+        if (!canAccess(me, roomId)) return noAccess();
         String title = normalizeTitle(req == null ? null : req.title, null);
         if (title == null) return bad("标题为空或过长（上限 " + MAX_TITLE_LEN + " 字）");
         CanvasDocDao.rename(roomId, title);
@@ -139,15 +149,46 @@ public class CanvasController {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
         if (!ROOM_ID.matcher(roomId).matches()) return bad("房间号格式非法");
-        if (!CanvasDocDao.existsByRoom(roomId)) {
-            return ResponseEntity.status(404).body(Map.of("error", "画布不存在"));
-        }
+        if (!canAccess(me, roomId)) return noAccess();
         CanvasDocDao.delete(roomId);
         purgeRoom(roomId);
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
     // ================= 工具 =================
+
+    /** 当前会话的用户 id；拿不到返回 null */
+    private static Long meId(Map<String, Object> me) {
+        Object id = me.get("id");
+        return id instanceof Number n ? n.longValue() : null;
+    }
+
+    /**
+     * 画布可见性判定：**超管看全部；其他人只能碰自己建的**。
+     *
+     * <p>语义取舍（2026-10-09 定，方案 B「个人私有 + 超管可见」）：
+     * 画布是**个人创作物**，不是公共列表 —— 别人既看不到、也改不了、更删不掉。
+     * 将来要演进到方案 C（画布级 ACL / 单独授权、只读分享）时，把本方法换成查共享表即可，
+     * 三个调用点（get / rename / delete）与 collab 的握手入口都不用动。
+     *
+     * <p>⚠️ 「画布不存在」与「不是你的」**都返回 false**，调用方统一回 403 ——
+     * 这样响应差异不会泄漏「某个 roomId 是否存在」。
+     *
+     * <p>⚠️ fail-closed：拿不到当前用户 id 也返回 false。绝不能让「身份解析失败」
+     * 退化成「放行」—— 那正是这类改动最容易埋下的反向漏洞。
+     */
+    private static boolean canAccess(Map<String, Object> me, String roomId) {
+        if (PermService.isSuperAdmin(me)) return true;
+        Long uid = meId(me);
+        if (uid == null) return false;
+        Long owner = CanvasDocDao.ownerId(roomId);
+        return owner != null && owner.longValue() == uid;
+    }
+
+    /** 无权限的统一响应：**刻意不区分**「画布不存在」与「不是你建的」 */
+    private static ResponseEntity<Map<String, Object>> noAccess() {
+        return ResponseEntity.status(403).body(Map.of("error", "画布不存在或无权访问"));
+    }
 
     /** 生成新房间号（8 字节随机 → 16 位 hex） */
     private static String newRoomId() {
