@@ -4,6 +4,7 @@ import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.common.Passwords;
 import com.notelab.service.RateLimit;
+import com.notelab.service.PermService;
 import com.notelab.common.Session;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -22,6 +23,9 @@ public class AuthController {
 
     private static final Pattern USERNAME_RE = Pattern.compile("[A-Za-z0-9_\\u4e00-\\u9fa5]{2,20}");
     private static final Pattern EMAIL_RE = Pattern.compile("[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}");
+
+    /** X-Auth-Purpose 取值：ai-lab 门禁（nginx /_ailab_auth 注入） */
+    private static final String PURPOSE_AILAB = "ailab";
 
     public static class AuthReq {
         public String username;
@@ -77,9 +81,20 @@ public class AuthController {
      * SSO 校验端点（nginx auth_request 子请求专用，ai-lab 等旁路服务门禁）：
      * B 端会话优先、C 端会话也认；200 时通过 X-Auth-User 头透传 "b:<id>" / "c:<id>"，
      * 供 nginx auth_request_set 注入上游（子请求响应体不可取，只能走头）。
+     *
+     * <p>调用方通过 {@code X-Auth-Purpose} 声明「来意」，本端点据此做**用途级**判定：
+     * <ul>
+     *   <li>{@code ailab}（nginx /_ailab_auth 注入）—— ai-lab 属「后台之外」的服务，
+     *       外部账号（external）一律 403。**返回 403 而非 401**：401 会触发
+     *       {@code error_page 401 = @ailab_login} 把人送到登录页，可他已经登录了，
+     *       送过去只会看到一个用不了的登录表单；403 才是诚实的「已登录但无权限」。</li>
+     *   <li>不带该头（协作画布的 WS 握手就是这么调的）—— 只验「是不是 B 端登录用户」，
+     *       不做用途判定。**别把用途判定做成默认行为**，否则画布会跟着受连累。</li>
+     * </ul>
      */
     @GetMapping("/auth/verify")
-    public ResponseEntity<Map<String, Object>> verify(HttpServletRequest request) {
+    public ResponseEntity<Map<String, Object>> verify(HttpServletRequest request,
+                                                      @RequestHeader(value = "X-Auth-Purpose", required = false) String purpose) {
         Map<String, Object> user = AuthUtil.user(request);
         String prefix = "b";
         if (user == null) {
@@ -87,6 +102,9 @@ public class AuthController {
             prefix = "c";
         }
         if (user == null) return AuthUtil.unauth();
+        if (PURPOSE_AILAB.equals(purpose) && "b".equals(prefix) && PermService.isExternal(user)) {
+            return ResponseEntity.status(403).body(Map.of("error", "外部账号无权访问该服务"));
+        }
         return ResponseEntity.ok()
                 .header("X-Auth-User", prefix + ":" + AuthUtil.userId(user))
                 .body(Map.of("ok", true, "scope", prefix, "id", user.get("id")));

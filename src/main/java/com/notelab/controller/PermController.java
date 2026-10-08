@@ -29,6 +29,10 @@ import java.util.regex.Pattern;
  *  POST   /api/perm/users/batch-role      批量把账户加入某个角色组（B 端用户组）
  *  POST   /api/perm/users/{id}/password   重置账户密码
  *  DELETE /api/perm/users/{id}            删除账户
+ *
+ * <p>内置角色：{@code super_admin} 超管 / {@code user} 普通用户 / {@code external} 外部账号。
+ * 三者都不可删除；外部账号另有三条硬约束（不可提升为超管、不可自助改密、不可进后台之外的服务），
+ * 详见 {@link PermService#ROLE_EXTERNAL}。
  */
 @RestController
 @RequestMapping("/api/perm")
@@ -123,8 +127,9 @@ public class PermController {
         Map<String, Object> me = guard(request);
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return forbidden();
-        if (PermService.ROLE_ADMIN.equals(code) || PermService.ROLE_USER.equals(code)) {
-            return ResponseEntity.status(400).body(Map.of("error", "内置角色（超级管理员/普通用户）不可删除"));
+        if (PermService.ROLE_ADMIN.equals(code) || PermService.ROLE_USER.equals(code)
+                || PermService.ROLE_EXTERNAL.equals(code)) {
+            return ResponseEntity.status(400).body(Map.of("error", "内置角色（超级管理员/普通用户/外部账号）不可删除"));
         }
         if (PermService.getRole(code) == null) return ResponseEntity.status(404).body(Map.of("error", "角色不存在"));
         long n = PermService.countUsersByRole(code);
@@ -267,6 +272,11 @@ public class PermController {
         if (id == meId && !PermService.ROLE_ADMIN.equals(req.role) && PermService.countSuperAdmins() <= 1) {
             return ResponseEntity.status(400).body(Map.of("error", "至少需要保留一名超级管理员"));
         }
+        // 外部账号不可直接提升为超管：这类账号是发给外部人员的，直接赋权会一步拿到全部后台能力。
+        // 确需转为内部账号时，先改成其它角色组（如「普通用户」），再循序渐进 —— 多一步、留痕。
+        if (PermService.ROLE_ADMIN.equals(req.role) && PermService.isExternal(target)) {
+            return ResponseEntity.status(400).body(Map.of("error", "外部账号不可直接提升为超级管理员，请先改为其它角色组"));
+        }
         PermService.setUserRole(id, req.role);
         return ResponseEntity.ok(Map.of("ok", true));
     }
@@ -282,6 +292,7 @@ public class PermController {
      *  - 单批上限 200，防止误选全表；
      *  - **超管归零保护**：若本次会把所有超管都降走，则整批拒绝——批量场景下必须按「本次降级了几个超管」计算，
      *    只比 countSuperAdmins()<=1 会漏判（例如一次把仅剩的 2 个超管都改走）；
+     *  - **外部账号保护**：本批若含 external 账号，则不可作为 super_admin 的目标（与单人接口同规则）；
      *  - 不存在的 id 不报错，剔除后返回实际生效数量与 missing 列表（前端已删账户时仍然可提交）。
      */
     @PostMapping("/users/batch-role")
@@ -304,12 +315,20 @@ public class PermController {
         List<Map<String, Object>> found = PermService.listUsersByIds(new ArrayList<>(want));
         List<Long> valid = new ArrayList<>();
         long demotingAdmins = 0;
+        long externalCount = 0;
         for (Map<String, Object> u : found) {
             valid.add(((Number) u.get("id")).longValue());
             if (PermService.ROLE_ADMIN.equals(u.get("role"))) demotingAdmins++;
+            if (PermService.isExternal(u)) externalCount++;
         }
         if (valid.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("error", "所选账户均已不存在"));
+        }
+        // 外部账号不可被提升为超管（与单人接口同规则）：批量场景必须按「本批里混进来几个外部账号」算，
+        // 只判断单条会漏 —— 一次把 external 混在正常账号里提交就绕过去了。
+        if (PermService.ROLE_ADMIN.equals(req.role) && externalCount > 0) {
+            return ResponseEntity.status(400).body(Map.of("error",
+                    "所选账户中含 " + externalCount + " 个外部账号，不可直接提升为超级管理员"));
         }
         if (!PermService.ROLE_ADMIN.equals(req.role)
                 && PermService.countSuperAdmins() - demotingAdmins < 1) {

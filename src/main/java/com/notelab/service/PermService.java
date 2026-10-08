@@ -35,12 +35,32 @@ import com.notelab.dao.PermDao;
  * 自动注册：每次启动时把当前所有 Controller 路由 + 前端页面路由 upsert 进 perm_routes 表，
  * 以后新增路由无需手工登记，重启即自动出现在权限路由表里。
  *
- * 角色：super_admin（超级管理员，天然拥有全部路由，含未来新增）/ user（普通用户，按 perm_role_routes 分配）。
+ * 角色：super_admin（超级管理员，天然拥有全部路由，含未来新增）/ user（普通用户，按 perm_role_routes 分配）/
+ *      external（外部账号，见下）。
  */
 public final class PermService {
 
     public static final String ROLE_ADMIN = "super_admin";
     public static final String ROLE_USER = "user";
+
+    /**
+     * 外部账号：给**不注册账号的外部人员**使用的 B 端后台账号。
+     *
+     * <p>三条硬约束（与 ROLE_USER 的区别）：
+     * <ol>
+     *   <li><b>账号与密码只能由超管设置</b> —— 注册入口本就关闭；B 端也没有任何自助改密接口，
+     *       唯一的改密入口 {@code POST /api/perm/users/{id}/password} 只对超管开放。
+     *       所以外部账号连自己的密码都改不了，只能找超管重置。</li>
+     *   <li><b>只能登录 admin 后台</b> —— B/C 端本就是两套身份体系（users vs c_users），外部账号天然进不了 C 端；
+     *       而「后台之外」的子系统（ai-lab 走 nginx auth_request）由 {@code /api/auth/verify}
+     *       按 {@code X-Auth-Purpose} 单独拒绝，见 AuthController#verify。</li>
+     *   <li><b>不可被提升为超级管理员</b> —— PermController 的改角色接口显式拦截（单人 + 批量）。</li>
+     * </ol>
+     *
+     * <p>默认权限：**只有「仪表盘」（page:/）**，其余路由由超管在「角色组管理 → 分配路由」里手工勾。
+     * 之所以给一条底线而不是空权限：空清单会让登录后一片空白（连仪表盘都 403），是更糟的失败模式。
+     */
+    public static final String ROLE_EXTERNAL = "external";
 
     private static final Logger log = LoggerFactory.getLogger(PermService.class);
 
@@ -84,6 +104,12 @@ public final class PermService {
             }
             PermDao.setRoleRoutes(ROLE_USER, defaults);
         }
+        // 3b) 外部账号默认权限（同样只在为空时写入）：**只给仪表盘**。
+        //     比 user 组保守得多 —— 外部账号的定位就是「先能进后台，再按需逐条加」。
+        //     代价：超管若把 external 的权限全部取消，重启后仪表盘会回来（与 user 组同构的既有行为）。
+        if (PermDao.roleRouteCodes(ROLE_EXTERNAL).isEmpty()) {
+            PermDao.setRoleRoutes(ROLE_EXTERNAL, List.of("page:/"));
+        }
         // 4) 首次启动若尚无超级管理员：把最早注册的用户提升为超级管理员（避免无人可管理）
         if (UserDao.countSuperAdmins() == 0) {
             UserDao.promoteFirstUserToAdmin();
@@ -108,7 +134,9 @@ public final class PermService {
      * 那是另一回事，在这里重算会吃掉手工配置。
      *
      * <p>⚠️ 只处理 {@link #ROLE_USER}。自建角色组仍需管理员到「角色组管理」里勾 ——
-     * 它们的意图没法推断，不该被代码覆盖。
+     * 它们的意图没法推断，不该被代码覆盖。{@link #ROLE_EXTERNAL} 同理：它默认零 api 权限，
+     * 由超管在「分配路由」里按需勾（这和「默认只给仪表盘」是配套的 ——
+     * 仪表盘只调 /api/me 与 /api/menu，二者都在 PermGuard.SESSION_ENDPOINTS 里豁免，不需要任何 api 权限码）。
      */
     private static void syncUserApiPerms() {
         List<String> before = PermDao.roleRouteCodes(ROLE_USER);
@@ -142,6 +170,11 @@ public final class PermService {
 
     public static boolean isSuperAdmin(Map<String, Object> user) {
         return user != null && ROLE_ADMIN.equals(user.get("role"));
+    }
+
+    /** 是否外部账号（只由超管建号/改密、只允许在 B 端后台内使用、不可提升为超管） */
+    public static boolean isExternal(Map<String, Object> user) {
+        return user != null && ROLE_EXTERNAL.equals(String.valueOf(user.get("role")));
     }
 
     /** 角色是否有效：以 perm_roles 表为准（支持自建角色组） */

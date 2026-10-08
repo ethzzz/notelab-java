@@ -188,7 +188,9 @@ final class DbSchema {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 KEY idx_trpg_p_user (user_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
-        Db.exec("INSERT IGNORE INTO perm_roles (code,name) VALUES ('super_admin','超级管理员'),('user','普通用户')");
+        // external = 外部账号（给不注册账号的外部人用）：账号与密码一律由超管建/重置，默认只给「仪表盘」。
+        // 语义细节见 PermService.ROLE_EXTERNAL。
+        Db.exec("INSERT IGNORE INTO perm_roles (code,name) VALUES ('super_admin','超级管理员'),('user','普通用户'),('external','外部账号')");
         // ---- AI 工具库：tools 表（只增不改） ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS tools (
