@@ -255,9 +255,9 @@ public class SpireContentController {
      */
     private static final int MAX_SPIRE_CHARS = 1_000_000;
     /** 地图方案套数上限 */
-    private static final int MAX_PACKS = 20;
+    static final int MAX_PACKS = 20;
     /** 单套方案幕数上限（本项目 3 幕，留点余量） */
-    private static final int MAX_ACTS = 8;
+    static final int MAX_ACTS = 8;
     /** 单幕节点数上限（16 层 × 最多 ~6 列 ≈ 100，留足余量） */
     static final int MAX_NODES = 4000;
     /** 素材路径长度上限（只是个 URL/相对路径，防呆） */

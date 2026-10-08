@@ -242,7 +242,7 @@ public class LootContentController {
                             ctnCount("ct-med", 2), ctnCount("ct-safe", 2), ctnCount("ct-cage", 2)), 3));
 
     /** 全局参数（懒 seed 默认值）。背包 = 5×3 网格（15 格），旧版 backpackCap(8 件) 已废弃 */
-    private static Map<String, Object> baseBalance() {
+    static Map<String, Object> baseBalance() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("recycleRate", 0.6);
         m.put("extractRate", 0.55);
