@@ -1,6 +1,7 @@
 package com.notelab.dao;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.notelab.common.PermSide;
 import com.notelab.common.RowUtil;
 import com.notelab.model.entity.PermRole;
 import com.notelab.model.entity.PermRoute;
