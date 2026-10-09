@@ -24,4 +24,14 @@ public interface PermRoleRouteMapper {
 
     @Delete("DELETE FROM perm_role_routes WHERE role_code=#{roleCode}")
     int deleteByRoleCode(@Param("roleCode") String roleCode);
+
+    /**
+     * 清掉「权限码已不在 perm_routes 里」的角色持有行（僵尸权限）。
+     *
+     * <p>配合 {@code PermDao.pruneRoutes} 使用：路由行被清掉后，角色对它的持有若不一起清，
+     * 「角色组管理」里「已勾选 N 条」的计数会含幽灵条目（实际又不开通任何东西）。
+     */
+    @Delete("DELETE rr FROM perm_role_routes rr "
+            + "LEFT JOIN perm_routes r ON r.code = rr.route_code WHERE r.code IS NULL")
+    int deleteOrphans();
 }

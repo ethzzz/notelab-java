@@ -69,8 +69,10 @@ public final class PermService {
     /** Bootstrap 在 Db.init() 之后调用。 */
     public static void registerAllRoutes(RequestMappingHandlerMapping mapping) {
         // 1) 页面路由
+        Set<String> pagePaths = new LinkedHashSet<>();
         for (String[] p : PageRoutes.PAGE_ROUTES) {
             PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1]);
+            pagePaths.add(p[0]);
         }
         // 2) API 路由：从 SpringMVC 请求映射自动采集（新增 Controller 重启即自动注册）
         Map<String, Set<String>> methodsByPath = new TreeMap<>();
@@ -93,6 +95,18 @@ public final class PermService {
         for (Map.Entry<String, Set<String>> e : methodsByPath.entrySet()) {
             PermDao.upsertRoute("api:" + e.getKey(), e.getKey(), String.join("|", e.getValue()),
                     "api", nameByPath.getOrDefault(e.getKey(), ""));
+        }
+        // 2b) 清理僵尸路由：代码里已不存在的 page/api 行。
+        //     upsert 只增不删，旧行会一直挂在「角色组管理 → 分配路由」的「未挂菜单的页面」里
+        //     （实测遗留：page:/spire-editor）。必须在第 5 步 syncUserApiPerms 之前做，
+        //     否则同步会把僵尸 api 码重新发给 user 组。
+        //     ⚠️ pruneRoutes 在 keepPaths 为空时不动手（见其注释），不会把权限表清空。
+        int prunedPage = PermDao.pruneRoutes("page", pagePaths);
+        int prunedApi = PermDao.pruneRoutes("api", methodsByPath.keySet());
+        int prunedHold = PermDao.deleteOrphanRoleRoutes();
+        if (prunedPage + prunedApi + prunedHold > 0) {
+            log.info("已清理僵尸路由：page {} 条 / api {} 条 / 角色残留持有 {} 条",
+                    prunedPage, prunedApi, prunedHold);
         }
         // 3) 普通角色默认权限（仅首次为空时写入，不覆盖已有配置）：全部功能页，不含 ui/perm 管理页
         //    /stress-test（接口压测）、/ops（运维看板）也排除：都是超管专属运维工具，普通角色默认无权看到入口
