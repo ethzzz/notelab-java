@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.JsonUtil;
 import com.notelab.dao.CanvasDocDao;
 import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,7 +22,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -69,10 +74,16 @@ public class CanvasController {
     /** 列表：q 模糊匹配标题；按最近编辑倒序。**超管看全部，其他人只看自己建的** */
     @GetMapping
     public ResponseEntity<Map<String, Object>> list(@RequestParam(required = false) String q,
+                                                    @RequestParam(required = false) String engine,
                                                     @RequestParam(defaultValue = "100") int limit,
                                                     HttpServletRequest request) {
         Map<String, Object> me = AuthUtil.user(request);
         if (me == null) return AuthUtil.unauth();
+        // 引擎筛选走白名单校验：不认识的引擎**报 400 而不是静默忽略** ——
+        // 静默忽略会让「筛了但没生效」看起来像「确实没有这种画布」。
+        if (engine != null && !engine.isBlank() && !ENGINES.contains(engine)) {
+            return bad("不支持的画布引擎：" + engine);
+        }
         // ownerFilter = null 表示不过滤（只有超管能这样）；其他人强制按 created_by 收窄
         Long ownerFilter = null;
         if (!PermService.isSuperAdmin(me)) {
@@ -84,7 +95,7 @@ public class CanvasController {
             }
         }
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", CanvasDocDao.list(q, ownerFilter, limit));
+        body.put("items", CanvasDocDao.list(q, engine, ownerFilter, limit));
         return ResponseEntity.ok(body);
     }
 
@@ -156,8 +167,169 @@ public class CanvasController {
         if (!ROOM_ID.matcher(roomId).matches()) return bad("房间号格式非法");
         if (!canAccess(me, roomId)) return noAccess();
         CanvasDocDao.delete(roomId);
-        purgeRoom(roomId);
-        return ResponseEntity.ok(Map.of("ok", true));
+        // 元数据删除不可回滚，所以内容清不掉也不能报错回滚；但要**如实告知**，
+        // 否则用户以为删干净了，实际在协作服务里留了一张孤儿表（「对账」能查出来并清理）。
+        if (!purgeRoom(roomId)) {
+            return ResponseEntity.ok(Map.of("ok", true, "purged", false,
+                    "warning", "元数据已删除，但协作服务未能清理房间内容（可能它没在运行）。"
+                            + "已留下孤儿表，可在「对账」里查看并清理。"));
+        }
+        return ResponseEntity.ok(Map.of("ok", true, "purged", true));
+    }
+
+    // ================= 对账（仅超管） =================
+
+    /**
+     * 元数据 ↔ 内容 对账。
+     *
+     * <p>为什么需要：画布元数据在 MySQL {@code canvas_doc}、内容在协作服务的 SQLite，
+     * 两边只靠 {@code room_id} 关联，删除又是**跨进程两步且失败不回滚**（见 {@link #delete}），
+     * 所以会攒下两类不一致：
+     * <ul>
+     *   <li>{@code orphanContent} —— SQLite 有房间表、MySQL 没有记录。**删元数据成功但清房间失败**
+     *       留下的垃圾，是真正要清理的那种。</li>
+     *   <li>{@code orphanMeta} —— MySQL 有记录、SQLite 没表。⚠️ **绝大多数是正常的**：
+     *       房间表懒建，只建了元数据、从没打开过编辑器就没有表。**不要按它删元数据**。</li>
+     * </ul>
+     *
+     * <p>⚠️ 协作服务不可达时返回 503 而不是「两边不一致」—— 拿不到内容侧清单就无从对账，
+     * 谎报成「有孤儿」会诱导误删。
+     */
+    @GetMapping("/reconcile")
+    public ResponseEntity<Map<String, Object>> reconcile(HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (!PermService.isSuperAdmin(me)) {
+            return ResponseEntity.status(403).body(Map.of("error", "仅超级管理员可做画布对账"));
+        }
+        JsonNode inv = collabInventory();
+        if (inv == null) return collabUnreachable();
+
+        Map<String, Map<String, Object>> content = new LinkedHashMap<>();
+        JsonNode engines = inv.get("engines");
+        if (engines != null && engines.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> it = engines.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                JsonNode list = e.getValue();
+                if (list == null || !list.isArray()) continue;   // 该引擎返回了 {error:...}
+                for (JsonNode r : list) {
+                    String id = str(r, "roomId");
+                    if (id == null) continue;
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("roomId", id);
+                    row.put("engine", e.getKey());
+                    row.put("tables", intOr(r, "tables", 0));
+                    row.put("rows", intOr(r, "rows", 0));
+                    content.put(id, row);
+                }
+            }
+        }
+
+        Map<String, Map<String, Object>> meta = CanvasDocDao.metaByRoom();
+
+        List<Map<String, Object>> orphanContent = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> e : content.entrySet()) {
+            if (!meta.containsKey(e.getKey())) orphanContent.add(e.getValue());
+        }
+        List<Map<String, Object>> orphanMeta = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> e : meta.entrySet()) {
+            if (content.containsKey(e.getKey())) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("roomId", e.getKey());
+            row.put("title", e.getValue().get("title"));
+            row.put("engine", e.getValue().get("engine"));
+            row.put("updated_at", e.getValue().get("updated_at"));
+            orphanMeta.add(row);
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("metaCount", meta.size());
+        body.put("contentCount", content.size());
+        body.put("orphanContent", orphanContent);   // 可清理
+        body.put("orphanMeta", orphanMeta);         // 仅提示，多属正常
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 清理孤儿内容：把 SQLite 里**元数据已不存在**的房间表删掉（仅超管）。
+     *
+     * <p>⚠️ 只处理 {@code orphanContent} 这一个方向。反向（有元数据没表）**一律不动** ——
+     * 那是房间表懒建的正常形态，而删元数据是不可逆的，必须由人在界面上逐条确认。
+     *
+     * <p>清理完返回「删了哪些」，而不是一个笼统的 ok —— 这是破坏性操作，要留下可读的凭据。
+     */
+    @DeleteMapping("/orphans")
+    public ResponseEntity<Map<String, Object>> purgeOrphans(HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (!PermService.isSuperAdmin(me)) {
+            return ResponseEntity.status(403).body(Map.of("error", "仅超级管理员可清理画布孤儿"));
+        }
+        JsonNode inv = collabInventory();
+        if (inv == null) return collabUnreachable();
+
+        Map<String, Map<String, Object>> meta = CanvasDocDao.metaByRoom();
+        List<Map<String, Object>> removed = new ArrayList<>();
+        JsonNode engines = inv.get("engines");
+        if (engines != null && engines.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> it = engines.fields();
+            while (it.hasNext()) {
+                Map.Entry<String, JsonNode> e = it.next();
+                JsonNode list = e.getValue();
+                if (list == null || !list.isArray()) continue;
+                for (JsonNode r : list) {
+                    String id = str(r, "roomId");
+                    if (id == null || meta.containsKey(id)) continue;
+                    purgeRoom(id);
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("roomId", id);
+                    row.put("engine", e.getKey());
+                    row.put("tables", intOr(r, "tables", 0));
+                    removed.add(row);
+                }
+            }
+        }
+        return ResponseEntity.ok(Map.of("ok", true, "removed", removed, "removedCount", removed.size()));
+    }
+
+    /** 拉协作服务的磁盘房间清单（内部端点，仅本机）。不可达返回 null。 */
+    private static JsonNode collabInventory() {
+        try {
+            HttpRequest rq = HttpRequest.newBuilder(URI.create(COLLAB_BASE + "/rooms"))
+                    // ⚠️ 与 purgeRoom 同一个坑：默认 HTTP_2 会先发 h2c 升级探测，
+                    //    Node 把带 Upgrade 头的请求路由到 'upgrade' 事件 → 永远收不到响应
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .timeout(Duration.ofSeconds(3))
+                    .GET()
+                    .build();
+            HttpResponse<String> resp = HTTP.send(rq, HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() != 200) {
+                System.err.println("[canvas] 取房间清单返回 " + resp.statusCode() + "：" + resp.body());
+                return null;
+            }
+            return JsonUtil.MAPPER.readTree(resp.body());
+        } catch (Exception e) {
+            System.err.println("[canvas] 取房间清单失败：" + e);
+            return null;
+        }
+    }
+
+    private static ResponseEntity<Map<String, Object>> collabUnreachable() {
+        return ResponseEntity.status(503).body(Map.of("error",
+                "协作服务不可达（" + COLLAB_BASE + "）。对账需要它的房间清单，请确认 notelab-collab 在运行。"));
+    }
+
+    /** 取字符串字段；缺失/非文本返回 null（协同 JsonSanitizer 的判据：isTextual，不是 !isNull） */
+    private static String str(JsonNode n, String field) {
+        JsonNode v = n == null ? null : n.get(field);
+        return v != null && v.isTextual() ? v.asText() : null;
+    }
+
+    private static int intOr(JsonNode n, String field, int fallback) {
+        JsonNode v = n == null ? null : n.get(field);
+        return v != null && v.canConvertToInt() ? v.asInt() : fallback;
     }
 
     // ================= 工具 =================
@@ -237,7 +409,14 @@ public class CanvasController {
      * 但失败必须**留痕**——静默吞掉的话，删画布"看起来成功"，实际垃圾在 SQLite 里越堆越多，
      * 只能靠人肉查表发现。
      */
-    private static void purgeRoom(String roomId) {
+    /**
+     * 让协作服务清掉该房间的内容。
+     *
+     * @return true = 内容已清干净；false = 没清掉（协作服务不可达或返回错误）。
+     *         失败**只告警不回滚** —— 调用方已先删了元数据，回滚无从谈起；
+     *         这种情况留下的孤儿表由 {@code /api/canvas/reconcile} 负责查出来。
+     */
+    private static boolean purgeRoom(String roomId) {
         try {
             HttpRequest rq = HttpRequest.newBuilder(URI.create(COLLAB_BASE + "/rooms/" + roomId))
                     // ⚠️ 必须显式 HTTP/1.1：HttpClient 默认 HTTP_2，对明文 http:// 会先发
@@ -251,9 +430,12 @@ public class CanvasController {
             HttpResponse<String> resp = HTTP.send(rq, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() >= 400) {
                 System.err.println("[canvas] 清理房间 " + roomId + " 返回 " + resp.statusCode() + "：" + resp.body());
+                return false;
             }
+            return true;
         } catch (Exception e) {
             System.err.println("[canvas] 清理房间 " + roomId + " 失败：" + e);
+            return false;
         }
     }
 }

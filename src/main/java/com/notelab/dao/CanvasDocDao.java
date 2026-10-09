@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.notelab.common.RowUtil;
 import com.notelab.model.entity.CanvasDoc;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -66,18 +67,39 @@ public final class CanvasDocDao {
     }
 
     /**
-     * 列表：可选标题关键字；按 updated_at 倒序（最近编辑的在前）。
+     * 列表：可选标题关键字 + 可选引擎；按 updated_at 倒序（最近编辑的在前）。
      *
      * <p>⚠️ {@code createdBy} 为 {@code null} 表示**不过滤**（超管看全部）。
      * 调用方必须**显式**传 null 才会不过滤 —— 不要把「拿不到当前用户 id」也传成 null，
      * 那会静默退化成「所有人都看到全部画布」（fail-open）。
      */
-    public static List<Map<String, Object>> list(String q, Long createdBy, int limit) {
+    public static List<Map<String, Object>> list(String q, String engine, Long createdBy, int limit) {
         QueryWrapper<CanvasDoc> w = new QueryWrapper<>();
         if (q != null && !q.isBlank()) w.like("title", q.trim());
+        // engine 由调用方先过白名单再传进来；这里不做兜底，避免「写错的引擎静默变成不过滤」
+        if (engine != null && !engine.isBlank()) w.eq("engine", engine);
         if (createdBy != null) w.eq("created_by", createdBy);
         w.orderByDesc("updated_at");
         w.last("LIMIT " + Math.min(Math.max(limit, 1), 200));
         return RowUtil.rows(DaoSupport.canvasDoc().selectList(w), COLS);
+    }
+
+    /**
+     * 全部画布元数据，键为 roomId —— **不设上限、不按 created_by 收窄**，只给「元数据 ↔ 内容」对账用。
+     *
+     * <p>⚠️ 刻意不用 {@link #list}：那个有 200 条上限，超了会把正常画布误报成「内容侧孤儿」，
+     * 而对账的结论可能被用来删数据，不能有这种假阳性。本方法没有任何权限收窄 ——
+     * <b>调用方必须先确认当前用户是超管</b>。
+     */
+    public static Map<String, Map<String, Object>> metaByRoom() {
+        String[] cols = {"room_id", "title", "engine", "created_at", "updated_at"};
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Map<String, Object> r : RowUtil.rows(DaoSupport.canvasDoc().selectList(
+                Wrappers.lambdaQuery(CanvasDoc.class).select(
+                        CanvasDoc::getRoomId, CanvasDoc::getTitle, CanvasDoc::getEngine,
+                        CanvasDoc::getCreatedAt, CanvasDoc::getUpdatedAt)), cols)) {
+            out.put(String.valueOf(r.get("room_id")), r);
+        }
+        return out;
     }
 }

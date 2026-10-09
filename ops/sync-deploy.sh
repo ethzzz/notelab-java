@@ -142,7 +142,14 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
     notelab-b)
       npm_install_if_needed "$changed"
       run_build "$repo" "npm run build"
-      pm2_restart notelab-b "http://127.0.0.1:3020/admin/" ;;
+      pm2_restart notelab-b "http://127.0.0.1:3020/admin/"
+      # ⚠️ 协作画布的同步服务是**独立进程**（pm2 notelab-collab，:3030），
+      #    `npm run build` 完全覆盖不到它 —— 只改 collab/ 而不重启它，
+      #    代码更新会静默不生效（表现为"改了没反应"，很难排查）。
+      if printf '%s\n' "$changed" | grep -q '^collab/'; then
+        log "  collab/ 有变更 → 重启协作服务 notelab-collab"
+        pm2_restart notelab-collab "http://127.0.0.1:3030/health" 20
+      fi ;;
     notelab-java)
       run_build "$repo" "/usr/bin/mvn -B -DskipTests -q package"
       # Spring Boot 冷启动 ~15-20s，探活超时给足

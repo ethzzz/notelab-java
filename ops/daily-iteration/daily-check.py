@@ -239,6 +239,24 @@ def check_backup():
         warn("yellow", f"数据库最近备份已 {age} 天，超过 7 天窗口，建议尽快备份")
     out()
 
+    # 协作画布的 SQLite（rooms.db）**不在 mysqldump 覆盖范围内**，单独看。
+    # 单独一段的理由：它的故障模式和 MySQL 不同（可能压根没生成过文件），
+    # 混在上面那个 glob 里会被 MySQL 的新鲜备份掩盖。
+    out("### 协作画布 rooms.db（SQLite，独立于 MySQL）")
+    collab = glob.glob(os.path.join(BACKUP_DIR, "collab-rooms-*.db"))
+    if not collab:
+        out(f"- 🔴 未发现 `collab-rooms-*.db` 备份 —— 画布内容目前无备份")
+        warn("red", "协作画布 rooms.db 无任何备份，跑 backup-collab-rooms.py 建一份")
+    else:
+        latest_c = max(collab, key=os.path.getmtime)
+        age_c = (datetime.datetime.now() - datetime.datetime.fromtimestamp(os.path.getmtime(latest_c))).days
+        size_c = os.path.getsize(latest_c) // 1024
+        flag_c = "🟢" if age_c <= 3 else ("🟡" if age_c <= 14 else "🔴")
+        out(f"- {flag_c} 最新：`{os.path.basename(latest_c)}`（{size_c}KB，**{age_c} 天前**）· 共 {len(collab)} 份")
+        if age_c > 14:
+            warn("red", f"协作画布备份已 {age_c} 天，检查 cron 里的 backup-collab-rooms.py 是否还在跑")
+    out()
+
 
 # ================= 6. 依赖与安全（深检） =================
 def check_deep():

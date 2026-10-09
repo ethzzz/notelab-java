@@ -8,15 +8,26 @@
 |---|---|
 | `daily-check.py` | 纯只读巡检器。查服务健康/资源/错误日志(增量)/git漂移/备份新鲜度/依赖安全，输出 markdown 报告 |
 | `backup-db.sh` | 每日 mysqldump notelab 库 → gzip → `/root/backups/`，保留最近 7 份滚动 |
+| `backup-collab-rooms.py` | 每日备份协作画布的 SQLite `rooms.db` → `/root/backups/collab-rooms-*.db`，保留最近 14 份 |
 | `setup-mybackup.sh` | 一次性：从 `.env` 解析 MySQL 凭据 → 生成 `/root/.my.cnf`(600) + `/root/ops/.backup-db-name`。密码变更后重跑 |
-| `install-cron.sh` | 幂等安装/刷新两条 cron（指向本目录脚本） |
+| `install-cron.sh` | 幂等安装/刷新下面三条 cron（指向本目录脚本） |
+
+### 为什么 rooms.db 要单独一份脚本
+协作画布**内容**存在协作服务的本地 SQLite（`/root/Notelab/notelab-b/collab/data/rooms.db`），
+元数据才在 MySQL —— 所以 `mysqldump` **完全覆盖不到画布内容**。
+⚠️ 且**不能直接 `cp`**：该库是 WAL 模式，只 cp 主文件会丢未 checkpoint 的写入、三文件一起 cp 又无一致性保证。
+脚本用 SQLite 在线备份 API（`sqlite3.Connection.backup`，等价 `sqlite3 .backup`）拿一致快照，
+并跑 `PRAGMA integrity_check` 自检 —— 不可读的备份直接判失败删掉（留个坏备份比没有更危险）。
+用 Python 而非 sqlite3 CLI：服务器没装 CLI，而 python3 本就是本机制的依赖，标准库自带 sqlite3。
 
 ## 定时任务（crontab）
 ```
 0 3 * * *  /root/Notelab/notelab-java/ops/daily-iteration/backup-db.sh >>/root/ops/backup.log 2>&1
+15 3 * * * /usr/bin/python3 /root/Notelab/notelab-java/ops/daily-iteration/backup-collab-rooms.py >>/root/ops/backup.log 2>&1
 30 7 * * * /usr/bin/python3 /root/Notelab/notelab-java/ops/daily-iteration/daily-check.py >/dev/null 2>>/root/ops/cron.log
 ```
 - **3:00 备份** → 早于巡检，让巡检看到新鲜备份。
+- **3:15 画布备份** → 串在 MySQL 之后，避免两个备份任务抢 IO；产物是独立的 `collab-rooms-*.db`。
 - **7:30 巡检** → 报告落 `/root/ops/reports/YYYY-MM-DD.md`（保留 30 天）；每周日或 `--deep` 加做依赖更新 + `npm audit`。
 - **8:00 Qoder 研判**（Qoder schedule，不在本仓）→ 读最新报告定性告警、低风险项直接改+验证、高风险项列清单等人工拍板。⚠️ 需 Qoder 客户端运行才触发；没开也不漏数据，cron 采集照常。
 
@@ -25,7 +36,8 @@
 - `/root/ops/.logstate.json` — 错误日志基线（算新增量用，消除历史噪音告警疲劳）
 - `/root/ops/.backup-db-name` — 备份库名（600）
 - `/root/ops/backup.log`、`/root/ops/cron.log` — cron 输出
-- `/root/backups/notelab-*.sql.gz` — 数据库备份
+- `/root/backups/notelab-*.sql.gz` — MySQL 数据库备份
+- `/root/backups/collab-rooms-*.db` — 协作画布 SQLite 备份
 - `/root/.my.cnf` — MySQL 凭据（600，**含密码，严禁进 git**）
 
 ## 首次部署 / 重装
