@@ -76,14 +76,20 @@ wait_http() {
   return 1
 }
 
-run_build() {   # $1=仓名 $2=工作目录内的构建命令
-  local repo=$1 cmd=$2
+run_build() {   # $1=仓名 $2=工作目录内的构建命令 $3=构建失败时的恢复命令（可选）
+  local repo=$1 cmd=$2 restore=${3:-}
   local logfile="$OPS_LOG_DIR/sync-deploy-$repo.log"
   mkdir -p "$OPS_LOG_DIR"
   log "  构建：$cmd （输出 → $logfile）"
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过实际执行"; return 0; fi
   if ! ( eval "$cmd" ) >"$logfile" 2>&1; then
     tail -25 "$logfile" >&2
+    # 恢复命令：用于「构建前必须先停服务」的场景（见 notelab-java 分支），
+    # 否则构建一失败服务就永远停在 stopped，比构建失败本身更致命。
+    if [ -n "$restore" ]; then
+      warn "构建失败，执行恢复动作：$restore"
+      eval "$restore" >/dev/null 2>&1 || warn "恢复动作也失败了，需人工介入：pm2 restart $repo"
+    fi
     die "$repo 构建失败（完整日志：$logfile）"
   fi
   log "  构建完成"
@@ -151,8 +157,26 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
         pm2_restart notelab-collab "http://127.0.0.1:3030/health" 20
       fi ;;
     notelab-java)
-      run_build "$repo" "/usr/bin/mvn -B -DskipTests -q package"
-      # Spring Boot 冷启动 ~15-20s，探活超时给足
+      # ⚠️ 必须**先停进程再构建**（2026-10-10 血的教训）：
+      #   Spring Boot fat jar 里的类由 LaunchedURLClassLoader **惰性加载**，mvn package
+      #   重写 target/notelab-java.jar 的瞬间，仍在运行的旧进程就开始
+      #   NoClassDefFoundError（error.log 里刷 `ClassNotFoundException: ch/qos/logback/
+      #   classic/spi/ThrowableProxy`，栈带 SpringApplicationShutdownHook）。
+      #   从 jar 被覆盖到 pm2 restart 完成这几十秒里 :8001 是死的，后果不只是 Java 自身：
+      #   nginx 的 `location ^~ /ailab/` 用 auth_request 调 /api/auth/verify → 子请求 502
+      #   → nginx 给客户端 **500**（`/ailab/` 直接白屏），`/api/c/**` 也全挂。
+      #   所以：先 stop（把不可用窗口挪到"没人指望它活着"的阶段），再构建，最后 restart。
+      if [ "$DRY_RUN" = 1 ]; then
+        log "  [dry-run] 跳过 pm2 stop notelab-java"
+      else
+        pm2 stop notelab-java >/dev/null 2>&1 || true
+        log "  已停 notelab-java（避免 mvn 覆盖运行中的 jar）"
+      fi
+      # 第三个参数 = 构建失败时把服务重新拉起，避免编译失败就把 Java 永久留在 stopped。
+      run_build "$repo" "/usr/bin/mvn -B -DskipTests -q package" \
+        "pm2 restart notelab-java --update-env"
+      # Spring Boot 冷启动 ~15-20s，探活超时给足。
+      # 上面已 stop，`pm2 restart` 对 stopped 进程同样能拉起（restart ≈ start）。
       pm2_restart notelab-java "http://127.0.0.1:8001/api/menu" 60 ;;
     home)
       npm_install_if_needed "$changed"
