@@ -83,7 +83,9 @@ public class AuthController {
      * 外部人需要手动输账密登录的场景，由超管在权限管理里重置密码后线下单独告知。
      *
      * <p>开关：.env 配 {@code EXTERNAL_LOGIN_ENABLED=0} 一键关闭本入口（默认开）。
-     * 频控与 {@code /api/login} 同档（同 IP 10 次/5 分钟），结果照常进 login_audit。
+     * 两层频控：① 全站每日总量上限（默认 100 次/自然日，.env {@code EXTERNAL_LOGIN_DAILY_LIMIT} 可调，
+     * 键按日期分片对齐自然日，Redis INCR 计数重启不丢）；② 单 IP 10 次/5 分钟（与 /api/login 同档）。
+     * 结果照常进 login_audit。
      * 匿名请求在 {@link com.notelab.common.ApiPermInterceptor} 天然放行，无需注册 api 权限码；
      * 已登录用户点本按钮会被拦截器按权限码判 403 —— 无妨，登录页对已登录会话直接回跳，
      * 按钮根本不可见。
@@ -93,6 +95,17 @@ public class AuthController {
                                                              HttpServletResponse response) {
         if (!"1".equals(AppConfig.get("EXTERNAL_LOGIN_ENABLED", "1"))) {
             return ResponseEntity.status(403).body(Map.of("error", "外部登录入口已关闭"));
+        }
+        // ① 全站每日总量：键里带日期（自然日对齐），TTL 只做 Redis 清理，跨天自动换新键
+        int dailyLimit;
+        try {
+            dailyLimit = Integer.parseInt(AppConfig.get("EXTERNAL_LOGIN_DAILY_LIMIT", "100").trim());
+        } catch (NumberFormatException e) {
+            dailyLimit = 100;
+        }
+        if (!RateLimit.rateOk("extlogin:daily:" + java.time.LocalDate.now(), dailyLimit, 86400)) {
+            LoginAudit.record("b", request, null, null, LoginAudit.RATE_LIMITED);
+            return ResponseEntity.status(429).body(Map.of("error", "今日外部登录次数已达上限，请明天再试"));
         }
         String ip = ClientIp.of(request);
         if (!RateLimit.rateOk("extlogin:" + ip, 10, 300)) {
