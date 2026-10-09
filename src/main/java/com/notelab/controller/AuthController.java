@@ -73,6 +73,43 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    /**
+     * 外部账号一键登录（匿名可用，登录页「外部登录」按钮专用）：
+     * 服务端从 external 角色组里**随机挑一个**账号直接建立 B 端会话，全程不出现密码。
+     *
+     * <p>为什么这么做（2026-10-09 收敛）：最初实现是把 external1-10 的账号密码硬编码进
+     * 登录页前端源码再随机回填表单 —— 那等于把 10 组永久弱口令公开在构建产物里。
+     * 现在密码不再离开服务端：泄露面从「固定弱口令」收敛为「一个可开关、可频控的匿名入口」。
+     * 外部人需要手动输账密登录的场景，由超管在权限管理里重置密码后线下单独告知。
+     *
+     * <p>开关：.env 配 {@code EXTERNAL_LOGIN_ENABLED=0} 一键关闭本入口（默认开）。
+     * 频控与 {@code /api/login} 同档（同 IP 10 次/5 分钟），结果照常进 login_audit。
+     * 匿名请求在 {@link com.notelab.common.ApiPermInterceptor} 天然放行，无需注册 api 权限码；
+     * 已登录用户点本按钮会被拦截器按权限码判 403 —— 无妨，登录页对已登录会话直接回跳，
+     * 按钮根本不可见。
+     */
+    @PostMapping("/auth/external-login")
+    public ResponseEntity<Map<String, Object>> externalLogin(HttpServletRequest request,
+                                                             HttpServletResponse response) {
+        if (!"1".equals(AppConfig.get("EXTERNAL_LOGIN_ENABLED", "1"))) {
+            return ResponseEntity.status(403).body(Map.of("error", "外部登录入口已关闭"));
+        }
+        String ip = ClientIp.of(request);
+        if (!RateLimit.rateOk("extlogin:" + ip, 10, 300)) {
+            return ResponseEntity.status(429).body(Map.of("error", "尝试过于频繁，请 5 分钟后再试"));
+        }
+        java.util.List<Map<String, Object>> pool = UserDao.listUsersByRole(PermService.ROLE_EXTERNAL);
+        if (pool.isEmpty()) {
+            return ResponseEntity.status(503).body(Map.of("error", "暂无可用外部账号"));
+        }
+        Map<String, Object> pick = pool.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(pool.size()));
+        long uid = ((Number) pick.get("id")).longValue();
+        String username = String.valueOf(pick.get("username"));
+        LoginAudit.record("b", request, username, uid, LoginAudit.SUCCESS);
+        Session.setCookie(response, Session.makeToken(uid));
+        return ResponseEntity.ok(Map.of("ok", true, "username", username));
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<Map<String, Object>> logout(HttpServletResponse response) {
         Session.deleteCookie(response);

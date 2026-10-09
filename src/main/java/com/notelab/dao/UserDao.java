@@ -142,6 +142,15 @@ public final class UserDao {
         return n == null ? 0 : n;
     }
 
+    /** 按角色取账户（仅 id/username 两列，供「外部一键登录」随机挑人等轻量用途；不含 password_hash） */
+    public static List<Map<String, Object>> listUsersByRole(String role) {
+        return RowUtil.rows(DaoSupport.user().selectList(
+                Wrappers.lambdaQuery(User.class)
+                        .select(User::getId, User::getUsername)
+                        .eq(User::getRole, role)
+                        .orderByAsc(User::getId)), new String[]{"id", "username"});
+    }
+
     public static void migrateUsersToRole(String fromRole, String toRole) {
         DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
                 .eq(User::getRole, fromRole)
