@@ -71,7 +71,11 @@ public final class RouteGroups {
      */
     public static final Map<String, List<String>> SHARED_MODULES = Map.ofEntries(
             Map.entry("gc_spire", List.of("spire-content", "spire-assets")),
-            Map.entry("gc_loot", List.of("loot-content", "loot-assets"))
+            Map.entry("gc_loot", List.of("loot-content", "loot-assets")),
+            // 模型列表 /api/models：智能对话与竞技场两个页面都调它。
+            // 它是 2026-10-10 反向自检（unclaimedModules）上线的第一个战果 —— 此前没人认领，
+            // 一直躺在「系统通用」分组底部，配 chat / arena 权限时很容易漏勾。
+            Map.entry("g_ai", List.of("models"))
     );
 
     /** 共用模块 → 它所属的菜单分组（{@link #SHARED_MODULES} 的反查表，启动时构建一次） */
