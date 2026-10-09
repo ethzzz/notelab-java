@@ -6,6 +6,7 @@ import com.notelab.mapper.ArchScanViolationMapper;
 import com.notelab.mapper.ConversationMapper;
 import com.notelab.mapper.CanvasDocMapper;
 import com.notelab.mapper.CGameSaveMapper;
+import com.notelab.mapper.CGroupRouteMapper;
 import com.notelab.mapper.CUserGroupMapper;
 import com.notelab.mapper.CUserMapper;
 import com.notelab.mapper.DocumentMapper;
@@ -59,6 +60,7 @@ public class DaoSupport {
     private static UiConfigMapper uiConfigMapper;
     private static CUserMapper cUserMapper;
     private static CUserGroupMapper cUserGroupMapper;
+    private static CGroupRouteMapper cGroupRouteMapper;
     private static CGameSaveMapper cGameSaveMapper;
     private static InviteCodeMapper inviteCodeMapper;
     private static DocumentMapper documentMapper;
@@ -87,6 +89,7 @@ public class DaoSupport {
                       UiConfigMapper uiConfigMapper,
                       CUserMapper cUserMapper,
                       CUserGroupMapper cUserGroupMapper,
+                      CGroupRouteMapper cGroupRouteMapper,
                       CGameSaveMapper cGameSaveMapper,
                       InviteCodeMapper inviteCodeMapper,
                       DocumentMapper documentMapper,
@@ -114,6 +117,7 @@ public class DaoSupport {
         DaoSupport.uiConfigMapper = uiConfigMapper;
         DaoSupport.cUserMapper = cUserMapper;
         DaoSupport.cUserGroupMapper = cUserGroupMapper;
+        DaoSupport.cGroupRouteMapper = cGroupRouteMapper;
         DaoSupport.cGameSaveMapper = cGameSaveMapper;
         DaoSupport.inviteCodeMapper = inviteCodeMapper;
         DaoSupport.documentMapper = documentMapper;
@@ -153,6 +157,7 @@ public class DaoSupport {
     public static UiConfigMapper uiConfig() { return uiConfigMapper; }
     public static CUserMapper cUser() { return cUserMapper; }
     public static CUserGroupMapper cUserGroup() { return cUserGroupMapper; }
+    public static CGroupRouteMapper cGroupRoute() { return cGroupRouteMapper; }
     public static CGameSaveMapper cGameSave() { return cGameSaveMapper; }
     public static InviteCodeMapper inviteCode() { return inviteCodeMapper; }
     public static DocumentMapper document() { return documentMapper; }

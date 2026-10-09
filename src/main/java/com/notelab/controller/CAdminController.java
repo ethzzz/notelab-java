@@ -1,9 +1,11 @@
 package com.notelab.controller;
 
 import com.notelab.common.Passwords;
+import com.notelab.common.PermSide;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
 import com.notelab.dao.InviteCodeDao;
+import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -39,6 +41,7 @@ public class CAdminController {
     public static class GroupRenameReq { public String name; }
     public static class CreateInviteReq { public Integer max_uses; public Integer count; public String remark = ""; }
     public static class AddMembersReq { public List<Long> user_ids; }
+    public static class RoutesReq { public List<String> codes; }
 
     // ================= C 用户 =================
 
@@ -255,6 +258,68 @@ public class CAdminController {
         body.put("added_ids", existing);
         body.put("unknown_ids", unknown);
         body.put("invalid_ids", invalid);
+        return ResponseEntity.ok(body);
+    }
+
+    // ================= C 端用户组的路由权限（与 B 端角色组完全分离） =================
+
+    /**
+     * C 端权限总览：C 端路由清单（{@code side='c'}）+ 各用户组持有的权限码。
+     *
+     * <p>为什么单独一个接口而不是复用 {@code /api/perm/overview}：那一个是 **B 端**视角
+     * （B 端角色 × B 端路由），这里管的是 C 端用户组 × C 端路由 —— 两套身份体系、两张持有表。
+     * 混在一个接口里下发，前端又得靠前缀去猜哪些能用，迟早猜错。
+     */
+    @GetMapping("/perm/overview")
+    public ResponseEntity<Map<String, Object>> permOverview(HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        List<Map<String, Object>> groups = new ArrayList<>();
+        for (Map<String, Object> g : CUserDao.listGroupsWithCount()) {
+            Map<String, Object> row = new LinkedHashMap<>(g);
+            row.put("route_codes", PermService.cGroupRouteCodes(String.valueOf(g.get("code"))));
+            groups.add(row);
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("routes", PermService.listRoutes(PermSide.C));
+        body.put("groups", groups);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 给 C 端用户组分配路由（页面 + 接口）。
+     *
+     * <p>只接受 {@code side='c'} 的码：B 端路由码对 C 端用户没有任何约束力
+     * （C 端是 {@code c_users} 体系，走 {@code CPermGuard}），收进来只是脏数据。
+     * 与 B 端 {@code PermController#setRoleRoutes} 反向对称 —— 那边拒 C 端码，这边拒 B 端码。
+     */
+    @PostMapping("/groups/{code}/routes")
+    public ResponseEntity<Map<String, Object>> setGroupRoutes(@PathVariable String code,
+                                                             @RequestBody(required = false) RoutesReq req,
+                                                             HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        if (CUserDao.getGroup(code) == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "用户组不存在"));
+        }
+        List<String> codes = req == null || req.codes == null ? List.of() : req.codes;
+        Set<String> known = new LinkedHashSet<>();
+        for (Map<String, Object> r : PermService.listRoutes(PermSide.C)) known.add((String) r.get("code"));
+        List<String> valid = new ArrayList<>();
+        List<String> rejected = new ArrayList<>();
+        for (String c : codes) {
+            if (c == null) continue;
+            if (known.contains(c)) valid.add(c);
+            else rejected.add(c);   // B 端码 / 已下线的码：不写库，明确回报
+        }
+        PermService.setCGroupRoutes(code, valid);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("count", valid.size());
+        if (!rejected.isEmpty()) {
+            body.put("rejected", rejected);
+            body.put("notice", "已忽略 " + rejected.size() + " 条非 C 端权限码（B 端路由请到「角色组管理」分配）");
+        }
         return ResponseEntity.ok(body);
     }
 

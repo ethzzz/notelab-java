@@ -110,7 +110,10 @@ public final class PermGuard {
         List<String> loaded = new ArrayList<>();
         Set<String> superOnly = new HashSet<>();
         try {
-            for (Map<String, Object> r : PermDao.listRoutes()) {
+            // ⚠️ 只加载 side='b'：C 端接口（/api/c/**）归 CPermGuard 管，
+            //    混进来虽然被下面的 C_ENDPOINT_PREFIX 豁免挡着、行为不变，
+            //    但会让「B 端门禁认识哪些接口」这件事变得含糊（日志里也会数错）。
+            for (Map<String, Object> r : PermDao.listRoutes(PermSide.B)) {
                 if (!"api".equals(String.valueOf(r.get("kind")))) continue;
                 String p = String.valueOf(r.get("path"));
                 if (p == null || p.isEmpty()) continue;

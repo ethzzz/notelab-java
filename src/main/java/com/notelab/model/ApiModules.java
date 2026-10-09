@@ -73,7 +73,17 @@ public final class ApiModules {
             Map.entry("spire-content", "爬塔内容接口"),
             Map.entry("spire-assets", "爬塔素材接口"),
             Map.entry("loot-content", "摸金内容接口"),
-            Map.entry("loot-assets", "摸金素材接口")
+            Map.entry("loot-assets", "摸金素材接口"),
+            // ---- C 端（/api/c/**，由 C 端用户组持有，见 CPermGuard）----
+            Map.entry("c", "C端通用接口"),
+            Map.entry("c/auth", "C端登录注册"),
+            Map.entry("c/game", "C端游戏存档"),
+            Map.entry("c/dungeon", "C端地牢存档"),
+            Map.entry("c/trpg", "C端剧本"),
+            Map.entry("c/track", "C端埋点"),
+            Map.entry("c/config", "C端站点配置"),
+            Map.entry("c/spire", "C端爬塔内容"),
+            Map.entry("c/loot", "C端摸金内容")
     );
 
     /**
@@ -84,6 +94,7 @@ public final class ApiModules {
      *   <li>{@code /api/admin/x/**} → {@code admin/x}；其中 {@code ops} 再按 {@code login-audit} 细分</li>
      *   <li>{@code /api/perm/{users,roles}/**} 拆开（分属账户管理 / 角色组管理页），其余归 {@code perm}</li>
      *   <li>{@code /api/c-admin/invite-codes} 拆给邀请码页，其余归 {@code c-admin}</li>
+ *   <li>{@code /api/c/x/**} → {@code c/x}（C 端接口，给「C端用户组 → 分配路由」用）</li>
      *   <li>非 {@code /api} 前缀（如 Spring 的 {@code /error}）→ 首段；解析不出 → {@link #BASE}</li>
      * </ul>
      */
@@ -109,6 +120,10 @@ public final class ApiModules {
         if ("c-admin".equals(head)) {
             return "invite-codes".equals(sub) ? "c-admin/invite-codes" : "c-admin";
         }
+        // C 端接口 /api/c/<x>/**：按第二段细分（auth/game/trpg/track/config...）。
+        // ⚠️ 注意别把 /api/c-admin 吃进来：它上面的 head 是 "c-admin"（按 "/" 切分，
+        // "c-admin" 是完整的一段），两个分支互不干扰。
+        if ("c".equals(head)) return sub.isEmpty() ? "c" : "c/" + sub;
         return head;
     }
 

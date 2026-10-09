@@ -2,6 +2,7 @@ package com.notelab.controller;
 
 import com.notelab.dao.Db;
 import com.notelab.common.Passwords;
+import com.notelab.common.PermSide;
 import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -76,7 +77,9 @@ public class PermController {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("me", Map.of("id", me.get("id"), "username", me.get("username"), "role", String.valueOf(me.get("role"))));
-        body.put("routes", PermService.listRoutes());
+        // ⚠️ 只下发 B 端路由：C 端（/api/c/** 与 C 端页面）由「C端用户管理 → 用户组 → 分配路由」管，
+        //    两端身份体系不同，把 C 端码混进来只会让管理员勾到一堆管不到任何人的开关。
+        body.put("routes", PermService.listRoutes(PermSide.B));
         body.put("roles", roles);
         body.put("users", PermService.listUsersForPerm());
         return ResponseEntity.ok(body);
@@ -152,25 +155,38 @@ public class PermController {
             return ResponseEntity.status(400).body(Map.of("error", "超级管理员默认拥有全部路由（含未来新增），无需分配"));
         }
         List<String> codes = req == null || req.codes == null ? List.of() : req.codes;
+        // B 端候选集：只含 side='b'。C 端码连候选都进不去 —— 这样「勾了 C 端接口」不是被静默吞掉，
+        // 而是会被下面显式回报成 rejectedCSide，界面上能说清楚原因。
         Set<String> known = new LinkedHashSet<>();
-        for (Map<String, Object> r : PermService.listRoutes()) known.add((String) r.get("code"));
+        for (Map<String, Object> r : PermService.listRoutes(PermSide.B)) known.add((String) r.get("code"));
+        Set<String> cSide = new LinkedHashSet<>();
+        for (Map<String, Object> r : PermService.listRoutes(PermSide.C)) cSide.add((String) r.get("code"));
         // 「仅超管」的码一律不给：这些接口 Controller 层自带零超管校验（如 /api/c-admin、/api/analytics、
         // /api/ui-config），勾出去等于把 C 端用户管理 / 全站经营数据 / 全站界面配置送人。
         // 前端树已经禁勾，这里是**第二道**（防手搓请求 / 老界面缓存）。
         Set<String> superOnly = new LinkedHashSet<>(PermService.superOnlyCodes());
         List<String> valid = new ArrayList<>();
         List<String> rejected = new ArrayList<>();
+        List<String> rejectedC = new ArrayList<>();
         for (String c : codes) {
-            if (c == null || !known.contains(c)) continue;    // 未登记的依旧静默丢弃（原有行为）
+            if (c == null) continue;
+            // C 端码：B 端角色持有它约束不到任何人（C 端是 c_users 体系），属配置错配，明确回报
+            if (cSide.contains(c)) { rejectedC.add(c); continue; }
+            if (!known.contains(c)) continue;    // 未登记的依旧静默丢弃（原有行为）
             if (superOnly.contains(c)) { rejected.add(c); continue; }
             valid.add(c);
         }
         PermService.setRoleRoutes(code, valid);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
+        if (!rejectedC.isEmpty()) {
+            body.put("rejectedCSide", rejectedC);
+            body.put("notice", "已忽略 " + rejectedC.size() + " 条 C 端权限码 —— C 端路由请到「C端用户管理 → 用户组」里分配（两端身份体系不同，B 端角色管不到 C 端用户）");
+        }
         if (!rejected.isEmpty()) {
             body.put("rejectedSuperOnly", rejected);
-            body.put("notice", "已忽略 " + rejected.size() + " 条「仅超管」权限码（这些接口非超管一律 403，授予无效）");
+            String notice = "已忽略 " + rejected.size() + " 条「仅超管」权限码（这些接口非超管一律 403，授予无效）";
+            body.put("notice", body.get("notice") == null ? notice : body.get("notice") + "；" + notice);
         }
         return ResponseEntity.ok(body);
     }

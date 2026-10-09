@@ -9,6 +9,7 @@ import com.notelab.dao.Db;
 import com.notelab.dao.InviteCodeDao;
 import com.notelab.service.EventRecorder;
 import com.notelab.service.LoginAudit;
+import com.notelab.service.PermService;
 import com.notelab.service.RateLimit;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -84,6 +85,9 @@ public class CAuthController {
         body.put("username", user.get("username"));
         body.put("nickname", user.get("nickname"));
         body.put("group_code", user.get("group_code"));
+        // 该用户组可进入的 C 端页面路径（不含 page: 前缀），供前端做入口显隐。
+        // 真正的强制约束在接口层 CPermGuard —— 这里只是让前端不必显示点进去必然 403 的入口。
+        body.put("routes", PermService.cAllowedPagePaths(user));
         return ResponseEntity.ok(body);
     }
 

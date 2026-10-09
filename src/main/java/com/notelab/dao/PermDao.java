@@ -17,18 +17,49 @@ public final class PermDao {
     private PermDao() {}
 
     /** 原 listRoutes SQL 投影列序 */
-    private static final String[] ROUTE_COLS = {"code", "path", "method", "kind", "name", "super_only"};
+    private static final String[] ROUTE_COLS = {"code", "path", "method", "kind", "name", "super_only", "side"};
     /** 原 listRoles/getRole SQL 投影列序 */
     private static final String[] ROLE_COLS = {"code", "name"};
 
-    /** 原 upsert SQL 由 Mapper 注解原样保留（ON DUPLICATE KEY UPDATE）；superOnly 见 PermGuard.isRestricted */
+    /**
+     * 接口路由注册：side 由路径推导（{@link PermSide#ofApi}），superOnly 见 {@code PermGuard.isRestricted}。
+     * 原 upsert SQL 由 Mapper 注解原样保留（ON DUPLICATE KEY UPDATE）。
+     */
     public static void upsertRoute(String code, String path, String method, String kind, String name, boolean superOnly) {
-        DaoSupport.permRoute().upsertRoute(code, path, method, kind, name, superOnly ? 1 : 0);
+        upsertRoute(code, path, method, kind, name, superOnly, PermSide.ofApi(path));
+    }
+
+    /**
+     * 显式指定 side 的注册（**页面路由必须用这个**）。
+     *
+     * <p>为什么页面不能走路径推导：{@link PermSide#ofApi} 只认 {@code /api/c/} 前缀，
+     * 而 C 端页面路径（{@code /posts}、{@code /play/spire}）长得和 B 端页面一模一样，
+     * 推导只会把它们全算成 B 端 —— 端的归属对页面而言是**声明**，不是路径能推出来的。
+     */
+    public static void upsertRoute(String code, String path, String method, String kind, String name,
+                                   boolean superOnly, String side) {
+        DaoSupport.permRoute().upsertRoute(code, path, method, kind, name, superOnly ? 1 : 0,
+                PermSide.normalize(side));
     }
 
     public static List<Map<String, Object>> listRoutes() {
         return RowUtil.rows(DaoSupport.permRoute().selectList(
                 Wrappers.lambdaQuery(PermRoute.class)
+                        .orderByAsc(PermRoute::getKind)
+                        .orderByAsc(PermRoute::getCode)), ROUTE_COLS);
+    }
+
+    /**
+     * 按端取路由（{@code side='b'} / {@code 'c'}）。
+     *
+     * <p>为什么必须按端查而不是全量下发让前端过滤：前端过滤只是"看不见"，
+     * 权限码仍然会被提交、仍可能被手工请求写入。下发阶段就截掉，
+     * 非法码连"合法候选集合"都进不去（{@code PermController.setRoleRoutes} 的 known 校验直接判死）。
+     */
+    public static List<Map<String, Object>> listRoutes(String side) {
+        return RowUtil.rows(DaoSupport.permRoute().selectList(
+                Wrappers.lambdaQuery(PermRoute.class)
+                        .eq(PermRoute::getSide, side)
                         .orderByAsc(PermRoute::getKind)
                         .orderByAsc(PermRoute::getCode)), ROUTE_COLS);
     }
@@ -46,15 +77,21 @@ public final class PermDao {
      * 上游采集失败（如 RequestMappingHandlerMapping 尚未就绪）把整张权限表清空 ——
      * 那会让所有接口变成「未在权限路由表登记」而全站 403。
      *
+     * <p>⚠️ B/C 分流后必须**按 (kind, side) 分别调用**：C 端页面与 B 端页面各有一份 keepPaths，
+     * 若合成一次 {@code kind='page'} 的清理，会把另一端的合法路由当僵尸删掉
+     * （B 端 keepPaths 里没有 C 端路径，反之亦然）。
+     *
      * @param kind      "page" / "api"
-     * @param keepPaths 代码里当前真实存在的 path 集合
+     * @param side      "b" / "c"
+     * @param keepPaths 代码里当前真实存在的 path 集合（该端、该 kind 下的）
      * @return 删除的路由行数
      */
-    public static int pruneRoutes(String kind, Collection<String> keepPaths) {
+    public static int pruneRoutes(String kind, String side, Collection<String> keepPaths) {
         if (keepPaths == null || keepPaths.isEmpty()) return 0;
         return DaoSupport.tx().execute(status -> DaoSupport.permRoute().delete(
                 Wrappers.lambdaQuery(PermRoute.class)
                         .eq(PermRoute::getKind, kind)
+                        .eq(PermRoute::getSide, side)
                         .notIn(PermRoute::getPath, keepPaths)));
     }
 

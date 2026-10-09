@@ -265,6 +265,17 @@ final class DbSchema {
                 name VARCHAR(50) NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // C 端用户组的路由持有（与 B 端 perm_role_routes 同构，但**独立一张表**）。
+        // 为什么不分端共用 perm_role_routes：B 端角色（perm_roles）与 C 端用户组（c_user_groups）
+        // 是两套编码空间，共用一张持有表后「给 B 端角色勾了 C 端接口」这种错配在数据库层面无法区分，
+        // 只能靠应用逻辑拦 —— 与其靠约定，不如让错配根本写不进去。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS c_group_routes (
+                group_code VARCHAR(50) NOT NULL,
+                route_code VARCHAR(120) NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (group_code, route_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
         // 爬塔角色授权（spire.charAccess）：VIP 组种子——INSERT IGNORE 幂等，已存在则不动（不改现有组名）
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('vip','VIP用户')");
@@ -344,6 +355,16 @@ final class DbSchema {
         // 落成列之后：启动回填 → 树里显示锁标记且禁勾 → setRoleRoutes 拒绝授予 → denyReason 兜底拦截。
         if (!hasColumn("perm_routes", "super_only")) {
             Db.exec("ALTER TABLE perm_routes ADD COLUMN super_only TINYINT NOT NULL DEFAULT 0");
+        }
+        // ---- B/C 权限分流（2026-10-09）：路由归属哪一端 ----
+        // 背景：perm_routes 是 B/C 混装的（启动时把所有 SpringMVC 路由都 upsert 进来，
+        // 包括 /api/c/auth、/api/c/game 这些 C 端接口），于是 B 端「角色组管理 → 分配路由」里
+        // 也能勾到 C 端接口 —— 但 C 端是另一套身份体系（c_users），勾了也约束不到任何人，
+        // 只是把分配树弄脏、让管理员分不清哪些是自己该管的。
+        // side='b'（默认，存量行全是 B 端）/ 'c'（/api/c/** 与 C 端页面，见 model/CRoutes）。
+        // ⚠️ 存量 /api/c/** 行的 side 会在下次启动时被 upsert 纠正为 'c'，不需要手工刷数据。
+        if (!hasColumn("perm_routes", "side")) {
+            Db.exec("ALTER TABLE perm_routes ADD COLUMN side CHAR(1) NOT NULL DEFAULT 'b'");
         }
         if (!hasIndex("trpg_playthroughs", "idx_trpg_p_scope_user")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD KEY idx_trpg_p_scope_user (scope, user_id)");

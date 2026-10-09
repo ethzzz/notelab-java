@@ -1,7 +1,10 @@
 package com.notelab.service;
 
+import com.notelab.common.CPermGuard;
 import com.notelab.common.PermGuard;
+import com.notelab.common.PermSide;
 import com.notelab.model.ApiModules;
+import com.notelab.model.CRoutes;
 import com.notelab.model.MenuTree;
 import com.notelab.model.PageRoutes;
 import org.slf4j.Logger;
@@ -19,6 +22,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import com.notelab.dao.CPermDao;
+import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
 import com.notelab.dao.UserDao;
 import com.notelab.dao.PermDao;
@@ -70,11 +75,18 @@ public final class PermService {
 
     /** Bootstrap 在 Db.init() 之后调用。 */
     public static void registerAllRoutes(RequestMappingHandlerMapping mapping) {
-        // 1) 页面路由
+        // 1) 页面路由（B 端）
         Set<String> pagePaths = new LinkedHashSet<>();
         for (String[] p : PageRoutes.PAGE_ROUTES) {
-            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1], false);
+            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1], false, PermSide.B);
             pagePaths.add(p[0]);
+        }
+        // 1a) 页面路由（C 端）：独立常量表 {@link CRoutes}，不与 B 端混。
+        //     两端页面各按各的 keepPaths 清理（见第 2b 步），所以这里单独收集一份路径集合。
+        Set<String> cPagePaths = new LinkedHashSet<>();
+        for (String[] p : CRoutes.C_PAGE_ROUTES) {
+            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1], false, PermSide.C);
+            cPagePaths.add(p[0]);
         }
         // 1b) 两份常量一致性：MenuTree.MENUS 的叶子 path 与 PageRoutes.PAGE_ROUTES 必须一一对应。
         //     ⚠️ 失配是**静默**的：只加菜单 → 叶子被 RBAC 过滤谁都看不见；只加路由 → 没有入口。
@@ -114,17 +126,31 @@ public final class PermService {
             PermDao.upsertRoute("api:" + e.getKey(), e.getKey(), String.join("|", e.getValue()),
                     "api", nameByPath.getOrDefault(e.getKey(), ""), PermGuard.isRestricted(e.getKey()));
         }
+        // 2a) 接口按端分组：B 端 keepPaths 与 C 端 keepPaths 分开收集（第 2b 步按 (kind,side) 清理要用）。
+        //     ⚠️ 不能只留一份合集：那样 C 端路径不在 B 端清单里会被当成僵尸删掉，反之亦然。
+        Set<String> bApiPaths = new LinkedHashSet<>();
+        Set<String> cApiPaths = new LinkedHashSet<>();
+        for (String p : methodsByPath.keySet()) {
+            (PermSide.C.equals(PermSide.ofApi(p)) ? cApiPaths : bApiPaths).add(p);
+        }
+
         // 2b) 清理僵尸路由：代码里已不存在的 page/api 行。
         //     upsert 只增不删，旧行会一直挂在「角色组管理 → 分配路由」的「未挂菜单的页面」里
         //     （实测遗留：page:/spire-editor）。必须在第 5 步 syncUserApiPerms 之前做，
         //     否则同步会把僵尸 api 码重新发给 user 组。
+        //     ⚠️ B/C 分流后必须**按 (kind, side) 四次调用**：端的归属不同，keepPaths 也不同。
         //     ⚠️ pruneRoutes 在 keepPaths 为空时不动手（见其注释），不会把权限表清空。
-        int prunedPage = PermDao.pruneRoutes("page", pagePaths);
-        int prunedApi = PermDao.pruneRoutes("api", methodsByPath.keySet());
+        int prunedPage = PermDao.pruneRoutes("page", PermSide.B, pagePaths);
+        int prunedCPage = PermDao.pruneRoutes("page", PermSide.C, cPagePaths);
+        int prunedApi = PermDao.pruneRoutes("api", PermSide.B, bApiPaths);
+        int prunedCApi = PermDao.pruneRoutes("api", PermSide.C, cApiPaths);
         int prunedHold = PermDao.deleteOrphanRoleRoutes();
-        if (prunedPage + prunedApi + prunedHold > 0) {
-            log.info("已清理僵尸路由：page {} 条 / api {} 条 / 角色残留持有 {} 条",
-                    prunedPage, prunedApi, prunedHold);
+        int prunedCHold = CPermDao.deleteOrphanGroupRoutes();
+        int prunedCWrongSide = CPermDao.deleteNonCSideGroupRoutes();
+        if (prunedPage + prunedCPage + prunedApi + prunedCApi + prunedHold + prunedCHold + prunedCWrongSide > 0) {
+            log.info("已清理僵尸路由：B端 page {} / api {} 条；C端 page {} / api {} 条；"
+                            + "角色残留持有 {} 条 / C端组残留 {} 条 / C端组误持B端码 {} 条",
+                    prunedPage, prunedApi, prunedCPage, prunedCApi, prunedHold, prunedCHold, prunedCWrongSide);
         }
         // 2c) 收回历史上被误授的「仅超管」权限码。
         //     这些码在 2026-10-09 之前是**可以**勾给非超管角色的（PermGuard 不校验 RESTRICTED_PREFIXES，
@@ -160,8 +186,41 @@ public final class PermService {
         }
         // 5) 默认拒绝下的普通用户组接口权限：非受限 api 补齐、受限 api 移除（见方法注释）
         syncUserApiPerms();
+        // 5b) C 端用户组默认权限：**首次为空时给全部 C 端路由**（见 initCGroupRoutes 注释）
+        initCGroupRoutes();
         // 6) 刷新拦截器用的路由表。**必须排在最后**：要晚于上面所有 upsert，否则新路由不在表里
         PermGuard.reload();
+        CPermGuard.reload();
+    }
+
+    /**
+     * C 端用户组（c_user_groups）的默认路由：**空则补全部 C 端路由**，有配置就不动。
+     *
+     * <p>为什么默认全量而不是最小权限：C 端现状是所有人都能用全部功能（游戏、工具、内容下发），
+     * 分流上线时若默认零权限，一次重启就把线上用户全闸掉 —— 那是事故不是安全。
+     *  defaults 组持有全部码之后，超管想收哪个功能就取消哪条，是**收敛**动作。
+     *
+     * <p>⚠️ 只在「该组一条持有都没有」时写入（与 B 端 {@code ROLE_USER} 的同构逻辑一致）：
+     * 超管把某组的权限全部取消后，重启会把全量再补回来 —— 这是已知取舍，
+     * 与 B 端「取消 page:/ 后重启仪表盘会回来」是同一套行为，改动它要连 B 端一起改。
+     */
+    private static void initCGroupRoutes() {
+        List<String> all = CPermDao.allCRouteCodes();
+        if (all.isEmpty()) return;   // C 端路由表还没建起来（首启时序）→ 这次不动，下次启动补
+        int seeded = 0;
+        for (Map<String, Object> g : CUserDao.listGroupsWithCount()) {
+            String code = String.valueOf(g.get("code"));
+            if (code == null || code.isEmpty()) continue;
+            if (!CPermDao.groupRouteCodes(code).isEmpty()) continue;
+            CPermDao.setGroupRoutes(code, all);
+            seeded++;
+        }
+        if (seeded > 0) {
+            log.info("C 端用户组默认权限已初始化：{} 个组 × {} 条 C 端路由（页面 {} 条 / 接口 {} 条）",
+                    seeded, all.size(),
+                    all.stream().filter(c -> c.startsWith("page:")).count(),
+                    all.stream().filter(c -> c.startsWith("api:")).count());
+        }
     }
 
     /**
@@ -190,7 +249,9 @@ public final class PermService {
         }
         int restricted = 0;
         int given = 0;
-        for (Map<String, Object> r : PermDao.listRoutes()) {
+        // ⚠️ 只遍历 side='b'：C 端接口（/api/c/**）由 CPermGuard 按 c_user_groups 校验，
+        //    发给 B 端 user 组毫无意义（B 端用户压根不会去调 C 端接口），只会把 permission 表搅浑。
+        for (Map<String, Object> r : PermDao.listRoutes(PermSide.B)) {
             if (!"api".equals(String.valueOf(r.get("kind")))) continue;
             String p = String.valueOf(r.get("path"));
             if (p == null || p.isEmpty()) continue;
@@ -287,15 +348,19 @@ public final class PermService {
     }   // superOnlyCodes(0)
 
     /**
-     * 全部权限码（页面 + api）。api 行**附带模块键与展示名**（来自 {@link ApiModules}）。
+     * 某一端（{@link PermSide#B} / {@link PermSide#C}）的全部权限码（页面 + api），
+     * api 行**附带模块键与展示名**（来自 {@link ApiModules}）。
+     *
+     * <p>为什么按端下发而不是全量下发让前端过滤：前端过滤只是"看不见"，码仍然会被提交、
+     * 仍可能经手工请求写库。下发阶段就截掉，非法码连「合法候选集合」都进不去。
      *
      * <p>为什么在服务端拼：模块名必须跟着**路由**走。放前端会出现「后端加了模块、前端忘了加」
      * 的静默失配 —— 此前前端硬编码 6 条，125 条路由里 71 条只能显示英文路径段。
      *
      * <p>ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService
      */
-    public static List<Map<String, Object>> listRoutes() {
-        List<Map<String, Object>> rows = PermDao.listRoutes();
+    public static List<Map<String, Object>> listRoutes(String side) {
+        List<Map<String, Object>> rows = PermDao.listRoutes(side);
         for (Map<String, Object> r : rows) {
             if (!"api".equals(String.valueOf(r.get("kind")))) continue;
             String path = String.valueOf(r.get("path"));
@@ -304,7 +369,42 @@ public final class PermService {
             r.put("module_name", ApiModules.label(path));
         }
         return rows;
-    }   // listRoutes(0)
+    }   // listRoutes(1)
+
+    // ---------- C 端用户组路由（与 B 端角色组完全分离） ----------
+
+    /** C 端用户组持有的权限码。ArchGuard 收敛：controller 不再直调 CPermDao */
+    public static List<String> cGroupRouteCodes(String groupCode) {
+        return CPermDao.groupRouteCodes(groupCode);
+    }   // cGroupRouteCodes(1)
+
+    /**
+     * 某 C 端用户可进入的页面路径清单（不含 {@code page:} 前缀），供 C 端前端做入口显隐。
+     *
+     * <p>取值方式与 B 端 {@link #allowedPagePaths} 同构：**以 {@link CRoutes} 为准遍历**，
+     * 再看用户组是否持有对应码 —— 这样库里的历史/脏权限码不会凭空开通任何路径，
+     * 清单永远只包含当前代码里真实存在的页面。
+     *
+     * <p>⚠️ 这里是**下发**而非门禁：C 端页面守卫由前端自己做（隐藏入口 / 跳无权限页），
+     * 真正的强制约束在接口层 {@link CPermGuard} —— 前端藏了入口但接口没拦住，不算安全；
+     * 反过来接口拦了而入口还露着，至少不会泄露数据。
+     */
+    public static List<String> cAllowedPagePaths(Map<String, Object> cUser) {
+        List<String> out = new ArrayList<>();
+        if (cUser == null) return out;
+        Object group = cUser.get("group_code");
+        if (group == null) return out;
+        List<String> codes = CPermDao.groupRouteCodes(group.toString());
+        for (String[] p : CRoutes.C_PAGE_ROUTES) {
+            if (codes.contains("page:" + p[0])) out.add(p[0]);
+        }
+        return out;
+    }   // cAllowedPagePaths(1)
+
+    /** 覆写 C 端用户组的权限码集合。ArchGuard 收敛：controller 不再直调 CPermDao */
+    public static void setCGroupRoutes(String groupCode, List<String> codes) {
+        CPermDao.setGroupRoutes(groupCode, codes);
+    }   // setCGroupRoutes(2)
 
     /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */
     public static List<Map<String, Object>> listUsersForPerm() {
