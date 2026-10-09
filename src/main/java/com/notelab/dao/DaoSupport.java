@@ -4,6 +4,7 @@ import com.notelab.mapper.ArchScanCycleMapper;
 import com.notelab.mapper.ArchScanRunMapper;
 import com.notelab.mapper.ArchScanViolationMapper;
 import com.notelab.mapper.ConversationMapper;
+import com.notelab.mapper.CanvasCollaboratorMapper;
 import com.notelab.mapper.CanvasDocMapper;
 import com.notelab.mapper.CGameSaveMapper;
 import com.notelab.mapper.CGroupRouteMapper;
@@ -66,6 +67,7 @@ public class DaoSupport {
     private static DocumentMapper documentMapper;
     private static NoteMapper noteMapper;
     private static CanvasDocMapper canvasDocMapper;
+    private static CanvasCollaboratorMapper canvasCollaboratorMapper;
     private static EnTrGroupMapper enTrGroupMapper;
     private static EnTrSentenceMapper enTrSentenceMapper;
     private static EnTrSubmissionMapper enTrSubmissionMapper;
@@ -95,6 +97,7 @@ public class DaoSupport {
                       DocumentMapper documentMapper,
                       NoteMapper noteMapper,
                       CanvasDocMapper canvasDocMapper,
+                      CanvasCollaboratorMapper canvasCollaboratorMapper,
                       EnTrGroupMapper enTrGroupMapper,
                       EnTrSentenceMapper enTrSentenceMapper,
                       EnTrSubmissionMapper enTrSubmissionMapper) {
@@ -123,6 +126,7 @@ public class DaoSupport {
         DaoSupport.documentMapper = documentMapper;
         DaoSupport.noteMapper = noteMapper;
         DaoSupport.canvasDocMapper = canvasDocMapper;
+        DaoSupport.canvasCollaboratorMapper = canvasCollaboratorMapper;
         DaoSupport.enTrGroupMapper = enTrGroupMapper;
         DaoSupport.enTrSentenceMapper = enTrSentenceMapper;
         DaoSupport.enTrSubmissionMapper = enTrSubmissionMapper;
@@ -163,6 +167,7 @@ public class DaoSupport {
     public static DocumentMapper document() { return documentMapper; }
     public static NoteMapper note() { return noteMapper; }
     public static CanvasDocMapper canvasDoc() { return canvasDocMapper; }
+    public static CanvasCollaboratorMapper canvasCollaborator() { return canvasCollaboratorMapper; }
     public static EnTrGroupMapper enTrGroup() { return enTrGroupMapper; }
     public static EnTrSentenceMapper enTrSentence() { return enTrSentenceMapper; }
     public static EnTrSubmissionMapper enTrSubmission() { return enTrSubmissionMapper; }

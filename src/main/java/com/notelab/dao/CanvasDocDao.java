@@ -69,16 +69,15 @@ public final class CanvasDocDao {
     /**
      * 列表：可选标题关键字 + 可选引擎；按 updated_at 倒序（最近编辑的在前）。
      *
-     * <p>⚠️ {@code createdBy} 为 {@code null} 表示**不过滤**（超管看全部）。
-     * 调用方必须**显式**传 null 才会不过滤 —— 不要把「拿不到当前用户 id」也传成 null，
-     * 那会静默退化成「所有人都看到全部画布」（fail-open）。
+     * <p>⚠️ **不再按 created_by 收窄**（2026-10-10 方案 C）：画布列表对全部 B 端账户可见，
+     * 「能不能打开/改/删」由 {@code canvas_collaborator} 逐块决定，不由列表决定。
+     * 因此本方法没有 owner 参数 —— 少一个参数就少一处「忘了传就静默看全部」的 fail-open 风险。
      */
-    public static List<Map<String, Object>> list(String q, String engine, Long createdBy, int limit) {
+    public static List<Map<String, Object>> list(String q, String engine, int limit) {
         QueryWrapper<CanvasDoc> w = new QueryWrapper<>();
         if (q != null && !q.isBlank()) w.like("title", q.trim());
         // engine 由调用方先过白名单再传进来；这里不做兜底，避免「写错的引擎静默变成不过滤」
         if (engine != null && !engine.isBlank()) w.eq("engine", engine);
-        if (createdBy != null) w.eq("created_by", createdBy);
         w.orderByDesc("updated_at");
         w.last("LIMIT " + Math.min(Math.max(limit, 1), 200));
         return RowUtil.rows(DaoSupport.canvasDoc().selectList(w), COLS);

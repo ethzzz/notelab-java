@@ -53,6 +53,19 @@ public final class UserDao {
                 Wrappers.lambdaQuery(User.class).orderByAsc(User::getId)), LIST_COLS);
     }
 
+    /**
+     * B 端账户简表（id / username / role）—— 给「邀请画布协作者」的选人下拉用。
+     *
+     * <p>⚠️ 刻意**不含 email**：本方法服务的接口只要 B 端登录就能调（不能用超管专属的
+     * {@code /api/perm/users}，因为画布创建者未必是超管）。邮箱属于账号隐私，
+     * 任何登录用户都能列出来的话收集成本太低。
+     */
+    public static List<Map<String, Object>> listUserBriefs() {
+        return RowUtil.rows(DaoSupport.user().selectList(
+                        Wrappers.lambdaQuery(User.class).orderByAsc(User::getId)),
+                new String[]{"id", "username", "role"});
+    }
+
     /** 按 id 批量取账户：批量改角色前一次性核对「哪些存在、哪些当前是超管」，避免逐条查询的 N+1 */
     public static List<Map<String, Object>> listUsersByIds(List<Long> ids) {
         if (ids == null || ids.isEmpty()) return List.of();

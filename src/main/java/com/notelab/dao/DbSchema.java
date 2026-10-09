@@ -333,6 +333,20 @@ final class DbSchema {
         if (!hasColumn("canvas_doc", "engine")) {
             Db.exec("ALTER TABLE canvas_doc ADD COLUMN engine VARCHAR(16) NOT NULL DEFAULT 'tldraw'");
         }
+        // ---- 协作画布协作者（画布级 ACL，2026-10-10）----
+        // 方案 C：画布**列表对全部 B 端账户可见**，但「能打开 / 能改 / 能删」按画布逐块授权。
+        // 创建者隐式持有 owner（不落本表），本表只存被邀请的协作者。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS canvas_collaborator (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                room_id CHAR(16) NOT NULL,
+                user_id BIGINT NOT NULL,
+                permission VARCHAR(8) NOT NULL DEFAULT 'view',
+                invited_by BIGINT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_canvas_collab (room_id, user_id),
+                KEY idx_canvas_collab_user (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- C 端游戏存档（只增不改）：按 user_id + game_code 唯一，data_json 存各游戏自有结构 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS c_game_save (
