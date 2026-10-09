@@ -6,6 +6,7 @@ import com.notelab.common.PermSide;
 import com.notelab.model.ApiModules;
 import com.notelab.model.MenuTree;
 import com.notelab.model.PageRoutes;
+import com.notelab.model.RouteGroups;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.method.HandlerMethod;
@@ -192,6 +193,8 @@ public final class PermService {
         syncUserApiPerms();
         // 5b) C 端用户组默认权限：**首次为空时给全部 C 端路由**（见 initCGroupRoutes 注释）
         initCGroupRoutes();
+        // 5c) 归属表自检：页面↔接口模块的键有没有悬空（只 warn，见方法注释）
+        checkRouteGroups();
         // 6) 刷新拦截器用的路由表。**必须排在最后**：要晚于上面所有 upsert，否则新路由不在表里
         PermGuard.reload();
         CPermGuard.reload();
@@ -363,14 +366,43 @@ public final class PermService {
     public static List<Map<String, Object>> listRoutes(String side) {
         List<Map<String, Object>> rows = PermDao.listRoutes(side);
         for (Map<String, Object> r : rows) {
-            if (!"api".equals(String.valueOf(r.get("kind")))) continue;
             String path = String.valueOf(r.get("path"));
-            // 键与展示名都由后端算好后下发，前端不再持有任何模块逻辑
-            r.put("module", ApiModules.keyOf(path));
-            r.put("module_name", ApiModules.label(path));
+            if ("api".equals(String.valueOf(r.get("kind")))) {
+                // 键与展示名都由后端算好后下发，前端不再持有任何模块逻辑
+                String module = ApiModules.keyOf(path);
+                r.put("module", module);
+                r.put("module_name", ApiModules.label(path));
+                // 多个页面共用的模块：告诉前端挂到哪个菜单分组下（见 RouteGroups.SHARED_MODULES）
+                String grp = RouteGroups.MODULE_MENU_GROUP.get(module);
+                if (grp != null) r.put("menu_group", grp);
+            } else if ("page".equals(String.valueOf(r.get("kind")))) {
+                // 页面用到的接口模块：分配路由时「勾页面连带勾这些接口」的依据。
+                // 权威在后端 RouteGroups，前端不再持有归属表（避免两端各写一半的静默失配）。
+                r.put("modules", RouteGroups.modulesOfPage(path));
+            }
         }
         return rows;
     }   // listRoutes(1)
+
+    /**
+     * 校验「页面 ↔ 接口模块」归属表里有没有悬空的键（启动时跑一次，只 warn 不阻断）。
+     *
+     * <p>悬空 = 归属表里写了某个模块键，但当前没有任何接口用它。成因通常是拼错或模块已下线 ——
+     * 这类错误在前端持有归属表时完全静默（模块落进「系统通用」分组，看着像配过了），
+     * 搬到后端后才能在这里被喊出来。
+     */
+    private static void checkRouteGroups() {
+        Set<String> live = new LinkedHashSet<>();
+        for (Map<String, Object> r : PermDao.listRoutes(PermSide.B)) {
+            if (!"api".equals(String.valueOf(r.get("kind")))) continue;
+            live.add(ApiModules.keyOf(String.valueOf(r.get("path"))));
+        }
+        List<String> bad = RouteGroups.unknownModules(live);
+        if (!bad.isEmpty()) {
+            log.warn("页面↔接口归属表里有 {} 个悬空模块键（没有任何接口在用，通常是拼错或模块已下线）：{}",
+                    bad.size(), bad);
+        }
+    }
 
     // ---------- C 端用户组路由（与 B 端角色组完全分离） ----------
 
