@@ -143,22 +143,39 @@ public class AuthController {
 
     /**
      * SSO 校验端点（nginx auth_request 子请求专用，ai-lab 等旁路服务门禁）：
-     * B 端会话优先、C 端会话也认；200 时通过 X-Auth-User 头透传 "b:<id>" / "c:<id>"，
+     * 200 时通过 X-Auth-User 头透传 "b:<id>" / "c:<id>"，
      * 供 nginx auth_request_set 注入上游（子请求响应体不可取，只能走头）。
      *
      * <p>调用方通过 {@code X-Auth-Purpose} 声明「来意」，本端点据此做**用途级**判定：
      * <ul>
-     *   <li>{@code ailab}（nginx /_ailab_auth 注入）—— ai-lab 属「后台之外」的服务，
-     *       外部账号（external）一律 403。**返回 403 而非 401**：401 会触发
-     *       {@code error_page 401 = @ailab_login} 把人送到登录页，可他已经登录了，
-     *       送过去只会看到一个用不了的登录表单；403 才是诚实的「已登录但无权限」。</li>
-     *   <li>不带该头（协作画布的 WS 握手就是这么调的）—— 只验「是不是 B 端登录用户」，
-     *       不做用途判定。**别把用途判定做成默认行为**，否则画布会跟着受连累。</li>
+     *   <li>{@code ailab}（nginx /_ailab_auth 注入）—— **只认 C 端会话**，见下方实现注释。
+     *       历史坑（2026-10-10）：原本这里是「B 端优先、C 端回落」，而 ai-lab 的
+     *       {@code app/security.py get_c_user()} **只接受 `c:` 前缀**，于是浏览器里
+     *       带 B 端会话（登录过 /admin）的用户会陷入 /ailab/ ↔ /login 死循环：
+     *       门禁 200 放行 + X-Auth-User=b:&lt;id&gt; → ai-lab 页面加载 → 业务 API 全 401
+     *       → 前端 gotoLogin() 跳 /login?next=/ailab/ → 登录页判定 C 端会话有效又自动跳回。
+     *       实测：`X-Auth-User: c:11` → 200，`b:18` → 401。
+     *       所以 ailab 用途下必须只认 C 端：没有 C 端会话就 401，让 nginx 把人送到
+     *       C 端登录页（401 才会触发 {@code error_page 401 = @ailab_login}）。</li>
+     *   <li>不带该头（协作画布的 WS 握手就是这么调的）—— 保持「B 端优先、C 端回落」，
+     *       只验「是不是登录用户」，不做用途判定。**别把用途判定做成默认行为**，
+     *       否则画布会跟着受连累。</li>
      * </ul>
      */
     @GetMapping("/auth/verify")
     public ResponseEntity<Map<String, Object>> verify(HttpServletRequest request,
                                                       @RequestHeader(value = "X-Auth-Purpose", required = false) String purpose) {
+        // ai-lab 门禁：只认 C 端会话（理由见方法注释）。外部账号（external）是 B 端用户组的
+        // 概念，C 端账号不属于它，故这里无需再判 isExternal。
+        if (PURPOSE_AILAB.equals(purpose)) {
+            Map<String, Object> cUser = CAuthUtil.user(request);
+            if (cUser == null) return AuthUtil.unauth();
+            return ResponseEntity.ok()
+                    .header("X-Auth-User", "c:" + AuthUtil.userId(cUser))
+                    .body(Map.of("ok", true, "scope", "c", "id", cUser.get("id")));
+        }
+
+        // 其余用途（含画布 WS 握手，不带 X-Auth-Purpose）：B 端优先、C 端回落
         Map<String, Object> user = AuthUtil.user(request);
         String prefix = "b";
         if (user == null) {
@@ -166,9 +183,6 @@ public class AuthController {
             prefix = "c";
         }
         if (user == null) return AuthUtil.unauth();
-        if (PURPOSE_AILAB.equals(purpose) && "b".equals(prefix) && PermService.isExternal(user)) {
-            return ResponseEntity.status(403).body(Map.of("error", "外部账号无权访问该服务"));
-        }
         return ResponseEntity.ok()
                 .header("X-Auth-User", prefix + ":" + AuthUtil.userId(user))
                 .body(Map.of("ok", true, "scope", prefix, "id", user.get("id")));
