@@ -361,7 +361,7 @@ final class DbSchema {
         // 包括 /api/c/auth、/api/c/game 这些 C 端接口），于是 B 端「角色组管理 → 分配路由」里
         // 也能勾到 C 端接口 —— 但 C 端是另一套身份体系（c_users），勾了也约束不到任何人，
         // 只是把分配树弄脏、让管理员分不清哪些是自己该管的。
-        // side='b'（默认，存量行全是 B 端）/ 'c'（/api/c/** 与 C 端页面，见 model/CRoutes）。
+        // side='b'（默认，存量行全是 B 端）/ 'c'（/api/c/**，判定见 common/PermSide）。
         // ⚠️ 存量 /api/c/** 行的 side 会在下次启动时被 upsert 纠正为 'c'，不需要手工刷数据。
         if (!hasColumn("perm_routes", "side")) {
             Db.exec("ALTER TABLE perm_routes ADD COLUMN side CHAR(1) NOT NULL DEFAULT 'b'");

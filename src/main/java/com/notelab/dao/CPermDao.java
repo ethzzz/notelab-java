@@ -40,7 +40,9 @@ public final class CPermDao {
     }
 
     /**
-     * C 端全部路由（{@code side='c'}：C 端页面 + {@code /api/c/**} 接口），api 行附模块键与展示名。
+     * C 端全部路由（{@code side='c'}）。**只可能是 {@code /api/c/**} 接口** ——
+     * C 端不做页面显隐（2026-10-10 起页面路由整类下线，见 {@code PermService.registerAllRoutes} 第 0 步），
+     * 权限的作用点就只剩接口一层。
      *
      * <p>模块名由后端算好下发（同 {@link PermDao#listRoutes(String)} 的约定）：前端不持有「路径 → 模块」映射。
      */
@@ -82,5 +84,10 @@ public final class CPermDao {
     /** 清掉持有非 C 端路由码的行（历史脏数据自愈） */
     public static int deleteNonCSideGroupRoutes() {
         return DaoSupport.cGroupRoute().deleteNonCSide();
+    }
+
+    /** 清掉持有某类权限码的行（按 code 前缀），语义见 {@code CGroupRouteMapper#deleteByCodePrefix} */
+    public static int deleteGroupRoutesByPrefix(String prefix) {
+        return DaoSupport.cGroupRoute().deleteByCodePrefix(prefix);
     }
 }

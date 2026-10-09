@@ -41,4 +41,15 @@ public interface CGroupRouteMapper {
     @Delete("DELETE gr FROM c_group_routes gr "
             + "JOIN perm_routes r ON r.code = gr.route_code WHERE r.side <> 'c'")
     int deleteNonCSide();
+
+    /**
+     * 清掉持有**某一整类**权限码的行（按 code 前缀，如 {@code "page:"}）。
+     *
+     * <p>为什么不能只靠 {@link #deleteOrphans}：orphan 判定是「{@code perm_routes} 里没有这个 code」，
+     * 而 {@code page:/} 这类码在 **B 端也存在**（B 端仪表盘），两端共用同一个 code。
+     * 所以 C 端页面路由整类下线后，组里持有的 {@code page:/} 依旧能 join 上 B 端那行，orphan 清不掉它。
+     * 按前缀显式删，才不会留下永远生效不了的僵尸持有。
+     */
+    @Delete("DELETE FROM c_group_routes WHERE route_code LIKE CONCAT(#{prefix}, '%')")
+    int deleteByCodePrefix(@Param("prefix") String prefix);
 }

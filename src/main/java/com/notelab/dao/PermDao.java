@@ -96,6 +96,20 @@ public final class PermDao {
                         .notIn(PermRoute::getPath, keepPaths)));
     }
 
+    /**
+     * 删除某个 (kind, side) 组合下的**全部**路由行。
+     *
+     * <p>与 {@link #pruneRoutes} 的差别：那一个是「保留 keepPaths，其余删」，这一个是整类删。
+     * 用于某类路由**整体下线**（如 C 端页面路由不再登记），此时没有 keepPaths 可言，
+     * 而 pruneRoutes 遇到空 keepPaths 会拒绝动手（保护性设计，见其注释）。
+     */
+    public static int deleteRoutesByKindSide(String kind, String side) {
+        return DaoSupport.tx().execute(status -> DaoSupport.permRoute().delete(
+                Wrappers.lambdaQuery(PermRoute.class)
+                        .eq(PermRoute::getKind, kind)
+                        .eq(PermRoute::getSide, side)));
+    }
+
     /** 清掉角色对已删权限码的持有（僵尸权限），见 {@code PermRoleRouteMapper#deleteOrphans}。 */
     public static int deleteOrphanRoleRoutes() {
         return DaoSupport.permRoleRoute().deleteOrphans();
