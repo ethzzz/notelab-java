@@ -91,6 +91,35 @@ public final class RouteGroups {
     }
 
     /**
+     * 不需要归属声明的模块键。
+     *
+     * <p>这些模块即使没有任何页面声明，落进「系统通用」也是**正确行为**，不该报警：
+     * <ul>
+     *   <li>{@code base} —— 归不进任何模块的接口（非 {@code /api} 前缀等），本来就该在通用组。</li>
+     *   <li>会话基础端点（{@code auth}/{@code login}/{@code me}/{@code menu}/…）——
+     *       它们在 {@code PermGuard.SESSION_ENDPOINTS} 里豁免，任何登录用户都能调，
+     *       根本不需要授权，自然也不需要归属。</li>
+     *   <li>{@code c} 与 {@code c/*} —— C 端接口由 C 端用户组持有（另一套身份体系），
+     *       不在 B 端分配树里出现。</li>
+     * </ul>
+     */
+    private static final Set<String> NO_CLAIM_NEEDED = Set.of(
+            "base", "auth", "login", "logout", "me", "menu", "register", "health", "error", "c"
+    );
+
+    private static boolean claimNeeded(String module) {
+        return !(module == null || NO_CLAIM_NEEDED.contains(module) || module.startsWith("c/"));
+    }
+
+    /** 归属表里已声明的全部模块键（页面声明 + 分组共用声明） */
+    public static Set<String> declaredModules() {
+        Set<String> out = new LinkedHashSet<>();
+        for (List<String> ms : PAGE_MODULES.values()) out.addAll(ms);
+        for (List<String> ms : SHARED_MODULES.values()) out.addAll(ms);
+        return out;
+    }
+
+    /**
      * 声明了却**没有任何接口在用**的模块键 —— 也就是拼错 / 已下线的键。
      *
      * <p>这是把归属搬到后端的直接收益：前端持有这张表时，写错的模块只会静悄悄落进「系统通用」分组，
@@ -110,5 +139,27 @@ public final class RouteGroups {
             for (String m : ms) if (!live.contains(m) && seen.add(m)) bad.add(m);
         }
         return bad;
+    }
+
+    /**
+     * 有接口在用、却**没有任何页面或分组声明归属**的模块键 —— 它们在分配树里会落进底部的
+     * 「系统通用」分组，管理员得自己翻到底去找，症状是「新接口在树上找不到」。
+     *
+     * <p>成因通常是新增接口时漏了 {@link #PAGE_MODULES} 那一步登记
+     * （新增 admin 页面四步里的第 4 步）。与 {@link #unknownModules} 是**反向**的：
+     * 那个查「声明了但没接口用」，这个查「有接口但没人声明」。
+     *
+     * @param liveModules 当前 perm_routes 里真实出现的模块键
+     * @return 无人认领的模块键
+     */
+    public static List<String> unclaimedModules(Set<String> liveModules) {
+        if (liveModules == null || liveModules.isEmpty()) return List.of();
+        Set<String> declared = declaredModules();
+        List<String> out = new ArrayList<>();
+        for (String m : liveModules) {
+            if (claimNeeded(m) && !declared.contains(m)) out.add(m);
+        }
+        out.sort(String::compareTo);
+        return out;
     }
 }

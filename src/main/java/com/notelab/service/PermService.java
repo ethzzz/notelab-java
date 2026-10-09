@@ -397,10 +397,19 @@ public final class PermService {
             if (!"api".equals(String.valueOf(r.get("kind")))) continue;
             live.add(ApiModules.keyOf(String.valueOf(r.get("path"))));
         }
+        // ① 正向：归属表里声明了、却没有任何接口在用（拼错 / 模块已下线）
         List<String> bad = RouteGroups.unknownModules(live);
         if (!bad.isEmpty()) {
             log.warn("页面↔接口归属表里有 {} 个悬空模块键（没有任何接口在用，通常是拼错或模块已下线）：{}",
                     bad.size(), bad);
+        }
+        // ② 反向：有接口在用、却没有页面或分组认领（新增接口时漏了 RouteGroups.PAGE_MODULES 那一步）。
+        //    后果是它落进分配树底部的「系统通用」分组，管理员找不到 —— 症状比①更难察觉。
+        List<String> unclaimed = RouteGroups.unclaimedModules(live);
+        if (!unclaimed.isEmpty()) {
+            log.warn("有 {} 个接口模块无人认领（会落进「系统通用」分组）：{}"
+                            + " —— 新增接口后请到 model/RouteGroups.PAGE_MODULES 声明它属于哪个页面",
+                    unclaimed.size(), unclaimed);
         }
     }
 
