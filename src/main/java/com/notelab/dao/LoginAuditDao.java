@@ -38,22 +38,33 @@ public final class LoginAuditDao {
 
     // ==================== 查询（超管审计页） ====================
 
-    /** 当天各结果计数：页面顶部一眼看出「今天有没有异常」。 */
-    public static List<Map<String, Object>> countByResult(String day) {
-        return Db.queryAll(
-                "SELECT result, COUNT(*) AS n FROM login_audit WHERE day=? GROUP BY result ORDER BY n DESC", day);
+    /**
+     * 各结果计数（页面顶部一眼看出异常信号）。
+     *
+     * <p>两种口径二选一：{@code day} 精确某天；{@code fromDay} 起的连续区间（含当天，用于
+     * 「过去 N 天」下拉）。两者都 null = 全部（保留期内）。
+     */
+    public static List<Map<String, Object>> countByResult(String day, String fromDay) {
+        StringBuilder sb = new StringBuilder("SELECT result, COUNT(*) AS n FROM login_audit WHERE ");
+        List<Object> args = new ArrayList<>();
+        if (notBlank(day)) { sb.append("day=?"); args.add(day); }
+        else if (notBlank(fromDay)) { sb.append("day>=?"); args.add(fromDay); }
+        else { sb.append("1=1"); }
+        sb.append(" GROUP BY result ORDER BY n DESC");
+        return Db.queryAll(sb.toString(), args.toArray());
     }
 
     /**
-     * 条件分页查询，按时间倒序。四个条件都可不传（null / 空串 = 不过滤）。
+     * 条件分页查询，按时间倒序。条件都可不传（null / 空串 = 不过滤）。
      *
      * <p>⚠️ LIMIT / OFFSET 是**拼接**而非占位符：值来自服务端 clamp 过的 int，没有任何字符串参与
      * （无注入面）；而 MySQL 对 {@code LIMIT ?} 的支持依赖驱动版本，直拼更稳。
      */
-    public static List<Map<String, Object>> search(String day, String ip, String username, String result,
+    public static List<Map<String, Object>> search(String day, String fromDay,
+                                                   String ip, String username, String result,
                                                    int limit, int offset) {
         List<Object> args = new ArrayList<>();
-        String where = where(day, ip, username, result, args);
+        String where = where(day, fromDay, ip, username, result, args);
         int lim = Math.max(1, Math.min(MAX_PAGE, limit));
         int off = Math.max(0, offset);
         return Db.queryAll("SELECT id, ts, app, username, user_id, result, ip, ua FROM login_audit"
@@ -61,9 +72,9 @@ public final class LoginAuditDao {
     }
 
     /** 同条件的总条数（页面的分页器用）。 */
-    public static long count(String day, String ip, String username, String result) {
+    public static long count(String day, String fromDay, String ip, String username, String result) {
         List<Object> args = new ArrayList<>();
-        String where = where(day, ip, username, result, args);
+        String where = where(day, fromDay, ip, username, result, args);
         Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS n FROM login_audit" + where, args.toArray());
         Object v = r == null ? null : r.get("n");
         return v instanceof Number n ? n.longValue() : 0L;
@@ -76,10 +87,16 @@ public final class LoginAuditDao {
      *
      * <p>ip / username 用**精确匹配**而不是 LIKE：审计要回答的是「某个账号被谁试过」
      * 「某个 IP 都干了什么」，精确匹配可预测且不必处理 LIKE 通配符转义。
+     *
+     * <p>时间条件：{@code day}（精确某天）与 {@code fromDay}（该日起、含当天）由调用方保证
+     * **二选一**（Controller 层已互斥），DAO 不做仲裁 —— 两个都传时两个条件都会拼上（AND）。
+     * {@code day} 是 {@code yyyy-MM-dd} 字符串，字典序即时间序，{@code day>=?} 即「从该日起」。
      */
-    private static String where(String day, String ip, String username, String result, List<Object> args) {
+    private static String where(String day, String fromDay, String ip, String username, String result,
+                                List<Object> args) {
         StringBuilder sb = new StringBuilder(" WHERE 1=1");
         if (notBlank(day)) { sb.append(" AND day=?"); args.add(day); }
+        if (notBlank(fromDay)) { sb.append(" AND day>=?"); args.add(fromDay); }
         if (notBlank(ip)) { sb.append(" AND ip=?"); args.add(ip); }
         if (notBlank(username)) { sb.append(" AND username=?"); args.add(username); }
         if (notBlank(result)) { sb.append(" AND result=?"); args.add(result); }

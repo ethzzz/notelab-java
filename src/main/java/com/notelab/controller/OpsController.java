@@ -93,7 +93,9 @@ public class OpsController {
      * <p>⚠️ 只读，且与同类接口一样受 {@code /api/admin} 受限前缀（仅 super_admin）保护，
      * 控制器内再校验一次（双保险）。查询条件全部走 DAO 的 {@code ?} 占位符。
      *
-     * @param day      日期 {@code yyyy-MM-dd}，缺省或格式非法 = 今天
+     * @param day      日期 {@code yyyy-MM-dd}，缺省或格式非法 = 今天（与 days 同时缺省时生效）
+     * @param days     时间范围（**优先于 day**）：1=今天，3/7/30/90/365=过去 N 天（含今天），
+     *                 0=全部（保留期内，上限即 365 天清理策略）；负数或非法 = 忽略、回落 day 口径
      * @param ip       精确匹配
      * @param username 精确匹配（用户输入的原样）
      * @param result   success / bad_password / no_such_user / disabled / rate_limited / bad_request
@@ -102,6 +104,7 @@ public class OpsController {
     public ResponseEntity<Map<String, Object>> loginAudit(
             HttpServletRequest request,
             @RequestParam(required = false) String day,
+            @RequestParam(required = false) Integer days,
             @RequestParam(required = false) String ip,
             @RequestParam(required = false) String username,
             @RequestParam(required = false) String result,
@@ -111,8 +114,22 @@ public class OpsController {
         if (me == null) return AuthUtil.unauth();
         if (!PermService.isSuperAdmin(me)) return ResponseEntity.status(403).body(Map.of("error", "需要超级管理员权限"));
 
-        // 缺省 = 今天：审计的第一眼就是「今天有没有异常」
-        String d = normalizeDay(day);
+        // 时间口径二选一：days（范围）优先于 day（单日）。days=null 时保持旧语义：缺省 = 今天。
+        String d;
+        String fromDay = null;
+        if (days != null) {
+            if (days == 0) {
+                d = null;                       // 全部：不加时间条件（保留期 365 天兜底）
+            } else if (days >= 1) {
+                int n = Math.min(days, 365);    // 与清理策略同上限，防止 fromDay 早于数据存留
+                d = null;
+                fromDay = LocalDate.now().minusDays(n - 1L).toString();
+            } else {
+                d = normalizeDay(day);          // 负数/非法：回落单日口径
+            }
+        } else {
+            d = normalizeDay(day);
+        }
         String fIp = blankToNull(ip), fUser = blankToNull(username), fResult = blankToNull(result);
 
         int p = Math.max(1, page);
@@ -120,12 +137,13 @@ public class OpsController {
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("day", d);
+        out.put("fromDay", fromDay);
         out.put("page", p);
         out.put("size", sz);
-        out.put("total", LoginAuditDao.count(d, fIp, fUser, fResult));
-        out.put("items", LoginAuditDao.search(d, fIp, fUser, fResult, sz, (p - 1) * sz));
-        // 当天各结果计数：[{result, n}]，页面顶部一眼看异常（bad_password/no_such_user 突然变多 = 有人在撞库）
-        out.put("byResult", LoginAuditDao.countByResult(d));
+        out.put("total", LoginAuditDao.count(d, fromDay, fIp, fUser, fResult));
+        out.put("items", LoginAuditDao.search(d, fromDay, fIp, fUser, fResult, sz, (p - 1) * sz));
+        // 各结果计数：[{result, n}]，页面顶部一眼看异常（bad_password/no_such_user 突然变多 = 有人在撞库）
+        out.put("byResult", LoginAuditDao.countByResult(d, fromDay));
         return ResponseEntity.ok(out);
     }
 
