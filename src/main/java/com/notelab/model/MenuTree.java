@@ -1,5 +1,6 @@
 package com.notelab.model;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -103,5 +104,30 @@ public final class MenuTree {
         m.put("icon", icon);
         m.put("children", children);
         return m;
+    }
+
+    /**
+     * 全部**叶子节点**的 path（按树序、去重）。
+     *
+     * <p>用途有二：① 与 {@link PageRoutes#PAGE_ROUTES} 做一致性校验（两份常量必须一一对应，
+     * 失配是静默的）；② 「分配路由」页面树的分组骨架。
+     */
+    public static List<String> leafPaths() {
+        List<String> out = new ArrayList<>();
+        collectLeafPaths(MENUS, out);
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void collectLeafPaths(List<Map<String, Object>> nodes, List<String> out) {
+        for (Map<String, Object> n : nodes) {
+            Object kids = n.get("children");
+            if (kids instanceof List<?> ks && !ks.isEmpty()) {
+                collectLeafPaths((List<Map<String, Object>>) ks, out);
+            } else {
+                Object p = n.get("path");
+                if (p instanceof String s && !s.isEmpty() && !out.contains(s)) out.add(s);
+            }
+        }
     }
 }

@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.util.AntPathMatcher;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -20,7 +21,7 @@ import java.util.Set;
  * 本类把这层补齐，让「勾了权限码」这件事**真正有约束力**。
  *
  * <p>判定顺序（见 {@link #denyReason}）：C 端前缀 → 会话基础端点 → 路由表未 loading 兜底 →
- * 路径匹配 → 权限码校验。**越具体者胜**（/api/perm/roles/{code} 优先于 /api/perm/roles）。
+ * 路径匹配 → **仅超管（super_only）** → 权限码校验。**越具体者胜**（/api/perm/roles/{code} 优先于 /api/perm/roles）。
  *
  * <p>⚠️ 两处刻意的设计取舍：
  * <ol>
@@ -46,6 +47,12 @@ public final class PermGuard {
      *
      * <p>⚠️ {@code /api/c-admin} 名字看着像 C 端，实际是 **B 端管理员管理 C 端用户**（对应页面
      * /c-users、/user/invites），别因为它以 c 开头就误放进 C 端豁免。
+     *
+     * <p>⚠️ 2026-10-09 起这份清单**不再是唯一的防线**：启动时由 {@link com.notelab.service.PermService}
+     * 按它回填 {@code perm_routes.super_only}，之后由 {@link #denyReason} 强制拦截、
+     * 由 PermController 拒绝授予。此前它只被用于"不自动发码"，而 {@code /api/c-admin}、
+     * {@code /api/analytics}、{@code /api/ui-config} 三个前缀的 Controller **自带零超管校验** ——
+     * 等于超管在「分配路由」里勾一下就能把这些能力给出去。
      */
     public static final List<String> RESTRICTED_PREFIXES = List.of(
             "/api/perm",        // 角色组 / 权限码 / 成员角色（对应 /perm 页面）
@@ -70,6 +77,8 @@ public final class PermGuard {
 
     /** 已登记的 api 路径 pattern（含 {var}），懒加载 + 启动时由 {@link PermService} 显式刷新 */
     private static volatile List<String> apiPatterns;
+    /** 其中「仅超管」的那些（perm_routes.super_only=1）：**一律不给非超管**，哪怕角色持有该权限码 */
+    private static volatile Set<String> superOnlyPatterns = Set.of();
 
     private PermGuard() {}
 
@@ -82,21 +91,40 @@ public final class PermGuard {
         return false;
     }
 
+    /** 该 path（含 {var} pattern）是否被标记为仅超管 */
+    public static boolean isSuperOnly(String pattern) {
+        return pattern != null && superOnlyPatterns.contains(pattern);
+    }
+
+    /** perm_routes.super_only 的宽类型判定（Integer/Boolean/String 都可能来自不同驱动） */
+    public static boolean isTruthyFlag(Object v) {
+        if (v == null) return false;
+        if (v instanceof Boolean b) return b;
+        if (v instanceof Number n) return n.intValue() != 0;
+        String s = String.valueOf(v);
+        return "1".equals(s) || "true".equalsIgnoreCase(s);
+    }
+
     /** 从 perm_routes 重新加载 api 路径表。读库失败时**保留原值**（不清空），避免抖动把站点闸死。 */
     public static void reload() {
         List<String> loaded = new ArrayList<>();
+        Set<String> superOnly = new HashSet<>();
         try {
             for (Map<String, Object> r : PermDao.listRoutes()) {
                 if (!"api".equals(String.valueOf(r.get("kind")))) continue;
                 String p = String.valueOf(r.get("path"));
-                if (p != null && !p.isEmpty()) loaded.add(p);
+                if (p == null || p.isEmpty()) continue;
+                loaded.add(p);
+                if (isTruthyFlag(r.get("super_only"))) superOnly.add(p);
             }
         } catch (Exception e) {
             log.warn("加载 perm_routes 失败，接口门禁维持原路由表（不清空）：{}", e);
             return;
         }
         apiPatterns = List.copyOf(loaded);
-        log.info("接口门禁已加载 {} 条 api 路由，受限前缀 {} 个", loaded.size(), RESTRICTED_PREFIXES.size());
+        superOnlyPatterns = Set.copyOf(superOnly);
+        log.info("接口门禁已加载 {} 条 api 路由（其中仅超管 {} 条），受限前缀 {} 个",
+                loaded.size(), superOnly.size(), RESTRICTED_PREFIXES.size());
     }
 
     private static List<String> patterns() {
@@ -139,7 +167,14 @@ public final class PermGuard {
         }
         // 越具体的 pattern 越优先（/api/perm/roles/{code} 胜过 /api/perm/roles）
         hits.sort(MATCHER.getPatternComparator(clean));
-        String code = "api:" + hits.get(0);
+        String best = hits.get(0);
+        // 仅超管的接口：**不看权限码**，非超管一律拒绝。
+        // 能走到这里的一定不是超管（ApiPermInterceptor 已在上游短路），所以直接拒。
+        // 这是兜底：即便有人把 super_only 的码写进 perm_role_routes（历史数据 / 手工 SQL），也照样拦得住。
+        if (isSuperOnly(best)) {
+            return "该接口仅超级管理员可访问（" + best + "）";
+        }
+        String code = "api:" + best;
         if (routeCodes != null && routeCodes.contains(code)) return null;
         return "无权访问该接口（缺少权限码 " + code + "）";
     }

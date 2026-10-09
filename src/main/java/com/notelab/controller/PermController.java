@@ -154,10 +154,25 @@ public class PermController {
         List<String> codes = req == null || req.codes == null ? List.of() : req.codes;
         Set<String> known = new LinkedHashSet<>();
         for (Map<String, Object> r : PermService.listRoutes()) known.add((String) r.get("code"));
+        // 「仅超管」的码一律不给：这些接口 Controller 层自带零超管校验（如 /api/c-admin、/api/analytics、
+        // /api/ui-config），勾出去等于把 C 端用户管理 / 全站经营数据 / 全站界面配置送人。
+        // 前端树已经禁勾，这里是**第二道**（防手搓请求 / 老界面缓存）。
+        Set<String> superOnly = new LinkedHashSet<>(PermService.superOnlyCodes());
         List<String> valid = new ArrayList<>();
-        for (String c : codes) if (c != null && known.contains(c)) valid.add(c);
+        List<String> rejected = new ArrayList<>();
+        for (String c : codes) {
+            if (c == null || !known.contains(c)) continue;    // 未登记的依旧静默丢弃（原有行为）
+            if (superOnly.contains(c)) { rejected.add(c); continue; }
+            valid.add(c);
+        }
         PermService.setRoleRoutes(code, valid);
-        return ResponseEntity.ok(Map.of("ok", true));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        if (!rejected.isEmpty()) {
+            body.put("rejectedSuperOnly", rejected);
+            body.put("notice", "已忽略 " + rejected.size() + " 条「仅超管」权限码（这些接口非超管一律 403，授予无效）");
+        }
+        return ResponseEntity.ok(body);
     }
 
     // ================= 账户 =================

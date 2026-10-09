@@ -6,6 +6,7 @@ import com.notelab.model.entity.PermRole;
 import com.notelab.model.entity.PermRoute;
 import org.springframework.dao.DuplicateKeyException;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -16,13 +17,13 @@ public final class PermDao {
     private PermDao() {}
 
     /** 原 listRoutes SQL 投影列序 */
-    private static final String[] ROUTE_COLS = {"code", "path", "method", "kind", "name"};
+    private static final String[] ROUTE_COLS = {"code", "path", "method", "kind", "name", "super_only"};
     /** 原 listRoles/getRole SQL 投影列序 */
     private static final String[] ROLE_COLS = {"code", "name"};
 
-    /** 原 upsert SQL 由 Mapper 注解原样保留（ON DUPLICATE KEY UPDATE） */
-    public static void upsertRoute(String code, String path, String method, String kind, String name) {
-        DaoSupport.permRoute().upsertRoute(code, path, method, kind, name);
+    /** 原 upsert SQL 由 Mapper 注解原样保留（ON DUPLICATE KEY UPDATE）；superOnly 见 PermGuard.isRestricted */
+    public static void upsertRoute(String code, String path, String method, String kind, String name, boolean superOnly) {
+        DaoSupport.permRoute().upsertRoute(code, path, method, kind, name, superOnly ? 1 : 0);
     }
 
     public static List<Map<String, Object>> listRoutes() {
@@ -60,6 +61,33 @@ public final class PermDao {
     /** 清掉角色对已删权限码的持有（僵尸权限），见 {@code PermRoleRouteMapper#deleteOrphans}。 */
     public static int deleteOrphanRoleRoutes() {
         return DaoSupport.permRoleRoute().deleteOrphans();
+    }
+
+    /**
+     * 全部「仅超管」的 api 权限码（{@code super_only=1}）。
+     *
+     * <p>给两个调用方用：① 启动时收回历史上被误授给非超管的这些码；
+     * ② {@code PermController.setRoleRoutes} 拒绝授予。判定读库而不是读常量 ——
+     * 让「哪些接口仅超管」在运行期只有一个数据源（启动前已按常量回填）。
+     */
+    public static List<String> superOnlyCodes() {
+        List<String> out = new ArrayList<>();
+        for (PermRoute r : DaoSupport.permRoute().selectList(
+                Wrappers.lambdaQuery(PermRoute.class)
+                        .eq(PermRoute::getSuperOnly, 1)
+                        .select(PermRoute::getCode))) {
+            if (r.getCode() != null) out.add(r.getCode());
+        }
+        return out;
+    }
+
+    /**
+     * 批量收回这些权限码在所有角色上的持有（见 {@code PermRoleRouteMapper#deleteByCodes}）。
+     * ⚠️ {@code codes} 为空时直接返回 0 —— 空集合拼成 {@code IN ()} 是语法错误。
+     */
+    public static int deleteRoleRoutesByCodes(List<String> codes) {
+        if (codes == null || codes.isEmpty()) return 0;
+        return DaoSupport.permRoleRoute().deleteByCodes(codes);
     }
 
     public static List<String> roleRouteCodes(String roleCode) {

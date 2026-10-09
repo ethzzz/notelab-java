@@ -1,6 +1,8 @@
 package com.notelab.service;
 
 import com.notelab.common.PermGuard;
+import com.notelab.model.ApiModules;
+import com.notelab.model.MenuTree;
 import com.notelab.model.PageRoutes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,8 +73,21 @@ public final class PermService {
         // 1) 页面路由
         Set<String> pagePaths = new LinkedHashSet<>();
         for (String[] p : PageRoutes.PAGE_ROUTES) {
-            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1]);
+            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1], false);
             pagePaths.add(p[0]);
+        }
+        // 1b) 两份常量一致性：MenuTree.MENUS 的叶子 path 与 PageRoutes.PAGE_ROUTES 必须一一对应。
+        //     ⚠️ 失配是**静默**的：只加菜单 → 叶子被 RBAC 过滤谁都看不见；只加路由 → 没有入口。
+        //     所以这里只做**告警**不阻断（启动不该因为一个漏登记就起不来），把线索写进日志。
+        List<String> leafPaths = MenuTree.leafPaths();
+        Set<String> leafSet = new LinkedHashSet<>(leafPaths);
+        List<String> onlyMenu = new ArrayList<>();
+        for (String p : leafPaths) if (!pagePaths.contains(p)) onlyMenu.add(p);
+        List<String> onlyRoute = new ArrayList<>();
+        for (String p : pagePaths) if (!leafSet.contains(p)) onlyRoute.add(p);
+        if (!onlyMenu.isEmpty() || !onlyRoute.isEmpty()) {
+            log.warn("菜单树与页面路由表不一致：只在 MenuTree 有 {}；只在 PageRoutes 有 {}（前者会被 RBAC 过滤掉、后者没有入口）",
+                    onlyMenu, onlyRoute);
         }
         // 2) API 路由：从 SpringMVC 请求映射自动采集（新增 Controller 重启即自动注册）
         Map<String, Set<String>> methodsByPath = new TreeMap<>();
@@ -92,9 +107,12 @@ public final class PermService {
                 nameByPath.putIfAbsent(path, e.getValue().getMethod().getName());
             }
         }
+        // superOnly 由**代码常量**决定（PermGuard.RESTRICTED_PREFIXES），启动回填进库。
+        // 这样「仅超管」这件事有了数据形态：树能标锁、setRoleRoutes 能拒、denyReason 能兜底；
+        // 而权威仍是常量 —— 改受限范围只需改常量，重启自动同步，不用手工改库。
         for (Map.Entry<String, Set<String>> e : methodsByPath.entrySet()) {
             PermDao.upsertRoute("api:" + e.getKey(), e.getKey(), String.join("|", e.getValue()),
-                    "api", nameByPath.getOrDefault(e.getKey(), ""));
+                    "api", nameByPath.getOrDefault(e.getKey(), ""), PermGuard.isRestricted(e.getKey()));
         }
         // 2b) 清理僵尸路由：代码里已不存在的 page/api 行。
         //     upsert 只增不删，旧行会一直挂在「角色组管理 → 分配路由」的「未挂菜单的页面」里
@@ -107,6 +125,18 @@ public final class PermService {
         if (prunedPage + prunedApi + prunedHold > 0) {
             log.info("已清理僵尸路由：page {} 条 / api {} 条 / 角色残留持有 {} 条",
                     prunedPage, prunedApi, prunedHold);
+        }
+        // 2c) 收回历史上被误授的「仅超管」权限码。
+        //     这些码在 2026-10-09 之前是**可以**勾给非超管角色的（PermGuard 不校验 RESTRICTED_PREFIXES，
+        //     setRoleRoutes 也不拦），而 /api/c-admin、/api/analytics、/api/ui-config 三个前缀的
+        //     Controller 自带零超管校验 —— 等于把 C 端用户管理、全站经营数据、全站界面配置送出去了。
+        //     现在 denyReason 已兜底拦截（授权残留inert），这里再把残留行删掉，让界面上的勾选状态诚实。
+        List<String> superOnlyCodes = PermDao.superOnlyCodes();
+        if (!superOnlyCodes.isEmpty()) {
+            int revoked = PermDao.deleteRoleRoutesByCodes(superOnlyCodes);
+            if (revoked > 0) {
+                log.warn("已收回 {} 条「仅超管」权限码的历史授予（这些接口非超管一律 403，授予本就无效）", revoked);
+            }
         }
         // 3) 普通角色默认权限（仅首次为空时写入，不覆盖已有配置）：全部功能页，不含 ui/perm 管理页
         //    /stress-test（接口压测）、/ops（运维看板）也排除：都是超管专属运维工具，普通角色默认无权看到入口
@@ -164,7 +194,10 @@ public final class PermService {
             if (!"api".equals(String.valueOf(r.get("kind")))) continue;
             String p = String.valueOf(r.get("path"));
             if (p == null || p.isEmpty()) continue;
-            if (PermGuard.isRestricted(p)) {
+            // 判定用库里的 super_only（启动时已按 PermGuard.isRestricted 回填）——
+            // 刻意不再直接问 PermGuard：让「仅超管」在运行期只有一个数据源，
+            // 将来若改成可配置的受限范围，这里不用跟着改。
+            if (PermGuard.isTruthyFlag(r.get("super_only"))) {
                 restricted++;
                 continue;
             }
@@ -174,11 +207,11 @@ public final class PermService {
         List<String> want = new ArrayList<>(keep);
         // 无变化就不写库 —— 每次启动都做一遍 delete + insert 没意义
         if (before.size() == want.size() && new HashSet<>(before).containsAll(want)) {
-            log.info("普通用户组接口权限已是最新（api {} 条给 / {} 条受限），跳过写库", given, restricted);
+            log.info("普通用户组接口权限已是最新（api {} 条给 / {} 条仅超管），跳过写库", given, restricted);
             return;
         }
         PermDao.setRoleRoutes(ROLE_USER, want);
-        log.info("已同步普通用户组接口权限：api {} 条给 / {} 条受限，page 权限保留 {} 条",
+        log.info("已同步普通用户组接口权限：api {} 条给 / {} 条仅超管，page 权限保留 {} 条",
                 given, restricted, want.size() - given);
     }
 
@@ -244,9 +277,33 @@ public final class PermService {
         return PermDao.roleRouteCodes(roleCode);
     }   // roleRouteCodes(1)
 
-    /** ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService */
+    /**
+     * 全部「仅超管」的 api 权限码（读库，启动时已按 PermGuard.RESTRICTED_PREFIXES 回填）。
+     *
+     * <p>ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService
+     */
+    public static List<String> superOnlyCodes() {
+        return PermDao.superOnlyCodes();
+    }   // superOnlyCodes(0)
+
+    /**
+     * 全部权限码（页面 + api）。api 行**附带模块键与展示名**（来自 {@link ApiModules}）。
+     *
+     * <p>为什么在服务端拼：模块名必须跟着**路由**走。放前端会出现「后端加了模块、前端忘了加」
+     * 的静默失配 —— 此前前端硬编码 6 条，125 条路由里 71 条只能显示英文路径段。
+     *
+     * <p>ArchGuard 收敛：controller 不再直调 PermDao，统一经 PermService
+     */
     public static List<Map<String, Object>> listRoutes() {
-        return PermDao.listRoutes();
+        List<Map<String, Object>> rows = PermDao.listRoutes();
+        for (Map<String, Object> r : rows) {
+            if (!"api".equals(String.valueOf(r.get("kind")))) continue;
+            String path = String.valueOf(r.get("path"));
+            // 键与展示名都由后端算好后下发，前端不再持有任何模块逻辑
+            r.put("module", ApiModules.keyOf(path));
+            r.put("module_name", ApiModules.label(path));
+        }
+        return rows;
     }   // listRoutes(0)
 
     /** ArchGuard 收敛：controller 不再直调 UserDao，统一经 PermService */

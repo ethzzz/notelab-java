@@ -34,4 +34,15 @@ public interface PermRoleRouteMapper {
     @Delete("DELETE rr FROM perm_role_routes rr "
             + "LEFT JOIN perm_routes r ON r.code = rr.route_code WHERE r.code IS NULL")
     int deleteOrphans();
+
+    /**
+     * 批量收回指定权限码在**所有角色**上的持有。
+     *
+     * <p>用途：2026-10-09 起「仅超管」的接口非超管一律 403，历史上被勾出去的那些授予已是死数据，
+     * 清掉才能让界面上的勾选状态变得诚实。
+     * ⚠️ {@code codes} 不能为空 —— 空集合会被拼成 {@code IN ()} 语法错误，调用方必须先判空。
+     */
+    @Delete("<script>DELETE FROM perm_role_routes WHERE route_code IN "
+            + "<foreach collection='codes' item='c' open='(' separator=',' close=')'>#{c}</foreach></script>")
+    int deleteByCodes(@Param("codes") List<String> codes);
 }

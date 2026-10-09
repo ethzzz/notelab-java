@@ -17,6 +17,8 @@ public class PermRoute {
     private String kind;
     private String name;
     private Integer builtin;
+    /** 1 = 仅超级管理员可访问（受限前缀）；启动时按 {@code PermGuard.isRestricted} 回填，不手工维护 */
+    private Integer superOnly;
     private LocalDateTime createdAt;
 
     public String getCode() { return code; }
@@ -36,6 +38,9 @@ public class PermRoute {
 
     public Integer getBuiltin() { return builtin; }
     public void setBuiltin(Integer builtin) { this.builtin = builtin; }
+
+    public Integer getSuperOnly() { return superOnly; }
+    public void setSuperOnly(Integer superOnly) { this.superOnly = superOnly; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

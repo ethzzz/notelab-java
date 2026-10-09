@@ -174,6 +174,7 @@ final class DbSchema {
                 kind VARCHAR(20) NOT NULL DEFAULT 'api',
                 name VARCHAR(120) NOT NULL DEFAULT '',
                 builtin TINYINT NOT NULL DEFAULT 1,
+                super_only TINYINT NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         Db.exec("""
@@ -335,6 +336,14 @@ final class DbSchema {
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");
+        }
+        // ---- 权限：受限接口（仅超管）从散落常量变成数据（2026-10-09）----
+        // 背景：RESTRICTED_PREFIXES 此前只被 syncUserApiPerms 用来「不自动发码」，
+        // PermGuard 不校验它、setRoleRoutes 也不拦它 —— 于是超管在「分配路由」里给自建角色
+        // 勾上 api:/api/c-admin/users，那个角色真的能读写 C 端用户管理（那几个 Controller 自带零校验）。
+        // 落成列之后：启动回填 → 树里显示锁标记且禁勾 → setRoleRoutes 拒绝授予 → denyReason 兜底拦截。
+        if (!hasColumn("perm_routes", "super_only")) {
+            Db.exec("ALTER TABLE perm_routes ADD COLUMN super_only TINYINT NOT NULL DEFAULT 0");
         }
         if (!hasIndex("trpg_playthroughs", "idx_trpg_p_scope_user")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD KEY idx_trpg_p_scope_user (scope, user_id)");
