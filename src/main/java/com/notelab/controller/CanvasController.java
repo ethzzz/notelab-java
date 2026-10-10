@@ -230,6 +230,24 @@ public class CanvasController {
         public String permission;
     }
 
+    /**
+     * 协作者接口的**统一响应体**（GET / POST / DELETE 三者同构）。
+     *
+     * <p>⚠️ 三个接口必须给同一组字段：前端拿到响应后是**直接覆盖**本地状态的
+     * （`setCollabList(await ...)`）。少了 {@code my_permission}，
+     * {@code ownerCanManage} 就会凭 undefined 判成 false —— 邀请表单与
+     * 「改权限 / 移除」按钮**当场整块消失**，表现为「邀请一次之后就再也点不了第二次」。
+     * 这类塌陷只在交互过程中出现，静态读代码看不出来，只有真点一遍才发现。
+     */
+    private Map<String, Object> collabBody(String roomId, Map<String, Object> me, long ownerId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("items", decorate(CanvasCollaboratorDao.listByRoom(roomId), userNames(), ownerId));
+        body.put("owner", ownerId);
+        body.put("my_permission", permOf(me, roomId));
+        return body;
+    }
+
     /** 某画布的协作者列表（任何能打开该画布的人都能看：知道自己和谁一起协作） */
     @GetMapping("/{roomId}/collaborators")
     public ResponseEntity<Map<String, Object>> listCollaborators(@PathVariable String roomId,
@@ -240,12 +258,7 @@ public class CanvasController {
         if (!canRead(permOf(me, roomId))) return noAccess();
         Map<String, Object> row = CanvasDocDao.getByRoom(roomId);
         if (row == null) return ResponseEntity.status(404).body(Map.of("error", "画布不存在"));
-        long ownerId = asLong(row.get("created_by"), -1L);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("items", decorate(CanvasCollaboratorDao.listByRoom(roomId), userNames(), ownerId));
-        body.put("owner", ownerId);
-        body.put("my_permission", permOf(me, roomId));
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(collabBody(roomId, me, asLong(row.get("created_by"), -1L)));
     }
 
     /**
@@ -278,11 +291,7 @@ public class CanvasController {
             return bad("超级管理员对所有画布已有全部权限，无需邀请");
         }
         CanvasCollaboratorDao.upsert(roomId, userId, perm, meId(me));
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ok", true);
-        body.put("items", decorate(CanvasCollaboratorDao.listByRoom(roomId), userNames(),
-                asLong(row.get("created_by"), -1L)));
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(collabBody(roomId, me, asLong(row.get("created_by"), -1L)));
     }
 
     /** 移除协作者（仅创建者与超管） */
@@ -299,11 +308,7 @@ public class CanvasController {
         int n = CanvasCollaboratorDao.remove(roomId, userId);
         if (n == 0) return ResponseEntity.status(404).body(Map.of("error", "该账户不是本画布的协作者"));
         Map<String, Object> row = CanvasDocDao.getByRoom(roomId);
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("ok", true);
-        body.put("items", decorate(CanvasCollaboratorDao.listByRoom(roomId), userNames(),
-                row == null ? -1L : asLong(row.get("created_by"), -1L)));
-        return ResponseEntity.ok(body);
+        return ResponseEntity.ok(collabBody(roomId, me, row == null ? -1L : asLong(row.get("created_by"), -1L)));
     }
 
     /**
