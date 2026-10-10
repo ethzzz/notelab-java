@@ -279,6 +279,22 @@ final class DbSchema {
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('default','默认组')");
         // 爬塔角色授权（spire.charAccess）：VIP 组种子——INSERT IGNORE 幂等，已存在则不动（不改现有组名）
         Db.exec("INSERT IGNORE INTO c_user_groups (code,name) VALUES ('vip','VIP用户')");
+        // ---- 低代码平台：表单运行时的提交记录（只增不改） ----
+        // 为什么不用 ui_config 存：设计稿（forms/flows/models/pages）是**配置**，体量有限、整包覆盖写合适；
+        // 而运行时提交会随时间无限增长，塞进单行 ui_config 会把整份配置一起拖大，
+        // 且「删一条提交」不该碰设计稿。故设计走 ui_config.lowcode 键、运行数据走这张表。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS lowcode_records (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                form_id VARCHAR(64) NOT NULL,
+                form_name VARCHAR(128) NOT NULL DEFAULT '',
+                data MEDIUMTEXT,
+                created_by BIGINT,
+                created_by_name VARCHAR(64) NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_form (form_id),
+                KEY idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- C 端注册邀请码（只增不改）：max_uses 为可注册次数上限，超出不可再用 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS invite_codes (

@@ -60,7 +60,9 @@ public final class RouteGroups {
             Map.entry("/ui", List.of("ui-config")),
             Map.entry("/ops", List.of("admin/ops", "arch")),
             Map.entry("/login-audit", List.of("admin/ops/login-audit")),
-            Map.entry("/blog-gen", List.of("blog"))
+            Map.entry("/blog-gen", List.of("blog")),
+            // 低代码平台：设计稿（ui_config.lowcode）与表单运行时提交记录（lowcode_records）都在这里
+            Map.entry("/lowcode", List.of("lowcode"))
     );
 
     /**

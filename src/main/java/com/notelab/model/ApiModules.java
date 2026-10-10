@@ -74,6 +74,7 @@ public final class ApiModules {
             Map.entry("spire-assets", "爬塔素材接口"),
             Map.entry("loot-content", "摸金内容接口"),
             Map.entry("loot-assets", "摸金素材接口"),
+            Map.entry("lowcode", "低代码平台"),
             // ---- C 端（/api/c/**，由 C 端用户组持有，见 CPermGuard）----
             Map.entry("c", "C端通用接口"),
             Map.entry("c/auth", "C端登录注册"),
