@@ -20,9 +20,9 @@ public final class LowCodeDao {
 
     private LowCodeDao() {}
 
-    /** 列表默认条数；前端传的 limit 由调用方 clamp（见 LowCodeController） */
-    static final int DEFAULT_LIMIT = 50;
-    static final int MAX_LIMIT = 200;
+    /** 列表默认条数；前端传的 limit 由调用方 clamp（见 LowCodeController）。public：Controller 要用它做 clamp */
+    public static final int DEFAULT_LIMIT = 50;
+    public static final int MAX_LIMIT = 200;
 
     // ==================== 写入 ====================
 
