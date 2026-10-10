@@ -61,7 +61,7 @@ public final class ApiPermInterceptor implements HandlerInterceptor {
             // 与 CPermGuard 的 fail-open 取向一致：C 端默认人人可用，权限是**收回**动作；
             // 反过来若按默认拒绝，一个脏 group_code 就能让用户连存档都读不了。
             if (cCodes.isEmpty()) return true;
-            String cReason = CPermGuard.denyReason(path, cCodes);
+            String cReason = CPermGuard.denyReason(path, request.getMethod(), cCodes);
             if (cReason == null) return true;
             writeDenied(response, cReason);
             return false;
@@ -76,7 +76,7 @@ public final class ApiPermInterceptor implements HandlerInterceptor {
                 ? Set.of()
                 : new HashSet<>(PermDao.roleRouteCodes(role.toString()));
 
-        String reason = PermGuard.denyReason(path, codes);
+        String reason = PermGuard.denyReason(path, request.getMethod(), codes);
         if (reason == null) return true;
         writeDenied(response, reason);
         return false;

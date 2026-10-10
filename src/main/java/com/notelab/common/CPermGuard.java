@@ -87,10 +87,11 @@ public final class CPermGuard {
      * 判定是否拒绝该 C 端请求。
      *
      * @param path       应用内路径（如 /api/c/game/save）
+     * @param method     HTTP 方法。⚠️ 与 B 端同口径：权限码按方法拆分（{@link PermGuard#apiCode}）
      * @param routeCodes 该用户组持有的权限码（只看 {@code api:*}）
      * @return null 表示放行；非 null 是拒绝原因（写进 403 响应体，便于排障）
      */
-    public static String denyReason(String path, Set<String> routeCodes) {
+    public static String denyReason(String path, String method, Set<String> routeCodes) {
         if (path == null || path.isEmpty()) return null;
         String clean = normalize(path);
 
@@ -110,8 +111,10 @@ public final class CPermGuard {
 
         hits.sort(MATCHER.getPatternComparator(clean));
         String best = hits.get(0);
-        String code = "api:" + best;
+        String code = PermGuard.apiCode(method, best);
         if (routeCodes != null && routeCodes.contains(code)) return null;
+        // 同 B 端：没写 method 的 handler 登记为 ANY，对所有方法都适用
+        if (routeCodes != null && routeCodes.contains(PermGuard.apiCode(PermGuard.ANY_METHOD, best))) return null;
         return "无权访问该接口（当前用户组缺少权限码 " + code + "）";
     }
 

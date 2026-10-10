@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import com.notelab.dao.CPermDao;
 import com.notelab.dao.CUserDao;
 import com.notelab.dao.Db;
@@ -107,9 +106,13 @@ public final class PermService {
             log.warn("菜单树与页面路由表不一致：只在 MenuTree 有 {}；只在 PageRoutes 有 {}（前者会被 RBAC 过滤掉、后者没有入口）",
                     onlyMenu, onlyRoute);
         }
-        // 2) API 路由：从 SpringMVC 请求映射自动采集（新增 Controller 重启即自动注册）
-        Map<String, Set<String>> methodsByPath = new TreeMap<>();
-        Map<String, String> nameByPath = new HashMap<>();
+        // 2) API 路由：从 SpringMVC 请求映射自动采集（新增 Controller 重启即自动注册）。
+        //    ⚠️ 2026-10-10 起**一方法一码**：同一个 URL 的 GET 与 POST 是两条独立路由
+        //    （api:GET:/api/canvas / api:POST:/api/canvas），可在「分配路由」里分别授权 ——
+        //    「只给查、不给改」是很常见的诉求，此前 method 拼成 "GET|POST" 塞在同一条里做不到。
+        Map<String, String[]> apiRows = new TreeMap<>();   // code → {method, path}
+        Map<String, String> nameByCode = new HashMap<>();
+        Set<String> apiPaths = new LinkedHashSet<>();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> e : mapping.getHandlerMethods().entrySet()) {
             RequestMappingInfo info = e.getKey();
             Set<String> patterns = new LinkedHashSet<>();
@@ -118,25 +121,40 @@ public final class PermService {
             } else if (info.getPatternsCondition() != null) {
                 patterns.addAll(info.getPatternsCondition().getPatterns());
             }
-            String methods = info.getMethodsCondition().getMethods().stream()
-                    .map(Enum::name).sorted().reduce((a, b) -> a + "," + b).orElse("ANY");
+            // 没写 method 的 handler（如 Spring 自带的 /error）→ ANY：鉴权时它对任何方法都适用
+            List<String> methods = info.getMethodsCondition().getMethods().stream()
+                    .map(Enum::name).sorted().toList();
+            if (methods.isEmpty()) methods = List.of(PermGuard.ANY_METHOD);
             for (String path : patterns) {
-                methodsByPath.computeIfAbsent(path, k -> new TreeSet<>()).add(methods);
-                nameByPath.putIfAbsent(path, e.getValue().getMethod().getName());
+                apiPaths.add(path);
+                for (String m : methods) {
+                    String code = PermGuard.apiCode(m, path);
+                    apiRows.putIfAbsent(code, new String[]{m, path});
+                    nameByCode.putIfAbsent(code, e.getValue().getMethod().getName());
+                }
             }
+        }
+        // 2-0) 权限码口径迁移（一次性，2026-10-10）：api:<path> → api:<METHOD>:<path>。
+        //      ⚠️ 必须排在「upsert 新码」与「prune 旧行」**之前**：此刻旧行还在库里，
+        //      才能读到每个 path 原来覆盖了哪些方法，把旧授权按原范围展开（见方法注释）。
+        int migrated = migrateLegacyApiCodes();
+        if (migrated > 0) {
+            log.info("权限码口径迁移（api:<path> → api:<METHOD>:<path>）：已把旧授权展开成 {} 条按方法授权", migrated);
         }
         // superOnly 由**代码常量**决定（PermGuard.RESTRICTED_PREFIXES），启动回填进库。
         // 这样「仅超管」这件事有了数据形态：树能标锁、setRoleRoutes 能拒、denyReason 能兜底；
         // 而权威仍是常量 —— 改受限范围只需改常量，重启自动同步，不用手工改库。
-        for (Map.Entry<String, Set<String>> e : methodsByPath.entrySet()) {
-            PermDao.upsertRoute("api:" + e.getKey(), e.getKey(), String.join("|", e.getValue()),
-                    "api", nameByPath.getOrDefault(e.getKey(), ""), PermGuard.isRestricted(e.getKey()));
+        for (Map.Entry<String, String[]> e : apiRows.entrySet()) {
+            String path = e.getValue()[1];
+            PermDao.upsertRoute(e.getKey(), path, e.getValue()[0], "api",
+                    nameByCode.getOrDefault(e.getKey(), ""), PermGuard.isRestricted(path));
         }
         // 2a) 接口按端分组：B 端 keepPaths 与 C 端 keepPaths 分开收集（第 2b 步按 (kind,side) 清理要用）。
         //     ⚠️ 不能只留一份合集：那样 C 端路径不在 B 端清单里会被当成僵尸删掉，反之亦然。
+        //     按**路径**（不是码）收集：同一路径的 GET/POST 两行共享 path，prune 的 keepPaths 是路径集合。
         Set<String> bApiPaths = new LinkedHashSet<>();
         Set<String> cApiPaths = new LinkedHashSet<>();
-        for (String p : methodsByPath.keySet()) {
+        for (String p : apiPaths) {
             (PermSide.C.equals(PermSide.ofApi(p)) ? cApiPaths : bApiPaths).add(p);
         }
 
@@ -228,6 +246,53 @@ public final class PermService {
     }
 
     /**
+     * 权限码口径迁移：{@code api:<path>}（method 混在同一条里）→ {@code api:<METHOD>:<path>}（一方法一码）。
+     *
+     * <p>为什么必须迁移，不能「改了代码格式就完事」：授权表（{@code perm_role_routes} /
+     * {@code c_group_routes}）里存的是**码**。码一变，旧授权全成孤儿 → 紧接着的 prune +
+     * deleteOrphans 会把它们清掉 → 自建角色与 external 手上的接口权限**静默清零**
+     * （{@code user} 组有 {@link #syncUserApiPerms} 自动重算兜底，其它角色没有）。
+     *
+     * <p>展开口径 = 旧码**实际覆盖的方法集合**：旧码的 method 是 {@code "GET|POST"}，
+     * 说明当初授出时两个方法都给了 —— 展开成两条新码是**语义等价**，不是放水。
+     * 展开后管理员就能在界面上逐方法收窄（这正是本次改动的目的）。
+     *
+     * <p>幂等：只认 {@code api:/…} 开头的旧码（方法名不含 {@code /}、路径一定以 {@code /} 开头，
+     * 两种格式不会互相误判）。跑过一次后库里不再有旧码，之后每次启动都是空转。
+     *
+     * @return 新增的授权行数（0 = 无需迁移或已迁过）
+     */
+    private static int migrateLegacyApiCodes() {
+        List<Map<String, Object>> legacy = new ArrayList<>();
+        for (Map<String, Object> r : PermDao.listRoutes()) {
+            if (!"api".equals(String.valueOf(r.get("kind")))) continue;
+            String code = String.valueOf(r.get("code"));
+            if (code.startsWith(PermGuard.LEGACY_API_PREFIX)) legacy.add(r);
+        }
+        if (legacy.isEmpty()) return 0;
+        int moved = 0;
+        for (Map<String, Object> r : legacy) {
+            String code = String.valueOf(r.get("code"));
+            String path = code.substring("api:".length());
+            for (String m : String.valueOf(r.get("method")).split("\\|")) {
+                if (m.isBlank()) continue;
+                String newCode = PermGuard.apiCode(m, path);
+                moved += PermDao.cloneRoleRouteCode(code, newCode);
+                moved += CPermDao.cloneGroupRouteCode(code, newCode);
+            }
+        }
+        // ⚠️ 迁移完必须**显式删掉旧格式的路由行**，不能指望 pruneRoutes 顺手清：
+        //    prune 按 `path` 判僵尸，而新旧行的 path 完全一样（变的只是 code）→ 旧行会被判成
+        //    「path 还活着」保留下来 → 树上同一接口出现好几条，且旧码仍然等价于「所有方法全放行」，
+        //    把这次「按方法授权」直接架空。
+        //    删掉后，旧码在 perm_role_routes / c_group_routes 里的持有行就成孤儿，
+        //    由紧接着的 deleteOrphanRoleRoutes / deleteOrphanGroupRoutes 收尾。
+        int dropped = PermDao.deleteRoutesByCodePrefix("api", PermGuard.LEGACY_API_PREFIX);
+        log.info("口径迁移：删掉 {} 条旧格式 api 路由行（api:<path>）", dropped);
+        return moved;
+    }
+
+    /**
      * 普通用户组的 {@code api:*} 权限码**补齐 + 裁剪**（幂等，规则确定性）。
      *
      * <p>为什么非做不可：接口拦截器是**默认拒绝**的，角色组"恰好没勾"就等于"全禁止"。
@@ -257,8 +322,10 @@ public final class PermService {
         //    发给 B 端 user 组毫无意义（B 端用户压根不会去调 C 端接口），只会把 permission 表搅浑。
         for (Map<String, Object> r : PermDao.listRoutes(PermSide.B)) {
             if (!"api".equals(String.valueOf(r.get("kind")))) continue;
-            String p = String.valueOf(r.get("path"));
-            if (p == null || p.isEmpty()) continue;
+            // 直接用行里的 code（= api:<METHOD>:<path>），**不要自己拼格式** ——
+            // 拼格式就等于把「权限码长什么样」这件事抄了第二份，格式一改这里必然漏改。
+            Object codeObj = r.get("code");
+            if (codeObj == null || String.valueOf(codeObj).isEmpty()) continue;
             // 判定用库里的 super_only（启动时已按 PermGuard.isRestricted 回填）——
             // 刻意不再直接问 PermGuard：让「仅超管」在运行期只有一个数据源，
             // 将来若改成可配置的受限范围，这里不用跟着改。
@@ -266,7 +333,7 @@ public final class PermService {
                 restricted++;
                 continue;
             }
-            keep.add("api:" + p);
+            keep.add(String.valueOf(codeObj));
             given++;
         }
         List<String> want = new ArrayList<>(keep);

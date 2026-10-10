@@ -52,4 +52,14 @@ public interface CGroupRouteMapper {
      */
     @Delete("DELETE FROM c_group_routes WHERE route_code LIKE CONCAT(#{prefix}, '%')")
     int deleteByCodePrefix(@Param("prefix") String prefix);
+
+    /**
+     * 把「持有 oldCode 的每个用户组」都复制一份持有到 newCode 上（INSERT IGNORE）。
+     *
+     * <p>与 {@link PermRoleRouteMapper#cloneByOldCode} 同构，用于权限码口径迁移
+     * （{@code api:<path>} → {@code api:<METHOD>:<path>}）：授权行存的是码，码一换旧授予就成孤儿。
+     */
+    @Insert("INSERT IGNORE INTO c_group_routes (group_code, route_code) "
+            + "SELECT group_code, #{newCode} FROM c_group_routes WHERE route_code = #{oldCode}")
+    int cloneByOldCode(@Param("oldCode") String oldCode, @Param("newCode") String newCode);
 }

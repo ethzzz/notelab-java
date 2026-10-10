@@ -25,6 +25,11 @@ public final class CPermDao {
     private static final String[] ROUTE_COLS = {"code", "path", "method", "kind", "name", "super_only", "side"};
 
     /** 某用户组持有的权限码 */
+    /** 权限码口径迁移：把「持有 oldCode 的用户组」镜像一份到 newCode 上（同 PermDao#cloneRoleRouteCode） */
+    public static int cloneGroupRouteCode(String oldCode, String newCode) {
+        return DaoSupport.cGroupRoute().cloneByOldCode(oldCode, newCode);
+    }
+
     public static List<String> groupRouteCodes(String groupCode) {
         return DaoSupport.cGroupRoute().groupRouteCodes(groupCode);
     }

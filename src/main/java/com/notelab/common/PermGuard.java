@@ -23,6 +23,9 @@ import java.util.Set;
  * <p>判定顺序（见 {@link #denyReason}）：C 端前缀 → 会话基础端点 → 路由表未 loading 兜底 →
  * 路径匹配 → **仅超管（super_only）** → 权限码校验。**越具体者胜**（/api/perm/roles/{code} 优先于 /api/perm/roles）。
  *
+ * <p>⚠️ 权限码**按 HTTP 方法拆分**（2026-10-10）：{@link #apiCode} —— 同一个 URL 的 GET 与 POST
+ * 是两条独立权限码，管理界面可分别授权。
+ *
  * <p>⚠️ 两处刻意的设计取舍：
  * <ol>
  *   <li>**路径匹配漏了就等于拒绝**（默认拒绝的字面含义）。所以新增 Controller 后必须重启，
@@ -146,10 +149,12 @@ public final class PermGuard {
      * 判定是否拒绝该请求。
      *
      * @param path       应用内路径（如 /api/c-admin/users）
+     * @param method     HTTP 方法（GET/POST/…）。⚠️ 2026-10-10 起权限码**按方法拆分**：
+     *                   同一个 URL 的 GET 与 POST 是两条独立权限码，可分别授权
      * @param routeCodes 该角色当前持有的权限码集合（可能含 page:*，这里只看 api:*）
      * @return null 表示放行；非 null 是拒绝原因（写进 403 响应体，便于排障而不是干巴巴一个 403）
      */
-    public static String denyReason(String path, Set<String> routeCodes) {
+    public static String denyReason(String path, String method, Set<String> routeCodes) {
         if (path == null || path.isEmpty()) return "路径为空";
         String clean = normalize(path);
 
@@ -177,10 +182,34 @@ public final class PermGuard {
         if (isSuperOnly(best)) {
             return "该接口仅超级管理员可访问（" + best + "）";
         }
-        String code = "api:" + best;
+        String code = apiCode(method, best);
         if (routeCodes != null && routeCodes.contains(code)) return null;
+        // 没写 method 的 handler（如 Spring 的 /error）登记为 ANY，它对所有方法都适用 ——
+        // 少了这条兜底，将来有人加一个 @RequestMapping 不指定方法的接口，就会全员 403 且极难排查。
+        if (routeCodes != null && routeCodes.contains(apiCode(ANY_METHOD, best))) return null;
         return "无权访问该接口（缺少权限码 " + code + "）";
     }
+
+    /** 未指定 HTTP 方法的 handler 用的占位方法名（对所有方法都适用） */
+    public static final String ANY_METHOD = "ANY";
+
+    /**
+     * API 权限码格式：{@code api:<METHOD>:<path>}（如 {@code api:GET:/api/canvas}）。
+     *
+     * <p>⚠️ 2026-10-10 之前是 {@code api:<path>}，method 拼成 {@code "GET|POST"} 塞在**同一条**路由里 ——
+     * 管理界面上只能整条勾，要么全给要么全不给，没法「只允许查、不允许改」。
+     * 现在一方法一码，GET 与 POST 是两个可分别授权的条目（含 C 端，两端共用本格式）。
+     *
+     * <p>格式上是可解析的：方法名不会含 {@code /}，而 path 一定以 {@code /} 开头 —— 所以
+     * {@code api:} 之后的第一个 {@code :} 就是方法与路径的分界。{@code PermService} 的口径迁移依赖这一点。
+     */
+    public static String apiCode(String method, String path) {
+        String m = method == null || method.isBlank() ? ANY_METHOD : method.trim().toUpperCase(java.util.Locale.ROOT);
+        return "api:" + m + ":" + path;
+    }
+
+    /** 旧格式（method 混在同一条里）的 api 码前缀：{@code api:/…}。仅用于口径迁移的识别 */
+    public static final String LEGACY_API_PREFIX = "api:/";
 
     private static String normalize(String path) {
         String p = path.trim();

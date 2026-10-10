@@ -122,6 +122,27 @@ public final class PermDao {
      * ② {@code PermController.setRoleRoutes} 拒绝授予。判定读库而不是读常量 ——
      * 让「哪些接口仅超管」在运行期只有一个数据源（启动前已按常量回填）。
      */
+    /**
+     * 按权限码前缀整类删路由行（口径迁移用，见 {@code PermRouteMapper#deleteByCodePrefix}）。
+     *
+     * <p>⚠️ 必须显式删：{@link #pruneRoutes} 按 {@code path} 判僵尸，而迁移前后 path 不变，
+     * 旧行会被误判成「还活着」留下来。
+     */
+    public static int deleteRoutesByCodePrefix(String kind, String prefix) {
+        return DaoSupport.permRoute().deleteByCodePrefix(kind, prefix);
+    }
+
+    /**
+     * 权限码口径迁移：把「持有 oldCode 的角色」镜像一份到 newCode 上。
+     *
+     * <p>为什么需要：{@code perm_role_routes} 存的是**码**。码的格式一变（{@code api:<path>} →
+     * {@code api:<METHOD>:<path>}），旧授权立刻变成孤儿，会被 prune + deleteOrphans 清掉 ——
+     * 等于把自建角色手上的接口权限静默清零（user 组有自动重算兜底，其它角色没有）。
+     */
+    public static int cloneRoleRouteCode(String oldCode, String newCode) {
+        return DaoSupport.permRoleRoute().cloneByOldCode(oldCode, newCode);
+    }
+
     public static List<String> superOnlyCodes() {
         List<String> out = new ArrayList<>();
         for (PermRoute r : DaoSupport.permRoute().selectList(

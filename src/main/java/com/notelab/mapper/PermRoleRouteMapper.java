@@ -45,4 +45,18 @@ public interface PermRoleRouteMapper {
     @Delete("<script>DELETE FROM perm_role_routes WHERE route_code IN "
             + "<foreach collection='codes' item='c' open='(' separator=',' close=')'>#{c}</foreach></script>")
     int deleteByCodes(@Param("codes") List<String> codes);
+
+    /**
+     * 把「持有 oldCode 的每个角色」都复制一份持有到 newCode 上（INSERT IGNORE，已持有则跳过）。
+     *
+     * <p>用途：权限码口径迁移（{@code api:<path>} → {@code api:<METHOD>:<path>}）。
+     * 授权行里存的是**码**，码变了旧授权就成了孤儿，会被 prune/deleteOrphans 清掉 ——
+     * 那等于把自建角色手上的接口权限静默清零。所以先把旧码的持有者镜像到新码上。
+     *
+     * <p>⚠️ 用 {@code INSERT ... SELECT} 而不是「查出角色列表再逐条插」：一条语句搞定，
+     * 且不受「查完到写回之间又有人改了授权」的影响。
+     */
+    @Insert("INSERT IGNORE INTO perm_role_routes (role_code, route_code) "
+            + "SELECT role_code, #{newCode} FROM perm_role_routes WHERE route_code = #{oldCode}")
+    int cloneByOldCode(@Param("oldCode") String oldCode, @Param("newCode") String newCode);
 }
