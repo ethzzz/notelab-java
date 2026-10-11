@@ -122,8 +122,17 @@ archguard_gate() {
   printf '%s\n' "$1" | grep -qE '^(notelab-(java|b|c)/)?(src/|apps/|packages/|archguard/)' || return 0
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过 ArchGuard 扫描"; return 0; fi
   log "  ArchGuard 架构门禁扫描…"
+  # 🔴 2026-10-11 修：原写法 `( ... )` 后紧跟 `local rc=$?`，在 `set -e` 下**子 shell 的失败会
+  #    让函数立即返回非零**，`local rc=$?` 根本执行不到 —— 后果是：
+  #    · die 从未被调用，用户看不到任何失败原因（输出停在「扫描…」就没了）
+  #    · 退出码虽仍是 1（部署确实被拦），但要靠 `bash -x` 才查得出原因
+  #    这里局部 `set +e` 再 `set -e` 恢复，直白无歧义。
+  #    （另一种写法是放进 `if` 条件里让 set -e 豁免，但 `if ! (...)` 的 `$?` 是取反后的值，易错。）
+  local rc=0
+  set +e
   ( cd /root/Notelab/notelab-c/archguard && node src/index.js >/dev/null 2>&1 )
-  local rc=$?
+  rc=$?
+  set -e
   if [ "$rc" -eq 1 ]; then
     die "ArchGuard 检出 error 级架构违规，已中止部署；详情见 /root/Notelab/notelab-c/archguard/arch-report.json"
   fi
