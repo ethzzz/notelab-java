@@ -24,13 +24,28 @@ public final class LowCodeDao {
     public static final int DEFAULT_LIMIT = 50;
     public static final int MAX_LIMIT = 200;
 
+    /** 提交来源：后台内部试填 */
+    public static final String SRC_ADMIN = "admin";
+    /** 提交来源：公开链接（匿名） */
+    public static final String SRC_PUBLIC = "public";
+
     // ==================== 写入 ====================
 
     public static void insertRecord(String formId, String formName, String dataJson,
                                     Long userId, String userName) {
-        Db.exec("INSERT INTO lowcode_records (form_id, form_name, data, created_by, created_by_name) "
-                        + "VALUES (?,?,?,?,?)",
-                formId, formName, dataJson, userId, userName == null ? "" : userName);
+        insertRecord(formId, formName, dataJson, userId, userName, SRC_ADMIN);
+    }
+
+    /**
+     * @param source 见 {@link #SRC_ADMIN} / {@link #SRC_PUBLIC}。非法值一律归为 admin ——
+     *               来源只是标注，写错不该让这一条提交丢掉，所以这里静默纠正而不是抛错。
+     */
+    public static void insertRecord(String formId, String formName, String dataJson,
+                                    Long userId, String userName, String source) {
+        String src = SRC_PUBLIC.equals(source) ? SRC_PUBLIC : SRC_ADMIN;
+        Db.exec("INSERT INTO lowcode_records (form_id, form_name, data, created_by, created_by_name, source) "
+                        + "VALUES (?,?,?,?,?,?)",
+                formId, formName, dataJson, userId, userName == null ? "" : userName, src);
     }
 
     /** 按 id 删除单条。返回删除行数（0 = 不存在，属正常，不该报 404）。 */
@@ -47,14 +62,26 @@ public final class LowCodeDao {
      * 且 SQL 带 {@code idx_form}（form_id 有索引）+ {@code ORDER BY id DESC} 走主键倒序，不做全表排序。
      */
     public static List<Map<String, Object>> listRecords(String formId, int limit) {
+        return listRecords(formId, null, limit);
+    }
+
+    /** source 为空 = 不区分来源；否则只取该来源（见 {@link #SRC_ADMIN} / {@link #SRC_PUBLIC}） */
+    public static List<Map<String, Object>> listRecords(String formId, String source, int limit) {
         boolean all = formId == null || formId.isEmpty();
-        String sql = "SELECT id, form_id, form_name, data, created_by, created_by_name, created_at "
+        boolean anySrc = source == null || source.isEmpty();
+        StringBuilder w = new StringBuilder();
+        if (!all) w.append("form_id=? ");
+        if (!anySrc) { if (w.length() > 0) w.append("AND "); w.append("source=? "); }
+        String sql = "SELECT id, form_id, form_name, data, created_by, created_by_name, source, created_at "
                 + "FROM lowcode_records "
-                + (all ? "" : "WHERE form_id=? ")
+                + (w.length() > 0 ? "WHERE " + w : "")
                 + "ORDER BY id DESC LIMIT ?";
-        List<Map<String, Object>> rows = all
-                ? Db.queryAll(sql, limit)
-                : Db.queryAll(sql, formId, limit);
+        Object[] args;
+        if (!all && !anySrc) args = new Object[]{formId, source, limit};
+        else if (!all) args = new Object[]{formId, limit};
+        else if (!anySrc) args = new Object[]{source, limit};
+        else args = new Object[]{limit};
+        List<Map<String, Object>> rows = Db.queryAll(sql, args);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -64,6 +91,7 @@ public final class LowCodeDao {
             m.put("data", str(r.get("data")));
             m.put("created_by", num(r.get("created_by")));
             m.put("created_by_name", str(r.get("created_by_name")));
+            m.put("source", str(r.get("source")));
             m.put("created_at", str(r.get("created_at")));
             out.add(m);
         }
@@ -71,10 +99,27 @@ public final class LowCodeDao {
     }
 
     public static long countRecords(String formId) {
+        return countRecords(formId, null);
+    }
+
+    /**
+     * 按来源计数（source 为空 = 不区分来源）。
+     * 用途：B 端发布面板展示「已收到 N 份公开提交」—— 运营只关心外部数据，不该被内部试填污染。
+     */
+    public static long countRecords(String formId, String source) {
         boolean all = formId == null || formId.isEmpty();
-        Map<String, Object> r = all
-                ? Db.queryOne("SELECT COUNT(*) AS c FROM lowcode_records")
-                : Db.queryOne("SELECT COUNT(*) AS c FROM lowcode_records WHERE form_id=?", formId);
+        boolean anySrc = source == null || source.isEmpty();
+        // 组装 WHERE：四态（无条件 / 仅表单 / 仅来源 / 表单+来源）
+        StringBuilder w = new StringBuilder();
+        if (!all) w.append("form_id=? ");
+        if (!anySrc) { if (w.length() > 0) w.append("AND "); w.append("source=? "); }
+        String cond = w.length() > 0 ? "WHERE " + w : "";
+        Object[] args;
+        if (!all && !anySrc) args = new Object[]{formId, source};
+        else if (!all) args = new Object[]{formId};
+        else if (!anySrc) args = new Object[]{source};
+        else args = new Object[0];
+        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS c FROM lowcode_records " + cond, args);
         return r == null ? 0 : num(r.get("c"));
     }
 

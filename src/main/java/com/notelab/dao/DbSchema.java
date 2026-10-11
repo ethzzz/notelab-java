@@ -295,6 +295,12 @@ final class DbSchema {
                 KEY idx_form (form_id),
                 KEY idx_created (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // 表单对外发布（2026-10-11）：提交来源 —— 'admin' 后台内部试填 / 'public' 公开链接提交。
+        // 为什么需要：同一张表单两种入口的提交混在一张表里，B 端看记录时必须能区分
+        // 「同事在后台点的提交」与「外部用户填的」，否则无法判断这条数据能不能信。
+        if (!hasColumn("lowcode_records", "source")) {
+            Db.exec("ALTER TABLE lowcode_records ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT 'admin'");
+        }
         // ---- C 端注册邀请码（只增不改）：max_uses 为可注册次数上限，超出不可再用 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS invite_codes (

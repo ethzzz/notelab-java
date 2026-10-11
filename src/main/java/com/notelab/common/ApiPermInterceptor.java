@@ -20,12 +20,14 @@ import java.util.Set;
  * 管理功能 → {@code isSuperAdmin}），这是刻意保留的**双保险** —— 就算权限码配错，
  * Controller 那层仍然拦得住。
  *
- * <p>三个必须放行的场景（漏掉任何一个都会造成明显故障）：
+ * <p>四个必须放行的场景（漏掉任何一个都会造成明显故障）：
  * <ol>
  *   <li>**OPTIONS 预检**：拦截器的 {@code addPathPatterns("/api/**")} 也会命中 CORS 预检，
  *       一旦拦下，所有跨域调用直接全灭。</li>
  *   <li>**匿名请求**：B 端与 C 端会话都没有时直接放行，交给各 Controller 自己的 {@code unauth()}。
  *       注意 C 端大量接口本来就是匿名可访问的（站点配置、内容下发、埋点），不能要求登录。</li>
+ *   <li>**公开端点**：{@link PermGuard#PUBLIC_PREFIXES}（如对外表单），要发给没有账号的外部用户，
+ *       必须**先于身份判定**放行 —— 见代码里 ② 的位置说明。</li>
  *   <li>**super_admin**：天然全放行，与菜单树的 {@code PermService.allowedPagePaths} 保持一致
  *       （注意 super_admin 在 perm_role_routes 里是 0 行，权限不靠数据）。</li>
  * </ol>
@@ -46,7 +48,12 @@ public final class ApiPermInterceptor implements HandlerInterceptor {
 
         String path = pathHelper.getPathWithinApplication(request);
 
-        // ② 不是 B 端会话：可能是 C 端用户（另一套 Cookie）或匿名。
+        // ② 公开端点（对外表单）：先于身份判定放行。
+        //    必须放在这里而不是 PermGuard 内部 —— 否则带 C 端会话的访问者会先被 CPermGuard 按用户组拦一道，
+        //    而公开表单的正确语义是「跟你是谁无关」。
+        if (PermGuard.isPublic(path)) return true;
+
+        // ③ 不是 B 端会话：可能是 C 端用户（另一套 Cookie）或匿名。
         //    匿名放行（交给各 Controller 的 unauth）；C 端用户按**其用户组**持有的路由码校验
         //    /api/c/**（见 CPermGuard）—— 这就是 C 端权限的真正生效点。
         Map<String, Object> user = AuthUtil.user(request);
@@ -67,10 +74,10 @@ public final class ApiPermInterceptor implements HandlerInterceptor {
             return false;
         }
 
-        // ③ 超级管理员天然全放行（含将来新增的路由）
+        // ④ 超级管理员天然全放行（含将来新增的路由）
         if (PermService.isSuperAdmin(user)) return true;
 
-        // ④ B 端角色按角色组的权限码校验（C 端接口对 B 端会话一律豁免，见 PermGuard.C_ENDPOINT_PREFIX）
+        // ⑤ B 端角色按角色组的权限码校验（C 端接口对 B 端会话一律豁免，见 PermGuard.C_ENDPOINT_PREFIX）
         Object role = user.get("role");
         Set<String> codes = role == null
                 ? Set.of()

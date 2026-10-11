@@ -66,6 +66,29 @@ public final class PermGuard {
     );
 
     /**
+     * 公开端点前缀：**不参与任何权限校验** —— 匿名、任何 B 端角色、任何 C 端用户组都能访问。
+     *
+     * <p>目前只有低代码的对外表单（{@code /api/lowcode/public/**}）：它要发给外部用户填，
+     * 那些人根本没有 NoteLab 账号。注意这与 {@link #SESSION_ENDPOINTS} 不是一回事 ——
+     * 后者是「登录了就能用」，这里是「不登录也要能用」。
+     *
+     * <p>⚠️ 加进来的端点**必须自带防护**：无会话写入口等于对全网开放，所以
+     * {@code LowCodeController} 里配了 IP 节流 + 服务端字段校验，两者缺一不可。
+     */
+    public static final List<String> PUBLIC_PREFIXES = List.of(
+            "/api/lowcode/public"   // 表单对外发布：取定义 / 匿名提交
+    );
+
+    /** 该 api 路径是否是公开端点（精确等于该前缀，或位于其下） */
+    public static boolean isPublic(String apiPath) {
+        if (apiPath == null) return false;
+        for (String p : PUBLIC_PREFIXES) {
+            if (apiPath.equals(p) || apiPath.startsWith(p + "/")) return true;
+        }
+        return false;
+    }
+
+    /**
      * 会话基础端点：任何**已登录**用户都必须能访问，否则连登录、钱包、菜单都走不通。
      * 它们自身的安全性由对应 Controller 的 {@code AuthUtil.user(request) == null} 保证（未登录 → 401），
      * 这里不能再叠一层权限码门槛。
@@ -160,6 +183,8 @@ public final class PermGuard {
 
         // C 端体系：不参与 B 端权限隔离
         if (clean.startsWith(C_ENDPOINT_PREFIX)) return null;
+        // 公开端点：对外表单要发给没有账号的人，任何身份都不该被门禁拦（安全性由 Controller 自己保证）
+        if (isPublic(clean)) return null;
         // 会话基础：任何登录用户都放行
         if (SESSION_ENDPOINTS.contains(clean)) return null;
 
