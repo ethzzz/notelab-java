@@ -116,8 +116,10 @@ npm_install_if_needed() {  # $1=变更文件清单
 #   · 紧急绕过：SKIP_ARCH=1 ./sync-deploy.sh notelab-c
 archguard_gate() {
   [ "${SKIP_ARCH:-0}" = 1 ] && { log "  SKIP_ARCH=1 → 跳过 ArchGuard 门禁"; return 0; }
-  # 变更落在 java/b/c 任一仓的 src/ 下，或本仓 archguard/ 下（改了扫描器本身就该重扫）
-  printf '%s\n' "$1" | grep -qE '^(notelab-(java|b|c)/)?(src/|archguard/)' || return 0
+  # 变更落在 java/b/c 任一仓的源码下，或本仓 archguard/ 下（改了扫描器本身就该重扫）。
+  # ⚠️ 2026-10-11：notelab-c 阶段 0 重排后，源码除 src/ 外还落在 apps/ 与 packages/，
+  #    只匹配 src/ 会让「改了 play 域却跳过架构扫描」——正是最该扫的变更被漏掉。
+  printf '%s\n' "$1" | grep -qE '^(notelab-(java|b|c)/)?(src/|apps/|packages/|archguard/)' || return 0
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过 ArchGuard 扫描"; return 0; fi
   log "  ArchGuard 架构门禁扫描…"
   ( cd /root/Notelab/notelab-c/archguard && node src/index.js >/dev/null 2>&1 )
