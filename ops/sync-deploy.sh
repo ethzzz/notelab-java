@@ -96,12 +96,20 @@ run_build() {   # $1=仓名 $2=工作目录内的构建命令 $3=构建失败时
 }
 
 npm_install_if_needed() {  # $1=变更文件清单
-  if printf '%s\n' "$1" | grep -qE '^(package(-lock)?\.json|pnpm-lock\.yaml)$'; then
+  # ⚠️ 2026-10-11（阶段 2）：notelab-c 已是 npm workspace（workspaces: packages/* + apps/*）。
+  #    子包的 package.json 变更（apps/play、packages/shared）同样需要重跑 `npm install`
+  #    —— 它不只是装依赖，还负责**重建 node_modules/@notelab/* 软链**。
+  #    漏掉这一步的表现是：改了 workspace 包的 exports 后，新子路径 import 全报
+  #    "Module not found"，而 package.json 明明是对的（软链指向的元数据没刷新）。
+  #    这里从"全行精确匹配"放宽为"根 or 任意一层子路径"，覆盖 workspaces 下的所有子包。
+  if printf '%s\n' "$1" | grep -qE '^(.*/)?package(-lock)?\.json$|^pnpm-lock\.yaml$' \
+     && ! printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
     log "  package.json / lock 有变更 → 先 npm install"
     [ "$DRY_RUN" = 1 ] || npm install --no-audit --no-fund >/dev/null 2>&1 || die "npm install 失败"
   fi
   # 2026-10-01：ArchGuard 在 notelab-c 里是**子包**（notelab-c/archguard），有自己的 package.json。
-  # 上面的正则是全行精确匹配，匹配不到子路径，所以单独补一条；匹配不到时行为完全不变。
+  # ⚠️ 它**不属于** npm workspace（不在 workspaces 声明里，自己带 node_modules），
+  #    所以必须从上面的放宽规则里排除，否则会在仓根误跑一次、真正的子包 install 反而没跑。
   if printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
     log "  archguard 子包依赖有变更 → 在 notelab-c/archguard 内 npm install"
     [ "$DRY_RUN" = 1 ] || ( cd /root/Notelab/notelab-c/archguard && npm install --no-audit --no-fund >/dev/null 2>&1 ) \
@@ -155,7 +163,21 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
       npm_install_if_needed "$changed"
       archguard_gate "$changed"
       run_build "$repo" "npm run build"
-      pm2_restart notelab-c "http://127.0.0.1:3010/games/" ;;
+      pm2_restart notelab-c "http://127.0.0.1:3010/games/"
+      # ⚠️ 2026-10-11（阶段 2）：/play/* 已是**独立 Next 应用**（apps/play，pm2 notelab-play，:3011）。
+      #    根目录的 `npm run build` **完全构建不到它** —— 与 notelab-b 的 collab/ 是同一个坑：
+      #    只改 apps/play/ 而不在这里单独构建+重启，代码更新会静默不生效（页面照旧，没有任何报错）。
+      #
+      # 触发条件：变更落在 apps/play/ 或 packages/shared/ 下。
+      #   · apps/play/ 是它自己的源码；
+      #   · packages/shared/ 是**两个应用共享**的 workspace 包（改它必须两个都重建，
+      #     否则会出现「core 已更新、play 还是旧逻辑」的半新半旧状态）。
+      #   · 根 tsconfig / package.json 变更同样包含在内（影响 node_modules 软链与路径映射）。
+      if printf '%s\n' "$changed" | grep -qE '^(apps/play/|packages/shared/|package(-lock)?\.json$|tsconfig\.json$)'; then
+        log "  apps/play 或 packages/shared 有变更 → 构建并重启独立应用 notelab-play"
+        run_build "notelab-play" "cd /root/Notelab/notelab-c/apps/play && npm run build"
+        pm2_restart notelab-play "http://127.0.0.1:3011/play/spire" 40
+      fi ;;
     notelab-b)
       npm_install_if_needed "$changed"
       run_build "$repo" "npm run build"
