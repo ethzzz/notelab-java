@@ -369,8 +369,11 @@ public class LowCodeController {
     static String validateOne(Map<String, Object> f, Object value) {
         Object rulesObj = f.get("rules");
         Map<String, Object> r = rulesObj instanceof Map ? (Map<String, Object>) rulesObj : Map.of();
-        String msg = s(r.get("message"));
-        if (msg.isEmpty()) msg = "格式不正确";
+        // ⚠️ custom 与 msg 必须分开：custom 是设计者自己写的文案，可能为空；
+        // 为空时要回落到**具体**文案（"至少 2 个字符"）而不是笼统的"格式不正确" ——
+        // 否则用户只知道错了不知道错在哪，等于把规则白配了。
+        String custom = s(r.get("message"));
+        String msg = custom.isEmpty() ? "格式不正确" : custom;
         boolean required = truthy(f.get("required"));
         if (required && isEmptyVal(value)) return "此项为必填";
 
@@ -403,15 +406,15 @@ public class LowCodeController {
             try { d = Double.parseDouble(String.valueOf(value).trim()); } catch (Exception e) { return "必须是数字"; }
             Double min = dbl(r.get("min"));
             Double max = dbl(r.get("max"));
-            if (min != null && d < min) return msg.isEmpty() ? "不能小于 " + min : msg;
-            if (max != null && d > max) return msg.isEmpty() ? "不能大于 " + max : msg;
+            if (min != null && d < min) return custom.isEmpty() ? "不能小于 " + norm(min) : custom;
+            if (max != null && d > max) return custom.isEmpty() ? "不能大于 " + norm(max) : custom;
             return "";
         }
         String str = String.valueOf(value);
         Double minLen = dbl(r.get("minLen"));
         Double maxLen = dbl(r.get("maxLen"));
-        if (minLen != null && str.length() < minLen) return msg.isEmpty() ? "至少 " + minLen.intValue() + " 个字符" : msg;
-        if (maxLen != null && str.length() > maxLen) return msg.isEmpty() ? "最多 " + maxLen.intValue() + " 个字符" : msg;
+        if (minLen != null && str.length() < minLen) return custom.isEmpty() ? "至少 " + minLen.intValue() + " 个字符" : custom;
+        if (maxLen != null && str.length() > maxLen) return custom.isEmpty() ? "最多 " + maxLen.intValue() + " 个字符" : custom;
         String pattern = s(r.get("pattern"));
         if (!pattern.isEmpty()) {
             try {
