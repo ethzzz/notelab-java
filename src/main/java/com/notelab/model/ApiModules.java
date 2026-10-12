@@ -78,6 +78,7 @@ public final class ApiModules {
             // ---- C 端（/api/c/**，由 C 端用户组持有，见 CPermGuard）----
             Map.entry("c", "C端通用接口"),
             Map.entry("c/auth", "C端登录注册"),
+            Map.entry("c/me", "C端个人中心"),
             Map.entry("c/game", "C端游戏存档"),
             Map.entry("c/dungeon", "C端地牢存档"),
             Map.entry("c/trpg", "C端剧本"),

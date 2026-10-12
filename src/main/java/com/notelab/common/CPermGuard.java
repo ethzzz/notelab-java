@@ -45,6 +45,25 @@ public final class CPermGuard {
             "/api/c/auth/login", "/api/c/auth/logout", "/api/c/auth/me", "/api/c/auth/register"
     );
 
+    /**
+     * C 端「我自己的」端点前缀（PRD-P5）：**登录即可用，不查用户组授权**。
+     *
+     * <p>为什么必须豁免而不是让大家去后台勾选：
+     * <ol>
+     *   <li><b>语义上不该有这道门</b>：「某些用户组不允许改自己的昵称/密码」不是一种合理的配置。
+     *       权限码机制是给「内容下发」这类**真有启用/停用意义**的能力用的。</li>
+     *   <li><b>不豁免就是静默事故</b>：{@code PermService.initCGroupRoutes()} 只在「该组一条持有都没有」
+     *       时补全量，所以**新增接口对既有用户组默认是 403**（2026-10-12 实测：/api/c/me/saves
+     *       对 default 组返回 403 而非 401/200）。每个 C 端用户组都得去后台手工勾一次，
+     *       漏一个就是那个组全员不可用 —— 而这类端点根本没有「该不该给」的余地。</li>
+     * </ol>
+     *
+     * <p>安全性由 Controller 自己保证（与 {@link #C_SESSION_ENDPOINTS} 同档）：
+     * {@code CMeController} 每个方法都先过 {@code CAuthUtil.user(request) == null → 401}，
+     * 且只操作**当前会话的 uid**，无法越权改到别人。
+     */
+    private static final List<String> C_SELF_PREFIXES = List.of("/api/c/me/");
+
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
 
     /** 已登记的 C 端 api 路径 pattern（含 {var}），启动时由 PermService 刷新 */
@@ -99,6 +118,13 @@ public final class CPermGuard {
         if (!(clean.equals("/api/c") || clean.startsWith(PermGuard.C_ENDPOINT_PREFIX))) return null;
         // 会话基础：登录/登出/拉自己 —— 一律放行
         if (C_SESSION_ENDPOINTS.contains(clean)) return null;
+
+        // 「我自己的」端点（改自己昵称/密码/看自己存档）：登录即可，不查用户组授权。
+        // ⚠️ 必须在 hits 判定**之前**返回 —— 这些路径也是被 SpringMVC 采集登记过的，
+        //    走到下面就会因为「组里没这个码」而 403。
+        for (String pre : C_SELF_PREFIXES) {
+            if (clean.startsWith(pre)) return null;
+        }
 
         List<String> ps = patterns();
         if (ps.isEmpty()) return null;   // 路由表没加载出来：fail-open
