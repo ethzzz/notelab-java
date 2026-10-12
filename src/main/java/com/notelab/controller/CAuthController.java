@@ -84,6 +84,9 @@ public class CAuthController {
         body.put("username", user.get("username"));
         body.put("nickname", user.get("nickname"));
         body.put("group_code", user.get("group_code"));
+        // 注册时间（PRD-P5）：个人中心要展示。⚠️ 纯增字段，既有消费方（Shell / useRequireAuth）
+        // 只取自己认识的键，多一个字段不会破坏它们。
+        body.put("created_at", user.get("created_at"));
         return ResponseEntity.ok(body);
     }
 
