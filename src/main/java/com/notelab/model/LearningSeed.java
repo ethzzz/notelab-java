@@ -310,6 +310,238 @@ public final class LearningSeed {
                                             + "要改原数组得用 splice/sort 这类原地方法 —— 混用是常见 bug 来源。"))));
 
     // --------------------------------------------------------------------------------
+    // TypeScript —— 与 JS 同构三节，重点在「JS 没有的那部分」：类型系统
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> TS_LESSONS = List.of(
+            lesson("ts-01", "类型标注与类型推断", 15,
+                    """
+                    TypeScript 是 JavaScript 的**超集** —— 所有合法的 JS 都是合法的 TS，此外你还能写类型。
+
+                    先记住最重要的一件事：**类型只存在于编译期，运行时会被全部擦除**。
+
+                    ```ts
+                    const n: number = 42
+                    ```
+                    编译产物就是：
+                    ```js
+                    const n = 42
+                    ```
+                    类型不产生运行时开销，也不做运行期校验 —— 它拦的是「写代码时的错」，不是「运行时的错」。
+                    （所以本站 TS 和 JS 共用一个 Worker 运行器，只多一步「抹掉类型」。）
+
+                    **什么时候写、什么时候不写**
+
+                    TS 会自己推断，能推出来就别手写：
+
+                    ```ts
+                    const n = 42              // 推断为 number
+                    const arr = [1, 2, 3]     // 推断为 number[]
+                    let s = "hi"              // 推断为 string
+                    ```
+                    必须手写的只有两处：
+
+                    1. **函数参数** —— TS 无法从调用点反推
+                    2. **导出的函数返回值** —— 显式写出，避免实现改动时类型悄悄漂移
+
+                    ```ts
+                    export function add(a: number, b: number): number {
+                      return a + b
+                    }
+                    ```
+
+                    **any 与 unknown**
+
+                    `any` 会**关掉检查**，而且会传染（碰过它之后整条链路都失去类型）。
+                    `unknown` 是安全的对应物：什么都能装进去，但**用之前必须先收窄**。
+
+                    ```ts
+                    function len(v: unknown) {
+                      // v.length        // ❌ 编译不过：不保证 v 有 length
+                      if (typeof v === "string") return v.length   // ✅ 收窄后可以
+                      return 0
+                    }
+                    ```
+
+                    一个常见误解：`const x: {}` **不是**「空对象」，而是「任何非 null/undefined 的值」—— 连数字都能装。
+                    """,
+                    """
+                    // 类型只服务编译期，运行前会被擦除 —— 这里看到的是擦除后的行为
+                    const n = 42;                     // 推断 number，不必手写
+                    const tags: string[] = ["ts", "js"];
+
+                    function describe(v: unknown): string {
+                      if (typeof v === "string") return `字符串，长度 ${v.length}`;
+                      if (Array.isArray(v)) return `数组，${v.length} 项`;
+                      return "其它类型";
+                    }
+
+                    console.log(describe("hello"));  // 字符串，长度 5
+                    console.log(describe(tags));     // 数组，2 项
+                    console.log(describe(42));       // 其它类型
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("TS 的类型标注在编译产物里会变成什么？",
+                                    List.of("原样保留", "被全部擦除，不产生运行时开销", "变成运行时的类型校验", "只在开发模式保留"), 1,
+                                    "类型只服务编译期，擦除是 TS 的核心设计 —— 这正是它零运行时开销、"
+                                            + "能与 JS 无缝共存的原因。要运行时校验得自己写（或用 zod 这类库）。"),
+                            quiz("`unknown` 与 `any` 的关键区别是？",
+                                    List.of("unknown 运行更慢", "unknown 用之前必须先收窄类型", "any 只能装数字", "两者完全等价"), 1,
+                                    "`any` 直接关掉检查且会传染；`unknown` 什么都能装，但读取属性/调用方法前"
+                                            + "必须先用 typeof、instanceof 等收窄 —— 逼你处理「可能不是这个类型」的情况。"))),
+
+            lesson("ts-02", "对象形状、联合类型与「让非法状态无法表示」", 20,
+                    """
+                    对象形状用 `interface` 或 `type` 描述。日常差异很小，团队统一选一个即可（这里用 interface）：
+
+                    ```ts
+                    interface User {
+                      id: number
+                      name: string
+                      email?: string             // 可选：可能不存在
+                      readonly createdAt: number  // 只读：编译期禁止后续赋值
+                    }
+                    ```
+
+                    ⚠️ 两个容易误解的点：
+
+                    1. `email?: string` 是「可以没有」，**不是**「一个可能为 undefined 的字符串」—— 取值前必须判
+                    2. `readonly` **只在编译期有效**。绕过方式很多（`as any`、纯 JS 调用、反射），它不是不可变的保证
+
+                    **联合类型才是 TS 价值密度最高的地方**
+
+                    限定「只能是这几个值之一」，非法值在编译期就被拦下：
+
+                    ```ts
+                    type Role = "admin" | "user" | "guest"
+                    const r: Role = "root"    // ❌ 编译错误
+                    ```
+
+                    **判别联合**（discriminated union）是它最有用的形态 —— 用一个共同字段区分几种情况，
+                    配合 `switch` 能做**穷尽检查**（漏了一种，TS 会报错）：
+
+                    ```ts
+                    type Result =
+                      | { state: "loading" }
+                      | { state: "ok"; data: string }
+                      | { state: "error"; message: string }
+                    ```
+                    注意 `case "ok"` 里**不需要**任何类型断言 —— TS 已经知道这时 `data` 一定存在。
+
+                    这就是「让非法状态无法表示」：`{ state: "ok" }` 却不带 `data` 的组合，**从类型上就写不出来**。
+                    比起「用几个 boolean 标记状态、靠注释约定它们互斥」的老办法，这类错误根本不会发生。
+                    """,
+                    """
+                    // 判别联合：三态互斥，非法组合写不出来
+                    type Result =
+                      | { state: "loading" }
+                      | { state: "ok"; data: string }
+                      | { state: "error"; message: string };
+
+                    function render(r: Result): string {
+                      switch (r.state) {
+                        case "loading": return "加载中…";
+                        case "ok":      return `成功：${r.data}`;      // 收窄后可直接用 data
+                        case "error":   return `失败：${r.message}`;
+                      }
+                    }
+
+                    const list: Result[] = [
+                      { state: "loading" },
+                      { state: "ok", data: "42 条记录" },
+                      { state: "error", message: "超时" },
+                    ];
+
+                    for (const r of list) console.log(render(r));
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("判别联合里，`{ state: \"ok\" }` 不带 `data` 为什么编译不过？",
+                                    List.of("因为 state 是只读的", "因为 ok 这一支声明了 data 是必需的", "因为缺少 interface", "其实能编译过"), 1,
+                                    "判别联合把「状态」和「该状态下必须携带的数据」绑在一起。`ok` 分支声明了 "
+                                            + "`data: string`，所以状态与数据不匹配的组合天然非法 —— 这正是它的价值："
+                                            + "把运行时才发现的错误提前到编译期。"),
+                            quiz("`readonly` 修饰的属性能保证运行时不可改吗？",
+                                    List.of("能，会变成 getter", "不能，它只是编译期约束", "能，会自动 Object.freeze", "取决于 strict 模式"), 1,
+                                    "`readonly` 只参与类型检查，不产生任何运行时代码。要真正的不可变得用 `Object.freeze`；"
+                                            + "`as const` 也主要在类型层面收紧。"))),
+
+            lesson("ts-03", "泛型：类型的「参数」", 20,
+                    """
+                    泛型解决的问题是：**一段逻辑要处理多种类型，同时保持类型之间的关系**。
+
+                    没有泛型时只能退回 `any`，一写就丢了类型关系：
+
+                    ```ts
+                    function firstAny(arr: any[]): any { return arr[0] }
+                    const x = firstAny([1, 2, 3])   // x 是 any —— 后面全失去检查
+                    ```
+
+                    把「元素类型」变成参数，关系就保住了：
+
+                    ```ts
+                    function first<T>(arr: T[]): T | undefined { return arr[0] }
+                    const x = first([1, 2, 3])      // 推断为 number | undefined
+                    const y = first(["a", "b"])     // 推断为 string | undefined
+                    ```
+
+                    类比一下：**普通参数是「值的变量」，泛型是「类型的变量」**。`T` 在函数里就是一个待定的类型。
+
+                    **约束：`extends`**
+
+                    不加约束时 `T` 可以是任何类型，所以**访问不了它的任何属性**。用 `extends` 划定底线：
+
+                    ```ts
+                    function pluck<T, K extends keyof T>(items: T[], key: K): T[K][] {
+                      return items.map((it) => it[key])
+                    }
+                    ```
+                    `K extends keyof T` 保证传进来的 key 确实存在于 T 上 —— 打错的字段名会被直接拦下。
+
+                    **什么时候不该用泛型**
+
+                    不要把泛型当装饰。下面第一行是噪声：
+
+                    ```ts
+                    function double<T extends number>(n: T): T { return (n * 2) as T }   // ❌ 白绕一圈
+                    function double(n: number): number { return n * 2 }                  // ✅
+                    ```
+                    只有「类型之间需要保持关联」时泛型才有意义（入参类型 → 出参类型、容器元素的类型等）。
+                    """,
+                    """
+                    // 泛型：保持输入与输出的类型关系
+                    function first<T>(arr: T[]): T | undefined {
+                      return arr[0];
+                    }
+
+                    // 约束：K 必须是 T 的键 —— 写错字段名会在编译期被拦下
+                    function pluck<T, K extends keyof T>(items: T[], key: K): T[K][] {
+                      return items.map((it) => it[key]);
+                    }
+
+                    const users = [
+                      { id: 1, name: "Alice" },
+                      { id: 2, name: "Bob" },
+                    ];
+
+                    console.log(first([10, 20, 30]));   // 10
+                    console.log(pluck(users, "name"));  // ["Alice","Bob"]
+                    console.log(pluck(users, "id"));    // [1,2]
+                    // pluck(users, "age");             // ❌ 编译错误：age 不是 User 的键
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`function f<T>(x: T)` 里为什么不能直接写 `x.length`？",
+                                    List.of("因为 T 是只读的", "因为没有约束时 T 可以是任何类型，不保证有 length", "因为必须先转成 any", "其实可以"), 1,
+                                    "泛型的默认约束是「任意类型」，编译期无法保证它有 `length`。要访问就得加约束，"
+                                            + "比如 `<T extends { length: number }>` 或 `<T extends string | unknown[]>`。"),
+                            quiz("哪个场景用泛型是**有意义**的？",
+                                    List.of("给只接受 number 的函数套上 <T>", "写一个「取数组第一项」并保持返回类型与元素类型一致", "让代码看起来更专业", "给类型起别名"), 1,
+                                    "泛型的价值是**保持类型之间的关联** —— 入参元素类型与返回类型挂钩就是典型。"
+                                            + "给固定类型的函数套 `<T>` 只会增加阅读成本，属于噪声。"))));
+
+    // --------------------------------------------------------------------------------
     // Python —— 同构，节选三门语言作为「完整流程」的示范
     // --------------------------------------------------------------------------------
 
@@ -732,11 +964,11 @@ public final class LearningSeed {
                     "关系数据库查询语言。用 sql.js 在浏览器里建临时库，每条语句都能真跑真看结果。",
                     "sqljs",
                     List.of(stage("sql-basic", "入门", "能独立写出联表、分组、排序的查询，并知道常见陷阱", SQL_LESSONS))),
-            // 下面几门暂时只有骨架：运行方案要么代价大、要么得走后端，先把位置与说明留出来
             track("typescript", "TypeScript", "🔷",
-                    "在 JS 之上加静态类型。浏览器里可直接转译运行（只去类型、不做类型检查）。",
+                    "在 JS 之上加静态类型：类型只在编译期存在、运行时全被擦除。浏览器里可直接转译运行（只去类型、不做类型检查）。",
                     "worker",
-                    List.of(stage("ts-basic", "入门", "理解类型标注、接口与泛型在解决什么问题", List.of()))),
+                    List.of(stage("ts-basic", "入门", "理解类型标注、判别联合与泛型分别在解决什么问题", TS_LESSONS))),
+            // 下面几门暂时只有骨架：运行方案要么代价大、要么得走后端，先把位置与说明留出来
             track("c", "C / C++", "⚙️",
                     "需要把 Clang 编译成 WASM 才能在浏览器里编译，首屏要下几十兆。适合做成「点了才下载」的可选能力。",
                     "clang-wasm",
