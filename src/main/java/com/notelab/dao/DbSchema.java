@@ -301,6 +301,17 @@ final class DbSchema {
         if (!hasColumn("lowcode_records", "source")) {
             Db.exec("ALTER TABLE lowcode_records ADD COLUMN source VARCHAR(8) NOT NULL DEFAULT 'admin'");
         }
+        // 匿名提交的 IP 哈希（2026-10-12）：只存 HmacSHA256 前 16 位，与 analytics 同口径（见 EventRecorder.ipHash）。
+        // 为什么需要：公开提交端点**没有会话**，节流与「每人限填一次」只能靠 IP 落库判定。
+        // 存哈希不存明文是隐私底线 —— 表单内容可能是报名信息，配上一份 IP 明文就是一份可定位的画像。
+        if (!hasColumn("lowcode_records", "ip_hash")) {
+            Db.exec("ALTER TABLE lowcode_records ADD COLUMN ip_hash CHAR(16) NULL");
+        }
+        // 节流/判重都要按 (表单, IP哈希, 时间窗) 查，缺索引就是每次提交全表扫 —— 公开端点又是匿名可打的，
+        // 没有索引等于把「扫全表」变成一个谁都能触发的慢查询入口。
+        if (!hasIndex("lowcode_records", "idx_throttle")) {
+            Db.exec("ALTER TABLE lowcode_records ADD KEY idx_throttle (form_id, ip_hash, created_at)");
+        }
         // ---- C 端注册邀请码（只增不改）：max_uses 为可注册次数上限，超出不可再用 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS invite_codes (

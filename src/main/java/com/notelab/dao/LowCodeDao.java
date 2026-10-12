@@ -33,19 +33,57 @@ public final class LowCodeDao {
 
     public static void insertRecord(String formId, String formName, String dataJson,
                                     Long userId, String userName) {
-        insertRecord(formId, formName, dataJson, userId, userName, SRC_ADMIN);
+        insertRecord(formId, formName, dataJson, userId, userName, SRC_ADMIN, null);
+    }
+
+    public static void insertRecord(String formId, String formName, String dataJson,
+                                    Long userId, String userName, String source) {
+        insertRecord(formId, formName, dataJson, userId, userName, source, null);
     }
 
     /**
      * @param source 见 {@link #SRC_ADMIN} / {@link #SRC_PUBLIC}。非法值一律归为 admin ——
      *               来源只是标注，写错不该让这一条提交丢掉，所以这里静默纠正而不是抛错。
+     * @param ipHash 匿名提交的 IP 哈希（{@link com.notelab.service.EventRecorder#ipHash}），
+     *               后台内部提交传 null。⚠️ 空串与 null 都归一成 ""：节流与判重的 SQL 一律
+     *               按等值匹配，混用 NULL 会让「同一批无法识别来源的提交」查不到自己（NULL != NULL）。
      */
-    public static void insertRecord(String formId, String formName, String dataJson,
-                                    Long userId, String userName, String source) {
+    /** @return 新记录的 id（给提交成功页显示「你的编号 #N」用。公开提交没有账号，编号是唯一的凭据） */
+    public static long insertRecord(String formId, String formName, String dataJson,
+                                    Long userId, String userName, String source, String ipHash) {
         String src = SRC_PUBLIC.equals(source) ? SRC_PUBLIC : SRC_ADMIN;
-        Db.exec("INSERT INTO lowcode_records (form_id, form_name, data, created_by, created_by_name, source) "
-                        + "VALUES (?,?,?,?,?,?)",
-                formId, formName, dataJson, userId, userName == null ? "" : userName, src);
+        return Db.execInsert(
+                "INSERT INTO lowcode_records (form_id, form_name, data, created_by, created_by_name, source, ip_hash) "
+                        + "VALUES (?,?,?,?,?,?,?)",
+                formId, formName, dataJson, userId, userName == null ? "" : userName, src,
+                normIpHash(ipHash));
+    }
+
+    /**
+     * 窗口内同一「表单 + IP 哈希」的提交条数 —— 公开提交的**跨进程节流**依据。
+     *
+     * <p>为什么从内存计数改成查库（2026-10-12）：内存实现的额度**每个进程各一份**，
+     * C 端一旦多实例，同一个 IP 就能在每个实例上各拿一份额度，节流形同虚设。
+     * 落库后额度天然共享，代价是每次提交多一次带索引的 COUNT —— 一次主键范围扫描，可接受。
+     */
+    public static long countRecent(String formId, String ipHash, long sinceMillis) {
+        if (formId == null || formId.isEmpty()) return 0;
+        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS c FROM lowcode_records "
+                        + "WHERE form_id=? AND ip_hash=? AND created_at >= ?",
+                formId, normIpHash(ipHash), new java.sql.Timestamp(sinceMillis));
+        return r == null ? 0 : num(r.get("c"));
+    }
+
+    /** 该「表单 + IP 哈希」是否已经提交过 —— 表单开启「每人限填一次」时的判重依据 */
+    public static boolean hasSubmitted(String formId, String ipHash) {
+        if (formId == null || formId.isEmpty()) return false;
+        Map<String, Object> r = Db.queryOne("SELECT 1 AS x FROM lowcode_records "
+                + "WHERE form_id=? AND ip_hash=? LIMIT 1", formId, normIpHash(ipHash));
+        return r != null;
+    }
+
+    private static String normIpHash(String h) {
+        return h == null || h.isEmpty() ? "" : h;
     }
 
     /** 按 id 删除单条。返回删除行数（0 = 不存在，属正常，不该报 404）。 */
@@ -67,6 +105,15 @@ public final class LowCodeDao {
 
     /** source 为空 = 不区分来源；否则只取该来源（见 {@link #SRC_ADMIN} / {@link #SRC_PUBLIC}） */
     public static List<Map<String, Object>> listRecords(String formId, String source, int limit) {
+        return query(formId, source, limit, false);
+    }
+
+    /** 导出用：按时间**正序**（旧的在前），表格里倒序是为了看最新的，导出的 CSV 则是按发生顺序读 */
+    public static List<Map<String, Object>> listRecordsAsc(String formId, String source, int limit) {
+        return query(formId, source, limit, true);
+    }
+
+    private static List<Map<String, Object>> query(String formId, String source, int limit, boolean asc) {
         boolean all = formId == null || formId.isEmpty();
         boolean anySrc = source == null || source.isEmpty();
         StringBuilder w = new StringBuilder();
@@ -75,7 +122,8 @@ public final class LowCodeDao {
         String sql = "SELECT id, form_id, form_name, data, created_by, created_by_name, source, created_at "
                 + "FROM lowcode_records "
                 + (w.length() > 0 ? "WHERE " + w : "")
-                + "ORDER BY id DESC LIMIT ?";
+                + (asc ? "ORDER BY id ASC" : "ORDER BY id DESC")
+                + " LIMIT ?";
         Object[] args;
         if (!all && !anySrc) args = new Object[]{formId, source, limit};
         else if (!all) args = new Object[]{formId, limit};

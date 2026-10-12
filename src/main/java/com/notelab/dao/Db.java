@@ -6,6 +6,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -75,6 +76,26 @@ public final class Db {
         try (Connection c = conn(); PreparedStatement ps = c.prepareStatement(sql)) {
             bind(ps, args);
             return ps.executeUpdate();
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * 同 {@code exec}，但返回自增主键（调用方要把 id 回给客户端时用）。
+     *
+     * <p>⚠️ 必须走 {@code RETURN_GENERATED_KEYS} 在**同一条连接**上取：事后再
+     * {@code SELECT LAST_INSERT_ID()} 是错的 —— 连接池会换一条连接，那个值是这条连接上
+     * 上一次插入的结果，属于别的请求。
+     */
+    static long execInsert(String sql, Object... args) {
+        try (Connection c = conn();
+             PreparedStatement ps = c.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            bind(ps, args);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }

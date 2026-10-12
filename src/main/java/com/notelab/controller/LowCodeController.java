@@ -1,16 +1,18 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.notelab.common.ClientIp;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.LowCodeDao;
+import com.notelab.service.EventRecorder;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayDeque;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -18,7 +20,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
@@ -65,14 +66,8 @@ public class LowCodeController {
     static final int PUBLIC_MAX_PER_WINDOW = 20;
     static final long PUBLIC_WINDOW_MS = 10 * 60_000L;
 
-    /**
-     * 匿名写入节流表：key = slug|ip → 窗口内的提交时刻。
-     *
-     * <p>为什么必须有：公开提交端点**不带任何会话**，谁都能打；没有节流就等于开放一个无限写入口，
-     * 一次脚本循环就能把 lowcode_records 灌满。这里是单机内存实现（本机单实例、重启清零）——
-     * 代价远小于为一个内部工具引入分布式限流组件，文档里写明边界即可。
-     */
-    private static final ConcurrentHashMap<String, ArrayDeque<Long>> PUBLIC_HITS = new ConcurrentHashMap<>();
+    /** 单次导出上限：CSV 会整份进内存，且要按设计稿字段展开列，过大既慢又难用 */
+    static final int EXPORT_MAX_ROWS = 5000;
 
     // ==================================================================================
     // 设计稿：GET|POST /api/lowcode
@@ -244,6 +239,8 @@ public class LowCodeController {
         body.put("intro", s(form.get("intro")));
         body.put("submit_text", s(form.get("submitText")).isEmpty() ? "提交" : s(form.get("submitText")));
         body.put("fields", form.get("fields") == null ? List.of() : form.get("fields"));
+        // 「每人限填一次」：客户端据此在成功页隐藏「再填一份」。真正的拦截在服务端（见 publicSubmit）
+        body.put("once", truthy(form.get("once")));
         return ResponseEntity.ok(body);
     }
 
@@ -267,9 +264,17 @@ public class LowCodeController {
             return ResponseEntity.status(404).body(Map.of("error", "表单不存在或已停止收集"));
         }
 
-        String ip = ClientIp.of(request);
-        if (throttled(slug + "|" + ip)) {
+        // ⚠️ 只存哈希（HmacSHA256 + ANALYTICS_IP_SALT，与埋点同口径）：表单内容可能是报名信息，
+        // 再配一份 IP 明文就是可直接定位到人的画像。判重与节流都只用它，够用且不可逆推。
+        String ipHash = EventRecorder.ipHash(request);
+        String fid = s(form.get("id"));
+        if (LowCodeDao.countRecent(fid, ipHash, System.currentTimeMillis() - PUBLIC_WINDOW_MS)
+                >= PUBLIC_MAX_PER_WINDOW) {
             return ResponseEntity.status(429).body(Map.of("error", "提交太频繁，请稍后再试"));
+        }
+        // 「每人限填一次」：先判重再解析 body —— 已经交过的人不该因为格式问题看到一堆字段报错
+        if (truthy(form.get("once")) && LowCodeDao.hasSubmitted(fid, ipHash)) {
+            return ResponseEntity.status(409).body(Map.of("error", "这个表单每人限填一次，你已经提交过了"));
         }
 
         // 请求体 = {"data": {字段id: 值}}。刻意包一层 data 而不是裸字段对象：
@@ -296,14 +301,16 @@ public class LowCodeController {
         if (dataJson.length() > MAX_STR) {
             return ResponseEntity.status(400).body(Map.of("error", "提交内容过大"));
         }
+        long rid;
         try {
             // 匿名提交没有用户：created_by 记 0、名字留空（B 端列表显示「匿名」）
-            LowCodeDao.insertRecord(s(form.get("id")), s(form.get("name")), dataJson,
-                    0L, "", LowCodeDao.SRC_PUBLIC);
+            rid = LowCodeDao.insertRecord(fid, s(form.get("name")), dataJson,
+                    0L, "", LowCodeDao.SRC_PUBLIC, ipHash);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "保存失败：" + e));
         }
-        return ResponseEntity.ok(Map.of("ok", true));
+        // 回 id：填表人没有账号，这个编号是他唯一的凭据（客服核对、自己改口都靠它）
+        return ResponseEntity.ok(Map.of("ok", true, "id", rid));
     }
 
     /** 在已发布的表单里按 slug 查。未发布 / slug 不匹配 / 结构异常一律当「不存在」，不区分原因（避免探测） */
@@ -424,23 +431,127 @@ public class LowCodeController {
         return "";
     }
 
-    /** 匿名提交节流：窗口内超过 {@link #PUBLIC_MAX_PER_WINDOW} 次返回 true（调用方应回 429） */
-    static boolean throttled(String key) {
-        long now = System.currentTimeMillis();
-        ArrayDeque<Long> q = PUBLIC_HITS.computeIfAbsent(key, k -> new ArrayDeque<>());
-        synchronized (q) {
-            while (!q.isEmpty() && now - q.peekFirst() > PUBLIC_WINDOW_MS) q.pollFirst();
-            if (q.size() >= PUBLIC_MAX_PER_WINDOW) return true;
-            q.addLast(now);
+    // ==================================================================================
+    // 导出：GET /api/lowcode/records/export
+    // ==================================================================================
+
+    /**
+     * 把某个表单的提交记录导出成 CSV。
+     *
+     * <p>为什么必须存在：记录列表一次只显示 50 条、且只能一条条点「详情」看 JSON。
+     * 表单真对外收起来（几百份报名）时，那个界面是废的 —— 数据进了库却拿不出来，
+     * 等于功能做完了但用不起来。
+     *
+     * <h3>表头从设计稿取，不是从数据里猜</h3>
+     * 每条记录的 {@code data} 是各自的 JSON，键集可能不同（条件显隐会让某些字段缺席）。
+     * 若按「出现过的键的并集」列表头，列顺序会随数据漂移，两次导出的表没法对比。
+     * 所以列 = 设计稿里字段的定义顺序，缺失的留空 —— 列稳定才是能进 Excel 的表。
+     *
+     * <p>⚠️ <b>UTF-8 BOM 不能省</b>：Excel（尤其中文 Windows）不带 BOM 会按本地编码解，
+     * 中文表头与内容全变乱码。加 BOM 是一行代码，不加就是「导出功能坏了」的工单。
+     */
+    @GetMapping("/records/export")
+    public ResponseEntity<byte[]> exportRecords(@RequestParam(required = false) String form_id,
+                                                @RequestParam(required = false) String source,
+                                                HttpServletRequest request) {
+        // 不是 JSON 端点，所以不复用 AuthUtil.unauth()（那个返回 Map）。导出带全部提交内容，必须鉴权。
+        if (AuthUtil.user(request) == null) return ResponseEntity.status(401).body(new byte[0]);
+        String fid = form_id == null ? "" : form_id.trim();
+        String src = source == null ? "" : source.trim();
+
+        List<Map<String, Object>> rows;
+        try {
+            rows = LowCodeDao.listRecordsAsc(fid, src, EXPORT_MAX_ROWS);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(("查询失败：" + e).getBytes(StandardCharsets.UTF_8));
         }
-        // 顺手清理：key 会随 IP 增长，空队列留着只是占内存。不追求精确，够用即可。
-        if (PUBLIC_HITS.size() > 2000) {
-            PUBLIC_HITS.entrySet().removeIf(e -> {
-                ArrayDeque<Long> v = e.getValue();
-                synchronized (v) { return v.isEmpty(); }
-            });
+
+        // 设计稿里的字段定义（列）；找不到对应表单就退化成「只导元数据 + 一列 JSON」
+        List<Map<String, Object>> defs = fieldDefsOf(fid);
+        StringBuilder sb = new StringBuilder();
+        sb.append('\uFEFF');   // BOM
+        csvRow(sb, headerOf(defs));
+        for (Map<String, Object> r : rows) {
+            Map<String, Object> d = parseData(s(r.get("data")));
+            List<String> cells = new ArrayList<>();
+            cells.add(s(r.get("id")));
+            cells.add(s(r.get("created_at")));
+            cells.add("public".equals(s(r.get("source"))) ? "公开" : "内部");
+            cells.add(s(r.get("created_by_name")));
+            for (Map<String, Object> f : defs) cells.add(csvValue(d.get(s(f.get("id")))));
+            if (defs.isEmpty()) cells.add(s(r.get("data")));
+            csvRow(sb, cells);
         }
-        return false;
+
+        String name = (fid.isEmpty() ? "all" : fid).replaceAll("[^A-Za-z0-9_-]", "_");
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.parseMediaType("text/csv; charset=utf-8"));
+        h.set(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"lowcode-" + name + ".csv\"");
+        return new ResponseEntity<>(sb.toString().getBytes(StandardCharsets.UTF_8), h, 200);
+    }
+
+    private static List<String> headerOf(List<Map<String, Object>> defs) {
+        List<String> h = new ArrayList<>(List.of("编号", "提交时间", "来源", "提交人"));
+        for (Map<String, Object> f : defs) h.add(s(f.get("label")).isEmpty() ? s(f.get("id")) : s(f.get("label")));
+        if (defs.isEmpty()) h.add("内容 JSON");
+        return h;
+    }
+
+    /** 设计稿里某表单的字段定义（按定义顺序）。找不到 / 结构异常 → 空列表（调用方退化） */
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> fieldDefsOf(String formId) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (formId.isEmpty()) return out;
+        Object o = UiConfigService.getConfig().get(KEY);
+        if (!(o instanceof Map)) return out;
+        Object forms = ((Map<String, Object>) o).get("forms");
+        if (!(forms instanceof List)) return out;
+        for (Object it : (List<Object>) forms) {
+            if (!(it instanceof Map)) continue;
+            Map<String, Object> m = (Map<String, Object>) it;
+            if (!formId.equals(s(m.get("id")))) continue;
+            for (Object f : asList(m.get("fields"))) {
+                if (f instanceof Map) out.add((Map<String, Object>) f);
+            }
+            return out;
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseData(String json) {
+        try {
+            Object o = JsonUtil.parse(json == null || json.isEmpty() ? "{}" : json);
+            Object c = clean((JsonNode) o, 0);
+            return c instanceof Map ? (Map<String, Object>) c : Map.of();
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /** 单元格取值：数组/对象转 JSON，null 留空（子表单是一组行，塞进一格只能是 JSON） */
+    private static String csvValue(Object v) {
+        if (v == null) return "";
+        if (v instanceof List || v instanceof Map) return JsonUtil.write(v);
+        return s(v);
+    }
+
+    private static void csvRow(StringBuilder sb, List<String> cells) {
+        for (int i = 0; i < cells.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(escapeCsv(cells.get(i)));
+        }
+        sb.append("\r\n");   // CRLF：Excel 对纯 LF 的换行处理不一致
+    }
+
+    /** 含逗号/引号/换行必须加引号，且内部引号翻倍 —— 否则整行会串列 */
+    static String escapeCsv(String v) {
+        if (v == null) return "";
+        boolean need = v.indexOf(',') >= 0 || v.indexOf('"') >= 0
+                || v.indexOf('\n') >= 0 || v.indexOf('\r') >= 0;
+        String out = v.replace("\"", "\"\"");
+        return need ? "\"" + out + "\"" : out;
     }
 
     // ==================================================================================
