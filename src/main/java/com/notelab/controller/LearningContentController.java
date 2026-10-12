@@ -57,6 +57,29 @@ public class LearningContentController {
         return ResponseEntity.ok(learningOf(UiConfigService.getConfig()));
     }
 
+    /**
+     * C 端公开读取（**匿名可用**）。
+     *
+     * <p>C 端的「编程语言学习」页（notelab-c `/learn`）要求**未登录也能看**，
+     * 而上面那个 GET 走的是 B 端后台鉴权 —— 所以单开一个只读出口，
+     * 让「B 端编辑 → C 端消费」共用**同一份数据**，不必再往 C 端导一份静态副本。
+     *
+     * <p>⚠️ 路径必须登记进 {@code PermGuard.PUBLIC_PREFIXES}：
+     * 只写在这里是不够的 —— 带着 C 端会话的访客会**先**被 CPermGuard 按用户组拦下，
+     * 表现成「只有匿名能访问、登录了反而 403」。
+     *
+     * <p>返回体与 B 端 GET **完全一致**（同一个 {@link #learningOf}）：不裁剪字段，
+     * 免得日后加字段时两边行为悄悄分叉。
+     *
+     * <p>⚠️ 只读、无副作用，所以不需要 lowcode 那套「无会话写入口」的节流；
+     * 但也因为**没有发布快照**，B 端正在编辑的内容会立刻对 C 端可见 ——
+     * 这是「编辑即公开」的取舍，符合本模块「后台知识库」的定位。
+     */
+    @GetMapping("/public")
+    public ResponseEntity<Map<String, Object>> publicGet() {
+        return ResponseEntity.ok(learningOf(UiConfigService.getConfig()));
+    }
+
     @PostMapping
     public ResponseEntity<Map<String, Object>> save(@RequestBody(required = false) String raw,
                                                     HttpServletRequest request) {

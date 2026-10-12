@@ -76,7 +76,8 @@ public final class PermGuard {
      * {@code LowCodeController} 里配了 IP 节流 + 服务端字段校验，两者缺一不可。
      */
     public static final List<String> PUBLIC_PREFIXES = List.of(
-            "/api/lowcode/public"   // 表单对外发布：取定义 / 匿名提交
+            "/api/lowcode/public",      // 表单对外发布：取定义 / 匿名提交（自带 IP 节流 + 字段校验）
+            "/api/learning/public"      // 编程学习：C 端 /learn 未登录可看（只读，无写风险，故不需节流）
     );
 
     /** 该 api 路径是否是公开端点（精确等于该前缀，或位于其下） */
