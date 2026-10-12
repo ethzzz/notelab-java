@@ -542,6 +542,248 @@ public final class LearningSeed {
                                             + "给固定类型的函数套 `<T>` 只会增加阅读成本，属于噪声。"))));
 
     // --------------------------------------------------------------------------------
+    // Lua —— 新增语言（此前 RUNNERS 里已有 fengari 方案，但没有 track）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> LUA_LESSONS = List.of(
+            lesson("lua-01", "变量、1-based 索引与唯一的 table", 15,
+                    """
+                    Lua 只有**一种**复合数据结构：`table`。数组、字典、对象、模块、命名空间 —— 全是它。
+
+                    ```lua
+                    local arr = { 10, 20, 30 }                 -- 数组
+                    local map = { name = "Alice", age = 30 }   -- 字典
+                    print(arr[1], map.name)                    -- 10    Alice
+                    ```
+
+                    ⚠️ **索引从 1 开始**，不是 0。写 `arr[0]` 不报错，只会得到 `nil` ——
+                    这类错误不崩不响、静默拿到空值，是 Lua 最常见的 bug 来源。
+
+                    新手必踩的几点：
+
+                    1. **默认是全局变量**。不写 `local` 就丢进全局表 `_G`：除了慢（全局是哈希查找、
+                       local 是寄存器），还会泄漏到别的模块。**养成默认写 local 的习惯**
+                    2. `#t` 取的是**边界**，不是「元素个数」。表里有 nil 空洞时返回哪个边界是**未定义**的：
+
+                       ```lua
+                       local t = { 1, 2, nil, 4 }
+                       print(#t)   -- 可能是 4，也可能是 2 —— 手册明确说不要依赖
+                       ```
+                    3. table 是**引用**：`local b = a` 之后改 `b` 会连带改 `a`。要拷贝得自己写
+                    4. 把键设为 `nil` 就是**删除**：之后既读不到，`pairs` 也遍历不到
+                    5. 字符串连接是 `..`（两个点），不是 `+`
+                    6. `a.b` 与 `a["b"]` **完全等价**，前者只是语法糖
+                    """,
+                    """
+                    -- Lua 的唯一数据结构：table
+                    local arr = { 10, 20, 30 }
+                    local user = { name = "Alice", age = 30 }
+
+                    print(arr[1], arr[3])         -- 10    30（下标从 1 开始！）
+                    print(user.name, user["age"]) -- Alice    30（两种写法等价）
+
+                    -- 把键设为 nil == 删除
+                    user.age = nil
+                    print(user.age)               -- nil
+
+                    -- 引用语义：b 和 a 是同一张表
+                    local a = { 1, 2 }
+                    local b = a
+                    b[1] = 99
+                    print(a[1])                   -- 99（a 也被改了）
+
+                    -- 连接用 .. 而不是 +
+                    print("共 " .. #arr .. " 项")  -- 共 3 项
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`local t = {10, 20, 30}` 里 30 的索引是？",
+                                    List.of("0", "1", "2", "3"), 3,
+                                    "Lua 下标从 **1** 开始：10 是 t[1]、20 是 t[2]、30 是 t[3]。"
+                                            + "写成 t[0] 不会报错，只会得到 nil —— 不崩不响，所以最难查。"),
+                            quiz("`#t`（长度运算符）在表有 nil 空洞时返回什么？",
+                                    List.of("元素的实际个数", "未定义的某个边界值", "报错", "总是返回 0"), 1,
+                                    "`#` 返回一个「边界」而非精确计数。`{1, 2, nil, 4}` 可能返回 4、也可能返回 2，"
+                                            + "取决于内部实现 —— 手册明确说这是未定义行为。要精确计数得自己遍历。"))),
+
+            lesson("lua-02", "函数：多返回值、变长参数与闭包", 20,
+                    """
+                    函数是一等公民 —— 可以赋给变量、当参数传、当返回值返回。
+
+                    ```lua
+                    local double = function (x) return x * 2 end
+                    local function add(a, b) return a + b end   -- 语法糖，等价写法
+                    ```
+
+                    **多返回值**是 Lua 很有特色的能力：
+
+                    ```lua
+                    local function stats(t)
+                      local sum = 0
+                      for _, v in ipairs(t) do sum = sum + v end
+                      return sum, sum / #t              -- 一次返回两个
+                    end
+
+                    local s, avg = stats({ 1, 2, 3 })    -- s=6, avg=2
+                    ```
+
+                    ⚠️ 多返回值只在**最后一个位置**展开，出现在表达式中间会被截断成 1 个：
+
+                    ```lua
+                    print(stats({ 1, 2, 3 }))           -- 6     2
+                    print(stats({ 1, 2, 3 }), "done")   -- 6     done   ← 只剩第一个！
+                    ```
+                    想显式拿回全部，用 `table.pack(...)` 打包，或用 `select("#", ...)` 取个数。
+
+                    **变长参数**：`...` 在函数体内可以直接配合 `select` 使用
+
+                    ```lua
+                    local function sum(...)
+                      local total = 0
+                      for i = 1, select("#", ...) do
+                        total = total + select(i, ...)
+                      end
+                      return total
+                    end
+                    sum(1, 2, 3, 4)   -- 10
+                    ```
+
+                    **闭包**与 JS 同理：函数记住定义时所在的作用域。
+
+                    顺带一个 Lua 独有的优化：**尾调用**。写成 `return f(x)`（调用是最后一个动作）时
+                    不会增长调用栈 —— 所以递归实现状态机、遍历链式结构时写成尾调用就不会栈溢出。
+                    """,
+                    """
+                    -- 多返回值
+                    local function stats(t)
+                      local sum = 0
+                      for _, v in ipairs(t) do sum = sum + v end
+                      return sum, sum / #t
+                    end
+
+                    local s, avg = stats({ 1, 2, 3 })
+                    print(s, avg)                       -- 6    2
+
+                    -- 出现在表达式中间时只剩第一个（经典坑）
+                    print(stats({ 1, 2, 3 }), "done")   -- 6    done
+
+                    -- 变长参数
+                    local function sum(...)
+                      local total = 0
+                      for i = 1, select("#", ...) do
+                        total = total + select(i, ...)
+                      end
+                      return total
+                    end
+                    print(sum(1, 2, 3, 4))              -- 10
+
+                    -- 闭包：函数记住定义时的作用域
+                    local function counter()
+                      local n = 0
+                      return function () n = n + 1; return n end
+                    end
+                    local next_ = counter()
+                    print(next_(), next_())             -- 1    2
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`print(f(), \"x\")` 里 `f` 返回两个值，最终打印几个？",
+                                    List.of("3 个（f 的两个值 + \"x\"）", "2 个（f 的第一个值 + \"x\"）", "报错", "取决于 f 定义在哪"), 1,
+                                    "多返回值只在**最后一个位置**展开。`f()` 不在末位 → 被截断成 1 个值。"
+                                            + "要全保留就写 `print(\"x\", f())`，或先 `local a, b = f()` 再打印。"),
+                            quiz("`local n = 0` 去掉 `local` 变成 `n = 0`，后果是？",
+                                    List.of("语法错误", "创建/覆盖全局变量：更慢且会污染其它模块", "完全没有区别", "只在当前函数内可见"), 1,
+                                    "Lua 里不加 `local` 就是全局变量（存进 `_G`）。除了哈希查找比寄存器访问慢，"
+                                            + "更麻烦的是它会泄漏到整个进程 —— 两个模块撞名就互相踩。所以默认写 local。"))),
+
+            lesson("lua-03", "metatable 与「Lua 怎么做面向对象」", 20,
+                    """
+                    **Lua 没有 class**。面向对象是拿 `table` + `metatable` 搭出来的。
+
+                    每张 table 可以带一个隐藏的关联表（metatable）。当你访问一个**不存在的键**时，
+                    Lua 会去 metatable 的 `__index` 字段继续找 —— 这就是继承的机制。
+
+                    ```lua
+                    local Animal = {}
+                    Animal.__index = Animal          -- ① 自己不存在的键，去 Animal 找
+
+                    function Animal.new(name)
+                      return setmetatable({ name = name }, Animal)
+                    end
+
+                    function Animal:speak()          -- ② 冒号：隐含 self 参数
+                      return self.name .. " 叫了一声"
+                    end
+
+                    local a = Animal.new("猫")
+                    print(a:speak())                 -- 猫 叫了一声
+                    ```
+                    关键在于 `__index = Animal`：`a:speak()` 时 `a` 自己没有 `speak`，
+                    于是沿 `__index` 找到 `Animal.speak`。
+
+                    **点与冒号的区别**（新手最大的坑）：
+
+                    ```lua
+                    obj.method(obj, arg)   -- 点：自己把 self 传进去
+                    obj:method(arg)        -- 冒号：自动把 obj 当第一个参数
+                    ```
+                    定义用冒号（`function Animal:speak()`），函数体里就能直接用 `self`；
+                    定义用点，就得自己写 `function Animal.speak(self)`。**两边必须配套**。
+
+                    继承 = 让子类的 `__index` 指向父类：
+
+                    ```lua
+                    local Dog = setmetatable({}, { __index = Animal })
+                    Dog.__index = Dog
+                    -- Dog 的实例先查自己 → 再查 Dog → 再查 Animal
+                    ```
+
+                    除 `__index` 外常用的元方法：`__add`（重载 +）、`__tostring`（print 时显示什么）、
+                    `__call`（让 table 能像函数一样调用）、`__newindex`（拦截赋值）。
+                    它们共同构成 Lua 的元编程能力 —— 很多 Lua 库的「魔法」都来自这里。
+                    """,
+                    """
+                    -- Lua 的 OOP：table + metatable.__index
+                    local Animal = {}
+                    Animal.__index = Animal
+
+                    function Animal.new(name)
+                      return setmetatable({ name = name }, Animal)
+                    end
+
+                    function Animal:speak()          -- 冒号 == 隐含 self
+                      return self.name .. " 叫了一声"
+                    end
+
+                    -- 继承：子类的 __index 指向父类
+                    local Dog = setmetatable({}, { __index = Animal })
+                    Dog.__index = Dog
+                    function Dog.new(name) return setmetatable({ name = name }, Dog) end
+                    function Dog:fetch() return self.name .. " 叼回了球" end
+
+                    local a = Animal.new("猫")
+                    local d = Dog.new("旺财")
+
+                    print(a:speak())   -- 猫 叫了一声
+                    print(d:fetch())   -- 旺财 叼回了球
+                    print(d:speak())   -- 旺财 叫了一声（从 Animal 继承来的）
+
+                    -- 元方法：让 table 能像函数一样调用
+                    local callable = setmetatable({}, { __call = function (_, x) return x * 2 end })
+                    print(callable(21))  -- 42
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`a:speak()` 能找到 `Animal.speak`，靠的是什么？",
+                                    List.of("Lua 会自动搜索所有 table", "a 的 metatable 的 __index 指向 Animal", "speak 是全局函数", "只是因为用了冒号语法"), 1,
+                                    "访问 `a.speak` 时 a 自己没有这个键 → Lua 转去查 a 的 metatable 的 `__index`，"
+                                            + "那里是 Animal → 命中 `Animal.speak`。这就是原型链式继承的全部机制。"),
+                            quiz("定义写 `function Animal.speak(self)`、调用写 `a:speak()`，结果是？",
+                                    List.of("语法错误", "正常工作（冒号等价于把 a 当第一个参数传进去）", "self 会是 nil", "a 会被重复传两次"), 1,
+                                    "`a:speak()` 只是 `Animal.speak(a)` 的语法糖。定义用点+显式 self、调用用冒号，"
+                                            + "两者是配套的。真正会出错的是反过来——定义用冒号（已隐含 self）却用点调用。"))));
+
+    // --------------------------------------------------------------------------------
     // Python —— 同构，节选三门语言作为「完整流程」的示范
     // --------------------------------------------------------------------------------
 
@@ -968,6 +1210,10 @@ public final class LearningSeed {
                     "在 JS 之上加静态类型：类型只在编译期存在、运行时全被擦除。浏览器里可直接转译运行（只去类型、不做类型检查）。",
                     "worker",
                     List.of(stage("ts-basic", "入门", "理解类型标注、判别联合与泛型分别在解决什么问题", TS_LESSONS))),
+            track("lua", "Lua", "🌙",
+                    "极简的嵌入式脚本语言：只有一种数据结构（table），索引从 1 开始。运行方案体积在这几门里最小（Fengari 约 300KB）。",
+                    "fengari",
+                    List.of(stage("lua-basic", "入门", "掌握 table 的引用语义，以及用 metatable 搭出面向对象", LUA_LESSONS))),
             // 下面几门暂时只有骨架：运行方案要么代价大、要么得走后端，先把位置与说明留出来
             track("c", "C / C++", "⚙️",
                     "需要把 Clang 编译成 WASM 才能在浏览器里编译，首屏要下几十兆。适合做成「点了才下载」的可选能力。",
