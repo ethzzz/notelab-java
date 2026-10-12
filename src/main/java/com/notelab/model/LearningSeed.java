@@ -1193,6 +1193,533 @@ public final class LearningSeed {
                                     "左连接没匹配上时右表字段全是 NULL，但**那依然是一行**，`COUNT(*)` 会数成 1。"
                                             + "`COUNT(o.id)` 只数非 NULL，才能得到正确的 0。"))));
 
+    // --------------------------------------------------------------------------------
+    // C / C++ —— heavy 档：内容先写全，运行器（Clang→WASM，首屏 70MB+）待接
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> CPP_LESSONS = List.of(
+            lesson("c-01", "指针与内存", 20,
+                    """
+                    C 最核心的概念是**指针** —— 一个存着内存地址的变量。
+
+                    ```c
+                    int x = 42;
+                    int *p = &x;            // & 取地址：p 现在「指向 x」
+                    printf("%d\\n", *p);    // * 解引用：顺着 p 找到那块内存，读出 42
+                    *p = 100;               // 顺着 p 写回去 → x 也变成 100
+                    ```
+
+                    理解的关键是把变量看成**内存里的一块地**：`x` 是那块地，`&x` 是它的门牌号，
+                    `p` 是记着门牌号的纸条。
+
+                    **栈与堆**
+
+                    ```c
+                    int  a = 10;                     // 栈：离开作用域自动回收
+                    int *b = malloc(sizeof(int));    // 堆：手动申请
+                    *b = 20;
+                    free(b);                         // 必须手动释放，不 free 就是泄漏
+                    ```
+
+                    **数组名会「退化成指针」**，这解释了几个诡异现象：
+
+                    ```c
+                    int arr[5] = {1, 2, 3, 4, 5};
+                    printf("%d\\n", *arr);        // 1 —— arr[0] 就是 *(arr + 0)
+                    printf("%d\\n", *(arr + 2));  // 3 —— 指针算术加的是「元素个数」，不是字节数
+                    ```
+
+                    ⚠️ 但 `sizeof(arr)` **只在声明所在的同一作用域里**才是整个数组大小。
+                    一旦把数组传进函数（传进去的是指针），`sizeof` 就只得到指针大小：
+
+                    ```c
+                    void f(int arr[]) {
+                      printf("%zu\\n", sizeof(arr));   // 8，不是 20 —— 这里的 arr 已是指针
+                    }
+                    ```
+                    **要传长度就得额外传一个参数**，没有别的办法。
+
+                    新手必踩的点：
+
+                    1. **未初始化的指针不能解引用**：`int *p; *p = 1;` 会写到随机地址（段错误）
+                    2. `free` 之后不能再用：`free(p); *p = 1;` 是 use-after-free
+                    3. `free` 两次是未定义行为
+                    4. 打印指针要用 `%p`，用 `%d` 是错的（且编译器多半不报错）
+                    """,
+                    """
+                    #include <stdio.h>
+                    #include <stdlib.h>
+
+                    int main(void) {
+                      int x = 42;
+                      int *p = &x;              // p 指向 x
+                      printf("%d\\n", *p);      // 42
+                      *p = 100;                 // 顺着指针写回去
+                      printf("%d\\n", x);       // 100 —— x 真的被改了
+
+                      // 堆：手动申请、必须手动释放
+                      int *heap = malloc(sizeof(int) * 3);
+                      heap[0] = 1; heap[1] = 2; heap[2] = 3;
+                      printf("%d\\n", heap[1]); // 2
+
+                      // 数组名退化成指针：*(arr + i) 就是 arr[i]
+                      int arr[4] = {10, 20, 30, 40};
+                      printf("%d\\n", *(arr + 2));    // 30
+                      printf("%zu\\n", sizeof(arr));  // 16 —— 在声明作用域内才是整个数组
+
+                      free(heap);
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("`int arr[5]` 传进函数后，函数里 `sizeof(arr)` 得到什么？",
+                                    List.of("20", "8（指针大小）", "5", "编译错误"), 1,
+                                    "数组作参数时会**退化成指针**，函数里拿到的只是地址，`sizeof` 自然只给指针大小"
+                                            + "（64 位下 8 字节）。要长度必须另传一个参数 —— C 最常见的陷阱之一。"),
+                            quiz("`free(p)` 之后继续写 `*p = 1` 会怎样？",
+                                    List.of("正常写入", "未定义行为（可能静默损坏其它数据）", "编译器一定报错", "会自动重新分配"), 1,
+                                    "释放后那块内存已交还分配器，可能马上被另一次 `malloc` 拿去用。再写就是 "
+                                            + "use-after-free —— 这类 bug 往往**不在出错点崩**，而是很久之后在别处崩，极难定位。"))),
+
+            lesson("c-02", "字符串与内存管理", 20,
+                    """
+                    **C 没有字符串类型**。所谓字符串就是一个 `char` 数组，以 `\\0`（数值 0 的字符）结尾。
+
+                    ```c
+                    char s[] = "hi";              // 实际是 {'h', 'i', '\\0'} —— 3 个字节
+                    printf("%zu\\n", sizeof(s));  // 3（含结尾符）
+                    printf("%zu\\n", strlen(s));  // 2（不含结尾符）
+                    ```
+                    `sizeof` 与 `strlen` 差 1（前者含结尾符）。**这个 1 字节的差别在拷贝时就会变成溢出**。
+
+                    **手动管理内存**是 C 的另一半：
+
+                    ```c
+                    char *buf = malloc(64);       // 申请 64 字节
+                    if (!buf) return -1;          // ⚠️ 必须判空：申请可能失败
+                    strcpy(buf, "hello");
+                    free(buf);                    // 与 malloc 配对，且只能在这个原始地址上 free
+                    ```
+                    `free(buf + 1)` 是错的 —— 它不是 `malloc` 返回的地址。
+
+                    **缓冲区溢出**是 C 最危险的一类 bug：`strcpy` **不检查目标够不够大**。
+
+                    ```c
+                    char dst[4];
+                    strcpy(dst, "hello");   // 💥 写 6 字节进 4 字节 → 覆盖相邻内存
+                    ```
+                    安全做法是 `snprintf`（截断并保证以 `\\0` 结尾）：
+
+                    ```c
+                    snprintf(dst, sizeof(dst), "%s", "hello");   // 最多写 4 字节（含 \\0）
+                    ```
+                    ⚠️ `strncpy` 有个坑：源串长度 ≥ n 时它**不补结尾 `\\0`** —— 所以更推荐 `snprintf`。
+
+                    新手必踩的点：
+
+                    1. `malloc(10 * sizeof(int))` 忘了乘 `sizeof` → 只申请了 10 字节
+                    2. 传进函数后 `sizeof` 不再是数组大小（见上一节）
+                    3. **返回局部数组**：函数返回后栈内存就失效了 → 必须 `malloc` 或让调用方传缓冲区
+                    4. 每个 `malloc` 都要先想清楚「谁负责 free、什么时候 free」
+                    """,
+                    """
+                    #include <stdio.h>
+                    #include <stdlib.h>
+                    #include <string.h>
+
+                    int main(void) {
+                      char s[] = "hi";                              // {'h','i','\\0'}
+                      printf("%zu %zu\\n", sizeof(s), strlen(s));   // 3 2 —— 差在那个结尾符
+
+                      // 手动管理：申请 → 判空 → 使用 → 释放
+                      char *buf = malloc(64);
+                      if (!buf) return 1;                 // 内存可能申请失败
+                      snprintf(buf, 64, "%s", "hello");   // 有长度上限，不会溢出
+                      printf("%s\\n", buf);
+                      free(buf);                          // 与 malloc 配对
+
+                      // 安全版「溢出演示」：目标只有 4 字节
+                      char small[4];
+                      snprintf(small, sizeof(small), "%s", "hello");   // 自动截断成 "hel"
+                      printf("%s\\n", small);
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("`char s[] = \"hi\"` 的 `sizeof(s)` 与 `strlen(s)` 分别是？",
+                                    List.of("2 和 2", "3 和 2", "2 和 3", "3 和 3"), 1,
+                                    "字符串字面量会额外带一个结尾符 `\\0`，所以数组实际占 3 字节；"
+                                            + "`strlen` 数到 `\\0` 之前为止，是 2。这个 1 字节的差别在拷贝时就会变成溢出。"),
+                            quiz("`strncpy(dst, \"hello\", 5)` 之后，`dst` 一定以 `\\0` 结尾吗？",
+                                    List.of("一定", "不一定 —— 源串长度 ≥ n 时不会补结尾符", "取决于编译器", "会报错"), 1,
+                                    "`\\0` 只在源串**短于** n 时才补齐（剩余部分填 `\\0`）。源串长度 ≥ n 时 `strncpy` "
+                                            + "不保证结尾 —— 这正是它容易被误用的地方，所以推荐用 `snprintf`。"))),
+
+            lesson("c-03", "C++ 的 RAII：为什么 C++ 能少犯内存错", 20,
+                    """
+                    C++ 保留了 C 的全部能力（包括指针和 `malloc`），但多了一套让内存管理**自动发生**的机制。
+
+                    核心叫 **RAII**（资源获取即初始化）：把资源的生命周期绑在**对象的生命周期**上 ——
+                    对象在栈上创建，离开作用域时**自动**调析构函数。
+
+                    ```cpp
+                    {
+                      std::string s = "hello";     // 构造时分配
+                      std::vector<int> v = {1, 2, 3};
+                    }                              // 出了这个块：s 和 v 的内存自动释放
+                    ```
+                    不需要写 `free`，也不会忘 —— 这才是 C++ 比 C 安全的主要来源，
+                    而不是「语法更好看」。
+
+                    **同一件事的两种写法**：
+
+                    ```c
+                    // C：手动三步，漏一步就泄漏
+                    char *buf = malloc(64);
+                    strcpy(buf, "hello");
+                    free(buf);
+                    ```
+                    ```cpp
+                    // C++：一步，而且异常安全
+                    std::string buf = "hello";
+                    ```
+                    `std::string` 在异常抛出时也能正确释放（栈展开会调析构）—— 手动 `free` 做不到这点，
+                    这才是 RAII 真正的价值。
+
+                    **引用 vs 指针**
+
+                    ```cpp
+                    int x = 1;
+                    int &r = x;      // 引用：x 的别名，必须初始化、不能改指向
+                    int *p = &x;     // 指针：可以为空、可以重新指向
+                    ```
+                    引用的语法更干净（`r` 就当 `x` 用），适合「一定非空」的场景；指针适合「可能为空」。
+
+                    **所有权：`unique_ptr`**
+
+                    ```cpp
+                    auto p = std::make_unique<int>(42);   // 独占所有权，不能拷贝
+                    // auto q = p;                        // ❌ 编译错误
+                    auto q = std::move(p);                // ✅ 移交所有权，此后 p 为空
+                    ```
+                    `std::move` **不搬运任何数据** —— 它只是把「所有权」转交出去，代价接近零。
+                    把 `unique_ptr` 放进容器，就得到「自动释放的一堆对象」，不用再手写循环 `free`。
+
+                    新手必踩的点：
+
+                    1. **`new` 就要 `delete`**，但更该做的是根本不用 `new`（用栈对象或智能指针）
+                    2. `delete` 数组要用 `delete[]`，混用是未定义行为
+                    3. 悬垂引用：返回局部变量的引用（对象已经没了）
+                    4. `std::move` 之后原对象处于「有效但未指明」状态，别再依赖它的值（指针会变空）
+                    """,
+                    """
+                    #include <iostream>
+                    #include <memory>
+                    #include <string>
+                    #include <vector>
+
+                    int main() {
+                      // RAII：出作用域自动释放，不需要手写 free/delete
+                      {
+                        std::string s = "hello";
+                        std::vector<int> v = {1, 2, 3};
+                        std::cout << s << " " << v.size() << "\\n";   // hello 3
+                      }   // 这里 v 与 s 的内存自动释放
+
+                      // 引用是别名，必须初始化
+                      int x = 1;
+                      int &r = x;
+                      r = 9;
+                      std::cout << x << "\\n";      // 9
+
+                      // unique_ptr：独占所有权，只能移动不能拷贝
+                      auto p = std::make_unique<int>(42);
+                      std::cout << *p << "\\n";     // 42
+                      auto q = std::move(p);        // 所有权移交，此后 p 为空
+                      std::cout << *q << "\\n";     // 42
+                      std::cout << (p == nullptr) << "\\n";   // 1
+                      return 0;
+                    }
+                    """,
+                    "cpp",
+                    List.of(
+                            quiz("C++ 的 RAII 为什么在抛异常时也能正确释放内存？",
+                                    List.of("因为有垃圾回收", "因为栈展开时会按逆序调析构函数", "因为编译器插入了 free", "不能，异常时一定会泄漏"), 1,
+                                    "异常抛出时，栈上已构造的对象会按**构造的逆序**逐个析构（栈展开），资源的释放跟着对象走。"
+                                            + "手写 `free` 的代码做不到 —— 抛异常会直接跳过它。"),
+                            quiz("`auto q = std::move(p)` 里的 `std::move` 实际做了什么？",
+                                    List.of("深拷贝了一份数据", "只移交所有权，不搬运数据（此后 p 为空）", "创建了一个引用", "什么也不做"), 1,
+                                    "`std::move` 只是个类型转换（转成右值引用），真正干活的是移动构造：把指针/缓冲区**接过去**，"
+                                            + "原对象置空。代价接近零，这就是它比拷贝快的原因。"))));
+
+    // --------------------------------------------------------------------------------
+    // Java —— heavy 档：内容先写全，运行器（CheerpJ 不许自托管 / 只到 Java 8）待定
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JAVA_LESSONS = List.of(
+            lesson("java-01", "类型系统、包装类型与 String", 20,
+                    """
+                    Java 是**静态强类型**语言：每个变量都有确定的类型，不匹配在编译期就报错。
+
+                    **基本类型 vs 包装类型**（Java 特有的分裂）：
+
+                    ```java
+                    int a = 1;        // 基本类型：没有方法，存值
+                    Integer b = 1;    // 包装类型：是对象，可以为 null
+                    ```
+                    自动装箱让两者几乎可以互换（`Integer c = a;`），但埋了几个大坑：
+
+                    ⚠️ **`==` 比较包装类型比的是引用，不是值**：
+
+                    ```java
+                    Integer x = 1000, y = 1000;
+                    System.out.println(x == y);        // false ！不是 true
+                    System.out.println(x.equals(y));   // true  ← 这个才是比值
+                    ```
+                    更要命的是 **`Integer` 有缓存**（-128 ~ 127）：
+
+                    ```java
+                    Integer m = 100, n = 100;
+                    System.out.println(m == n);    // true   ← 走了缓存，恰好看不出问题
+                    Integer p = 1000, q = 1000;
+                    System.out.println(p == q);    // false  ← 超出缓存就现原形
+                    ```
+                    **结论：比较对象一律用 `.equals()`**；`==` 只用来比基本类型。
+
+                    **String 是不可变的**
+
+                    ```java
+                    String s = "hello";
+                    s.toUpperCase();        // 返回新字符串，s 本身没变
+                    System.out.println(s);  // 还是 "hello"
+                    ```
+                    不可变带来两个后果：① 可以安全共享（字符串常量池就是这么来的）；
+                    ② `+` 在循环里拼字符串会创建大量临时对象 —— 那时该用 `StringBuilder`。
+
+                    还有：`null.equals(x)` 会抛空指针，安全写法是把常量写在前面 —— **`"常量".equals(变量)`**。
+
+                    新手必踩的点：
+
+                    1. `==` 比字符串（有时对有时错，取决于是否命中常量池）
+                    2. `Integer` 为 `null` 时参与运算 → 自动拆箱 → NPE
+                    3. `final` 修饰引用表示「引用不能改指向」，**不是**「对象内容不可变」
+                    """,
+                    """
+                    public class Main {
+                      public static void main(String[] args) {
+                        // 基本类型 vs 包装类型
+                        int a = 1;
+                        Integer b = 1;
+
+                        // == 比引用，equals 比值
+                        Integer x = 1000, y = 1000;
+                        System.out.println(x == y);         // false
+                        System.out.println(x.equals(y));    // true
+
+                        // Integer 缓存 -128~127：这段恰好看不出问题
+                        Integer m = 100, n = 100;
+                        System.out.println(m == n);         // true（命中缓存）
+
+                        // String 不可变
+                        String s = "hello";
+                        s.toUpperCase();
+                        System.out.println(s);              // hello（没变）
+
+                        // 安全的比较：常量写前面，null 也不会 NPE
+                        String t = null;
+                        System.out.println("hello".equals(t));   // false，而不是抛异常
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("`Integer x = 1000, y = 1000; x == y` 的结果是？",
+                                    List.of("true", "false", "编译错误", "抛异常"), 1,
+                                    "`==` 比的是引用。1000 超出 `Integer` 缓存范围（-128~127），会各自 new 一个对象 → false。"
+                                            + "换成 100 就会是 true（走缓存）—— 所以这个坑「时对时错」，必须统一用 `.equals()`。"),
+                            quiz("`String s = \"hello\"; s.toUpperCase();` 之后 `s` 是什么？",
+                                    List.of("HELLO", "hello（未变）", "null", "编译错误"), 1,
+                                    "`String` 不可变，`toUpperCase()` 返回的是**新对象**，不赋值就丢了。"
+                                            + "不可变让字符串能安全共享（常量池），代价是循环里 `+` 拼接会产生大量临时对象 —— 那时用 StringBuilder。"))),
+
+            lesson("java-02", "集合框架", 20,
+                    """
+                    Java 集合分三个主干接口：
+
+                    | 接口 | 用途 | 常用实现 |
+                    |---|---|---|
+                    | `List` | 有序、可重复 | `ArrayList`（随机访问快）、`LinkedList` |
+                    | `Set` | 去重 | `HashSet`、`LinkedHashSet`（保留插入序） |
+                    | `Map` | 键值对 | `HashMap`、`LinkedHashMap` |
+
+                    **怎么选**：日常默认 `ArrayList` —— 随机访问 O(1)、尾部追加也快。
+                    `LinkedList` 只在「频繁在头部/中间插入删除」时才有优势，实际项目里很少用。
+
+                    ⚠️ **`HashMap` 的键必须正确实现 `hashCode()` 和 `equals()`**
+
+                    用自定义对象当键时，只重写 `equals`、不重写 `hashCode`，会导致「放进去取不出来」：
+
+                    ```java
+                    class Point { int x, y; /* 只写了 equals，没写 hashCode */ }
+
+                    Map<Point, String> map = new HashMap<>();
+                    map.put(new Point(1, 2), "a");
+                    map.get(new Point(1, 2));    // null ！逻辑上相等，却落在不同的桶
+                    ```
+                    契约是：**`equals` 相等 ⇒ `hashCode` 必须相等**（反过来不要求）。
+
+                    ⚠️ **泛型擦除**：`List<String>` 的类型信息只在**编译期**存在，运行时统一是 `List`。
+                    所以不能 `new T[]`、不能对泛型做 `instanceof` —— 这是 Java 泛型为兼容老代码付出的代价。
+
+                    ⚠️ **遍历时删除元素**必须交给迭代器：
+
+                    ```java
+                    for (String s : list) {
+                      if (s.isEmpty()) list.remove(s);   // 💥 ConcurrentModificationException
+                    }
+                    ```
+                    增强 for 底层就是迭代器；直接改 list 会让迭代器检测到「被外部修改」而抛错。
+                    正确写法：`list.removeIf(s -> s.isEmpty())`（内部走迭代器）。
+                    """,
+                    """
+                    import java.util.*;
+
+                    public class Main {
+                      public static void main(String[] args) {
+                        // List：有序可重复
+                        List<String> list = new ArrayList<>(List.of("a", "b", "a"));
+                        System.out.println(list.size());          // 3
+
+                        // Set：去重
+                        Set<String> set = new HashSet<>(list);
+                        System.out.println(set.size());           // 2
+
+                        // Map：键值对，带默认值取值
+                        Map<String, Integer> map = new HashMap<>();
+                        map.put("a", 1);
+                        System.out.println(map.getOrDefault("z", 0));   // 0
+
+                        // 遍历时删除：removeIf 内部走迭代器，安全
+                        List<String> names = new ArrayList<>(List.of("bo", "", "alice"));
+                        names.removeIf(String::isEmpty);
+                        System.out.println(names);                // [bo, alice]
+
+                        // 泛型擦除：两种不同参数化的 List，运行时是同一个类
+                        List<Integer> nums = new ArrayList<>();
+                        List<String> strs = new ArrayList<>();
+                        System.out.println(nums.getClass() == strs.getClass());   // true
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("自定义类当 `HashMap` 的键，只重写 `equals` 不重写 `hashCode`，会怎样？",
+                                    List.of("完全正常工作", "能 put 但 get 不到（哈希不同 → 落在不同的桶）", "编译错误", "抛异常"), 1,
+                                    "`HashMap` 先按 `hashCode` 定位桶、再在桶内用 `equals` 比。哈希值不同就根本不在同一个桶，"
+                                            + "永远找不到，还会重复插入。契约是「`equals` 相等则 `hashCode` 必须相等」。"),
+                            quiz("增强 for 循环里 `list.remove(x)` 为什么抛 `ConcurrentModificationException`？",
+                                    List.of("因为多线程并发", "因为增强 for 底层是迭代器，它检测到集合被外部改了", "因为 list 不可变", "只有 HashMap 会这样"), 1,
+                                    "增强 for 会被编译成 `Iterator` 遍历。迭代器记着 `modCount`，发现集合被 `list.remove` "
+                                            + "直接改了就立刻抛错 —— **单线程也会发生**，与并发无关。替代：`removeIf(...)`。"))),
+
+            lesson("java-03", "面向对象与异常", 20,
+                    """
+                    **接口 vs 抽象类** —— 最常被问的选择题：
+
+                    | | 接口 interface | 抽象类 abstract class |
+                    |---|---|---|
+                    | 多继承 | ✅ 可实现多个 | ❌ 只能继承一个 |
+                    | 实例字段 | ❌ 只能放常量 | ✅ 可以 |
+                    | 方法实现 | Java 8+ 有 default 方法 | 可以有 |
+                    | 何时用 | 定义「能做什么」（能力契约） | 共享「是什么」的公共实现 |
+
+                    经验法则：**优先用接口**。只有子类之间确有共享状态/实现要复用时，才考虑抽象类。
+
+                    **多态的口诀：编译看左边，运行看右边**
+
+                    ```java
+                    Animal a = new Dog();
+                    a.speak();     // 调的是 Dog 的实现（运行期按实际类型决定）
+                    // a.fetch();  // ❌ 编译错误：编译期只看 Animal 有没有这个方法
+                    ```
+
+                    ⚠️ **`@Override` 一定要写**。少了它，想重写的方法一旦签名写错
+                    （比如参数类型不对），编译器不会报错 —— 你会得到一个**永远不会被调用**的方法，
+                    排查起来非常费劲。加上注解，写错立刻就报。
+
+                    **异常分两类**
+
+                    ```java
+                    // 受检异常（checked）：必须处理，否则编译不过
+                    try { readFile(); } catch (IOException e) { /* ... */ }
+
+                    // 非受检异常（RuntimeException 及其子类）：编译器不强制处理
+                    int x = 1 / 0;   // ArithmeticException，运行时才炸
+                    ```
+                    设计上的取舍：**受检异常**适合「调用方能合理恢复」的场景（文件不存在可以重试）；
+                    **非受检异常**适合「程序 bug」（空指针、数组越界）—— 这类该改代码，而不是到处 catch。
+
+                    **资源一律用 `try-with-resources`**
+
+                    ```java
+                    try (var in = new FileInputStream("a.txt")) {
+                      // 用完自动 close，即使抛异常也会关
+                    }
+                    ```
+                    手写 `finally { in.close(); }` 容易漏，而且 try 里抛异常时 `close` 自己也可能抛 ——
+                    `try-with-resources` 连「抑制异常」都替你处理了。
+                    """,
+                    """
+                    import java.io.*;
+
+                    class Animal {
+                      String name;
+                      Animal(String name) { this.name = name; }
+                      String speak() { return name + " 叫了一声"; }
+                    }
+
+                    class Dog extends Animal {
+                      Dog(String name) { super(name); }
+                      @Override
+                      String speak() { return name + " 汪了一声"; }   // 重写
+                    }
+
+                    public class Main {
+                      public static void main(String[] args) {
+                        // 多态：编译看左边（Animal），运行看右边（Dog）
+                        Animal a = new Dog("旺财");
+                        System.out.println(a.speak());      // 旺财 汪了一声
+
+                        // 非受检异常不强制处理
+                        try {
+                          int x = 1 / 0;
+                        } catch (ArithmeticException e) {
+                          System.out.println("捕获：" + e.getMessage());   // / by zero
+                        }
+
+                        // try-with-resources：自动关闭
+                        try (var w = new StringWriter()) {
+                          w.write("hi");
+                          System.out.println(w.toString());   // hi
+                        } catch (IOException e) {
+                          System.out.println("这里不会发生");
+                        }
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("`Animal a = new Dog(); a.speak();` 调用的是哪个 `speak`？",
+                                    List.of("Animal 的", "Dog 的（运行期按实际类型决定）", "编译错误", "两个都会调"), 1,
+                                    "这就是多态：**编译看左边**（`a` 声明为 Animal，所以只能调用 Animal 有的方法），"
+                                            + "**运行看右边**（实际对象是 Dog，所以调 Dog 重写后的版本）。"),
+                            quiz("什么时候该用受检异常（checked）？",
+                                    List.of("所有异常都该用受检", "调用方有可能合理恢复的场景（如文件不存在可重试）", "程序 bug（如空指针）", "性能敏感的地方"), 1,
+                                    "受检异常**强制调用方显式处理**，适合「有合理应对手段」的情况。而空指针、数组越界这类是"
+                                            + "程序 bug，应该改代码而不是到处 catch —— 所以设计成非受检。"))));
+
     public static final List<Map<String, Object>> BASE_TRACKS = List.of(
             track("javascript", "JavaScript", "🟨",
                     "从变量、函数到数组处理，把语言核心语法走一遍。浏览器里可以直接跑，改完立刻看结果。",
@@ -1216,13 +1743,13 @@ public final class LearningSeed {
                     List.of(stage("lua-basic", "入门", "掌握 table 的引用语义，以及用 metatable 搭出面向对象", LUA_LESSONS))),
             // 下面几门暂时只有骨架：运行方案要么代价大、要么得走后端，先把位置与说明留出来
             track("c", "C / C++", "⚙️",
-                    "需要把 Clang 编译成 WASM 才能在浏览器里编译，首屏要下几十兆。适合做成「点了才下载」的可选能力。",
+                    "指针、内存与 C++ 的 RAII。内容已写全；运行需要把 Clang 编译成 WASM，首屏要下几十兆 —— 适合做成「点了才下载」的可选能力。",
                     "clang-wasm",
-                    List.of(stage("c-basic", "入门", "指针与内存布局", List.of()))),
+                    List.of(stage("c-basic", "入门", "理解指针与内存，以及 RAII 为什么让 C++ 少犯内存错", CPP_LESSONS))),
             track("java", "Java", "☕",
-                    "浏览器里只有 CheerpJ（社区版不许自托管、且只到 Java 8）。要学现代 Java 得走后端沙箱。",
+                    "类型系统、集合框架与面向对象。内容已写全；浏览器里只有 CheerpJ（社区版不许自托管、且只到 Java 8），要学现代 Java 得走后端沙箱。",
                     "cheerpj",
-                    List.of(stage("java-basic", "入门", "类、对象与集合框架", List.of()))),
+                    List.of(stage("java-basic", "入门", "掌握包装类型陷阱、集合选型与异常分类", JAVA_LESSONS))),
             track("go", "Go", "🐹",
                     "编译链太重，浏览器里没有实用方案：官方 playground 也是把源码发到后端编译。",
                     "server",
