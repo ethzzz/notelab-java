@@ -68,6 +68,12 @@ public final class MenuTree {
             // 内容存 ui_config.dev_notes（见 DevNoteController），不是 C 端消费的配置，编辑即生效、无发布快照。
             group("g_practice", "项目实践", "🧪", List.of(
                     menu("dev-summary", "项目开发总结", "📓", "/practice/dev-summary", true))),
+            // 编程学习：语言 → 阶段 → 课时 → 随堂测试，每节课有讲解 + 可运行示例 + 选择题。
+            // 内容存 ui_config.learning（见 LearningContentController），后台知识库、编辑即生效、无发布快照。
+            // 每个语言带 runner 标签说明「能不能在浏览器里真跑、走什么方案」（能力表只读，见 LearningSeed.RUNNERS）。
+            // ⚠️ 路由 /learning 必须同步登记在 PageRoutes.PAGE_ROUTES，漏了叶子会被 RBAC 过滤 → 谁都看不到。
+            group("g_learn", "编程学习", "🎓", List.of(
+                    menu("learn-tracks", "学习路线", "🎓", "/learning", true))),
             group("g_users", "用户管理", "👥", List.of(
                     menu("user-accounts", "账户管理", "👤", "/user/accounts", true),
                     menu("user-roles", "角色组管理", "🗂️", "/user/roles", true),
