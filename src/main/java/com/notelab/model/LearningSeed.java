@@ -1720,44 +1720,2892 @@ public final class LearningSeed {
                                     "受检异常**强制调用方显式处理**，适合「有合理应对手段」的情况。而空指针、数组越界这类是"
                                             + "程序 bug，应该改代码而不是到处 catch —— 所以设计成非受检。"))));
 
+    // --------------------------------------------------------------------------------
+    // JavaScript · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JS_ADV_LESSONS = List.of(
+            lesson("js-04", "对象与解构：数据是怎么组织的", 20,
+                    """
+                    对象是 JS 里最常用的数据结构，本质是**键值对集合**；日常处理数据几乎都在跟它打交道。
+
+                    **解构**是从对象/数组里取值的简写：
+
+                    ```js
+                    const user = { name: "Alice", age: 30, city: "深圳" }
+                    const { name, age } = user        // 取两个字段
+                    const { city: hometown } = user    // 取出来重命名
+                    const { email = "未填" } = user    // 默认值
+                    ```
+
+                    **展开运算符 `...`** 用来复制或合并，注意它是**浅拷贝**：
+
+                    ```js
+                    const next = { ...user, age: 31 }  // 复制其余字段、只改 age
+                    ```
+
+                    ⚠️ 两个高频坑：
+
+                    1. `{ ...user }` 只复制第一层 —— 嵌套对象仍是**同一个引用**，改内层会同时改到原对象
+                    2. 解构默认值只在值为 `undefined` 时生效，`null` 不会触发默认值（它是「有值」）
+
+                    数组解构结合 `...` 也很常用：`const [first, ...rest] = list`。
+                    应用场景：**不可变更新** —— 改一个字段时不直接改对象，而是造一个新对象，
+                    这是 React / Redux 里更新状态的标准做法。
+                    """,
+                    """
+                    const user = { name: "Alice", age: 30 };
+                    const { name, age } = user;
+                    const { email = "未填" } = user;
+                    console.log(name, age, email);          // Alice 30 未填
+
+                    const next = { ...user, age: 31 };       // 浅拷贝 + 覆盖
+                    console.log(next.age, user.age);         // 31 30 —— 原对象没变
+
+                    // 浅拷贝的坑：嵌套对象还是同一个引用
+                    const a = { nested: { n: 1 } };
+                    const b = { ...a };
+                    b.nested.n = 99;
+                    console.log(a.nested.n);                 // 99 —— 原对象被改到了
+
+                    const [first, ...rest] = [1, 2, 3];
+                    console.log(first, rest);                // 1 [2,3]
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("`const { a = 1 } = { a: null }` 里 `a` 的值是？",
+                                    List.of("1", "null", "undefined", "报错"), 1,
+                                    "解构默认值**只在值为 undefined 时生效**。`null` 是「我主动置空」，属于有值，不会用默认值。"
+                                            + "这是 `??`（空值合并）和 `||` 的差别被搬进解构后最容易踩的一处。"),
+                            quiz("`const b = { ...a }` 之后修改 `b.nested.x`，`a` 会受影响吗？",
+                                    List.of("不会，展开是深拷贝", "会，展开只复制第一层", "取决于 nested 是不是数组", "只有 Map 才不受影响"), 1,
+                                    "展开运算符做的是**浅拷贝**：第一层的键值被复制，但值如果是对象，复制的是引用。"
+                                            + "要真正隔离得逐层展开，或用 `structuredClone`。"))),
+
+            lesson("js-05", "异步：Promise 与 async/await", 25,
+                    """
+                    JS 是**单线程**的，但网络请求、定时器不能把线程堵住干等 —— 于是有了异步。
+
+                    早期用回调，一层套一层就是「回调地狱」；现在统一用 **Promise**，
+                    再包一层 `async/await` 就能写成看起来同步的代码。
+
+                    ```js
+                    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+                    async function task() {
+                      console.log("开始")
+                      await delay(500)      // 等 500ms，但主线程不阻塞
+                      console.log("结束")
+                    }
+                    ```
+
+                    三个必须记住的点：
+
+                    1. `async` 函数**一定返回 Promise**；`await` 只能写在 async 函数里
+                    2. `await` 拿到的是结果，出错要用 `try/catch` 接
+                    3. 互不依赖的多个异步要**并发**：`await Promise.all([a, b])`，而不是连着 `await a; await b`
+
+                    ⚠️ 最常见的坑：`array.forEach(async (x) => { await f(x) })` **不会等待** ——
+                    forEach 不认 async 回调，循环会立刻走完。要串行就用 `for...of`。
+                    """,
+                    """
+                    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+                    async function main() {
+                      console.log("开始");
+                      await delay(100);
+                      console.log("100ms 后");
+
+                      // 并发：两个一起等，总耗时约 100ms，而不是 200ms
+                      const t0 = Date.now();
+                      await Promise.all([delay(100), delay(100)]);
+                      console.log("并发耗时约", Date.now() - t0, "ms");
+
+                      // 出错用 try/catch
+                      try {
+                        await Promise.reject(new Error("boom"));
+                      } catch (e) {
+                        console.log("捕获到:", e.message);
+                      }
+                    }
+                    main();
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("两个各耗时 1 秒、互不依赖的请求，`await a; await b` 与 `await Promise.all([a, b])` 总耗时分别是？",
+                                    List.of("都是 1 秒", "都是 2 秒", "前者约 2 秒，后者约 1 秒", "前者约 1 秒，后者约 2 秒"), 2,
+                                    "连着 `await` 是**串行**，一个等完再等下一个；`Promise.all` 是**并发**，几个一起跑。"
+                                            + "判断依据只有一条：这两个任务之间有没有依赖。没有就别串行。"),
+                            quiz("`[1,2,3].forEach(async (n) => { await delay(10) })` 之后立刻打印，会怎样？",
+                                    List.of("等三个都跑完才打印", "立刻打印 —— forEach 不等 async 回调", "抛异常", "只等第一个"), 1,
+                                    "forEach 只是同步遍历，回调返回的 Promise 被丢掉了，它不会等待。"
+                                            + "要点：**要顺序等待就用 `for...of` + await**，要并发就用 `Promise.all` 配 map。"))),
+
+            lesson("js-06", "this、原型与 class", 20,
+                    """
+                    `this` 指向**调用时的上下文**，不是定义时。四种情况快速记：
+
+                    1. `obj.fn()` → this 是 obj
+                    2. `fn()` 单独调用 → 严格模式下是 `undefined`，非严格是全局对象
+                    3. `new Fn()` → this 是新建的那个对象
+                    4. 箭头函数 → 没有自己的 this，取**定义时**外层的
+
+                    **原型**是 JS 的继承机制：每个对象有一个 `__proto__` 指向原型，
+                    查属性时找不到就顺着这条链往上找，直到 `null`。
+
+                    `class` 只是这套原型机制的**语法糖**，写起来更清楚：
+
+                    ```js
+                    class Animal {
+                      constructor(name) { this.name = name }
+                      speak() { return this.name + " 叫了一声" }
+                    }
+                    class Dog extends Animal {
+                      speak() { return this.name + " 汪" }   // 重写
+                    }
+                    ```
+
+                    应用场景：**把方法摘出来当回调传**是最容易丢 this 的地方
+                    （`const f = dog.speak; f()`）。解法是 `f.bind(dog)` 或直接写成箭头函数。
+                    """,
+                    """
+                    class Animal {
+                      constructor(name) { this.name = name; }
+                      speak() { return this.name + " 叫了一声"; }
+                    }
+                    class Dog extends Animal {
+                      speak() { return this.name + " 汪"; }
+                    }
+
+                    const d = new Dog("旺财");
+                    console.log(d.speak());               // 旺财 汪
+                    console.log(d instanceof Animal);     // true —— 原型链上有 Animal
+
+                    // 把方法摘出来单独调用 → this 丢失
+                    const f = d.speak;
+                    try {
+                      f();
+                    } catch (e) {
+                      console.log("丢了 this:", e.constructor.name);
+                    }
+
+                    // 绑定之后正常
+                    const bound = d.speak.bind(d);
+                    console.log(bound());                 // 旺财 汪
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("`class Dog extends Animal` 之后，`new Dog()` 的 `instanceof Animal` 是？",
+                                    List.of("false", "true", "报错", "undefined"), 1,
+                                    "extends 会把 `Dog.prototype` 的原型链接到 `Animal.prototype` 上，"
+                                            + "所以顺着链能查到 Animal —— 这就是「class 是原型语法糖」的直接体现。"),
+                            quiz("`const f = obj.method; f()` 里的 `this` 指向？",
+                                    List.of("obj", "undefined（严格模式）", "永远是 window", "调用 f 的上一个函数"), 1,
+                                    "this 由**调用方式**决定：`obj.method()` 里有 obj，摘出来后就是普通函数调用。"
+                                            + "ES Module / class 体默认是严格模式，所以是 undefined 而不是全局对象。"))));
+
+    // --------------------------------------------------------------------------------
+    // JavaScript · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JS_PRO_LESSONS = List.of(
+            lesson("js-07", "DOM 与事件：把数据变成界面", 20,
+                    """
+                    前面讲的是语言本身，这一节开始「用 JS 干活」—— 最常见的活就是操作页面（DOM）。
+
+                    ```js
+                    const box = document.querySelector("#list")
+                    const li = document.createElement("li")
+                    li.textContent = "新条目"
+                    box.appendChild(li)
+                    ```
+
+                    **事件**让页面能响应操作，核心是「注册回调」：
+
+                    ```js
+                    button.addEventListener("click", (e) => { console.log(e.target) })
+                    ```
+
+                    三条业务要点：
+
+                    1. **事件委托**：给父元素挂一个监听，用 `e.target.closest("li")` 判断点的是谁。
+                       列表再长也只绑一次，动态新增的项自动生效 —— 这是长列表的标准做法
+                    2. 塞用户输入用 `textContent`，**不要用 `innerHTML`** —— 后者会把输入当 HTML 执行（XSS）
+                    3. 频繁改 DOM 很慢，**先拼好再一次性插入**，别在循环里逐个 append
+
+                    正是这三件事让「数据驱动」的框架（React / Vue）成为主流：
+                    **你只描述界面长什么样，DOM 怎么改交给框架**。
+                    """,
+                    """
+                    // 数据 → 界面：先拼字符串再一次性插入，比循环里逐个插入快得多
+                    const users = [
+                      { id: 1, name: "Alice", vip: true },
+                      { id: 2, name: "Bob", vip: false },
+                    ];
+
+                    const html = users
+                      .map((u) => '<li data-id="' + u.id + '">' + u.name + (u.vip ? " ⭐" : "") + "</li>")
+                      .join("");
+                    console.log(html);
+
+                    // 事件委托的判定逻辑（浏览器里换成 e.target.closest("li").dataset.id）
+                    function handleClick(el) {
+                      const id = el && el.dataset ? Number(el.dataset.id) : NaN;
+                      return Number.isFinite(id) ? "点击了用户 " + id : "点了空白处";
+                    }
+                    console.log(handleClick({ dataset: { id: "2" } }));
+                    console.log(handleClick({ dataset: {} }));
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("为什么长列表推荐用「事件委托」而不是给每一项都绑监听？",
+                                    List.of("事件委托能阻止冒泡", "只绑一次、内存占用小，且动态新增的项自动生效", "事件委托执行更快，因为不冒泡", "没有区别，只是写法不同"), 1,
+                                    "给 1000 个 li 各绑一个监听要 1000 个函数和 1000 次注册；委托只在父级绑一次，"
+                                            + "新增节点无需重新绑定。代价是要自己判断 `e.target` 是谁。"),
+                            quiz("把用户输入的昵称显示到页面上，应该用？",
+                                    List.of("innerHTML", "textContent", "insertAdjacentHTML", "document.write"), 1,
+                                    "`innerHTML` 会把字符串当 HTML 解析并执行其中的脚本，用户输入 `<img onerror=...>` 就能执行代码。"
+                                            + "`textContent` 只当纯文本，是显示用户内容的默认选择。"))),
+
+            lesson("js-08", "模块化与 fetch：组装一个真实页面", 25,
+                    """
+                    真实项目不是一个巨大文件，而是拆成模块再组合。ESM（ES Module）是标准写法：
+
+                    ```js
+                    // math.js
+                    export const add = (a, b) => a + b
+                    export default function multiply(a, b) { return a * b }
+
+                    // main.js
+                    import multiply, { add } from "./math.js"
+                    ```
+
+                    `fetch` 是请求数据的标准 API，返回 Promise：
+
+                    ```js
+                    const res = await fetch("/api/users")
+                    if (!res.ok) throw new Error("HTTP " + res.status)   // ⚠️ 别漏
+                    const data = await res.json()
+                    ```
+
+                    ⚠️ 三个坑：
+
+                    1. `fetch` **只有网络层错误才 reject**，404 / 500 也算「成功到达」——
+                       必须自己检查 `res.ok`，否则会把错误页当成正常数据解析
+                    2. 解析响应体也是异步的（`await res.json()`），而且**只能读一次**
+                    3. 需要带 cookie / token 时要显式配 `credentials` 与 `headers`
+
+                    `export default` 导出时导入可任意命名、不加花括号；具名导出要加花括号、名字必须一致。
+                    到这里，「取数据 → 处理 → 渲染」这条主干就通了 —— 这就是一个前端应用的最小闭环。
+                    """,
+                    """
+                    // 用对象模拟一个 Response（浏览器里换成真 fetch）
+                    const fakeRes = {
+                      ok: true,
+                      status: 200,
+                      json: async () => [{ id: 1, name: "Alice" }, { id: 2, name: "Bob" }],
+                    };
+
+                    async function loadNames() {
+                      const res = await fakeRes;
+                      // ⚠️ fetch 不会因为 404 抛错，必须自己判断
+                      if (!res.ok) throw new Error("HTTP " + res.status);
+                      const users = await res.json();
+                      return users.map((u) => u.name);
+                    }
+
+                    loadNames().then((names) => console.log("用户:", names));
+
+                    const bad = { ok: false, status: 404 };
+                    console.log("404 时 ok =", bad.ok, "→ 得靠这行拦住错误");
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("`fetch(\"/not-exist\")` 返回 404 时会怎样？",
+                                    List.of("Promise 被 reject，走 catch", "Promise 正常 resolve，需要自己检查 res.ok", "返回 undefined", "自动重试"), 1,
+                                    "fetch 的设计是「只有网络中断/DNS 失败这类才 reject」，HTTP 错误码属于「成功收到响应」。"
+                                            + "所以 `if (!res.ok) throw` 这一行是必须的，漏了就会拿错误页去解析。"),
+                            quiz("ESM 里 `export default fn` 与 `export const fn` 的区别是？",
+                                    List.of("没有区别", "默认导出导入时不用花括号、可任意命名；具名导出要花括号且名字一致", "默认导出只能是函数", "具名导出一个模块只能有一个"), 1,
+                                    "一个模块只能有一个 default，导入时可随意起名（`import anything from ...`）；"
+                                            + "具名导出可以有多个，导入必须用 `{ }` 且名字对得上（或 `as` 改名）。"))));
+
+    // --------------------------------------------------------------------------------
+    // TypeScript · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> TS_ADV_LESSONS = List.of(
+            lesson("ts-04", "工具类型：Partial / Pick / Omit / Record", 20,
+                    """
+                    现实里最常写的类型，不是从零定义，而是**从已有类型里改造出来**。
+                    TS 内置了一批工具类型干这件事：
+
+                    ```ts
+                    interface User { id: number; name: string; email: string }
+
+                    type UpdateUser = Partial<User>          // 所有字段变可选
+                    type UserName   = Pick<User, "name">     // 只留一个字段
+                    type NoEmail    = Omit<User, "email">    // 去掉一个字段
+                    type CountById  = Record<string, number> // 键值映射
+                    type Frozen     = Readonly<User>         // 全部只读
+                    ```
+
+                    ⚠️ `Partial` 是**浅层**的：嵌套对象的内部字段不会自动变可选。
+                    要深层可选得自己递归（或引 `type-fest` 这类库）。
+
+                    为什么用它们而不是重新写一个 interface？因为**改一处会自动传导**：
+                    给 `User` 加个字段，`Omit<User, "email">` 跟着更新，重写的那份不会。
+
+                    应用场景：后台接口常见的「创建 / 更新 / 详情」三种形态，
+                    数据其实是同一份，用 `Pick` / `Omit` / `Partial` 派生出来最省维护成本。
+                    """,
+                    """
+                    interface User { id: number; name: string; email: string }
+
+                    type UpdateUser = Partial<User>;
+                    const patch: UpdateUser = { name: "Alice" };   // 只传一个字段也合法
+                    console.log(patch);
+
+                    type NoEmail = Omit<User, "email">;
+                    const brief: NoEmail = { id: 1, name: "Alice" };
+                    console.log(brief);
+
+                    type CountById = Record<string, number>;
+                    const stats: CountById = { a: 1, b: 2 };
+                    console.log(stats.a + stats.b);
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`Partial<User>` 对**嵌套对象**里的字段也生效吗？",
+                                    List.of("生效，会递归变可选", "不生效，它只处理第一层", "取决于 strict 模式", "只对数组生效"), 1,
+                                    "`Partial` 是浅层的 —— 它把第一层的每个字段加上 `?`，嵌套对象的类型本身没变。"
+                                            + "要深层可选必须自己写递归类型。这是它最常见的误解。"),
+                            quiz("用 `Omit<User, \"email\">` 而不是手写一个新 interface，最大的好处是？",
+                                    List.of("运行更快", "User 变了派生类型自动跟着变，不会漏改", "体积更小", "能阻止 User 被修改"), 1,
+                                    "手抄一份的类型是**死代码**：源类型加字段时不会同步。派生类型把「关系」写进了类型系统，"
+                                            + "这是类型复用比复制粘贴强的地方。"))),
+
+            lesson("ts-05", "类型守卫：把宽类型收窄成具体类型", 20,
+                    """
+                    一个变量声明得比较宽（如 `string | number`），用之前必须**收窄**到具体类型。
+                    这个过程叫类型收窄，靠的是「类型守卫」。
+
+                    四种常用守卫：
+
+                    ```ts
+                    typeof x === "string"          // 基本类型
+                    "name" in obj                   // 对象有没有某个键
+                    arr instanceof Date             // 是不是某个类
+                    isUser(x)                       // 自定义谓词，见下
+                    ```
+
+                    自定义谓词的关键是**返回类型写成 `x is T`**，而不是 `boolean`：
+
+                    ```ts
+                    function isUser(v: unknown): v is { name: string } {
+                      return typeof v === "object" && v !== null && "name" in v
+                    }
+                    ```
+
+                    ⚠️ 写 `: boolean` 就白写了 —— 收窄不会传到外面，调用方还得再判一次。
+
+                    应用场景：处理**外部数据**（接口响应、localStorage、消息）时，
+                    先按 `unknown` 接住，再用守卫逐层收窄 —— 这正是「运行时校验」类的库
+                    （zod / valibot）在类型层面做的事。
+                    """,
+                    """
+                    type Shape =
+                      | { kind: "circle"; r: number }
+                      | { kind: "rect"; w: number; h: number };
+
+                    function area(s: Shape): number {
+                      // 判别联合 + 收窄：进到每个分支后，能访问的字段就确定了
+                      if (s.kind === "circle") return 3.14 * s.r * s.r;
+                      return s.w * s.h;
+                    }
+                    console.log(area({ kind: "circle", r: 2 }));
+                    console.log(area({ kind: "rect", w: 2, h: 3 }));
+
+                    // 自定义类型守卫：返回 x is T，收窄才会传到调用方
+                    function isText(v: unknown): v is string {
+                      return typeof v === "string";
+                    }
+                    const raw: unknown = "hello";
+                    if (isText(raw)) console.log("长度:", raw.length);
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("自定义类型守卫写成 `function f(x): boolean` 会有什么问题？",
+                                    List.of("会报错", "没影响", "收窄不会传递出去，调用方拿不到具体类型", "运行时更慢"), 2,
+                                    "类型守卫的魔力全在返回类型 `x is T` 上 —— 它告诉编译器「返回 true 时 x 就是 T」。"
+                                            + "写 `boolean` 只是个普通判断，外面依然不知道 x 的具体类型。"),
+                            quiz("处理接口返回的 JSON，最稳妥的入门做法是？",
+                                    List.of("直接断言成目标类型 as User", "先接成 unknown，再用类型守卫逐层收窄", "声明成 any", "不写类型"), 1,
+                                    "断言 `as` 只是让编译器闭嘴、运行时不做任何检查，数据不对照样崩。"
+                                            + "先 `unknown` + 守卫校验，才是「类型与运行时一致」的做法。"))),
+
+            lesson("ts-06", "条件类型与映射类型：在类型层面编程", 25,
+                    """
+                    TS 的类型系统是**图灵完备**的 —— 你可以写「如果 A 能赋值给 B，就取 X，否则取 Y」。
+                    这就是条件类型：
+
+                    ```ts
+                    type IsString<T> = T extends string ? "yes" : "no"
+                    type A = IsString<"a">    // "yes"
+                    type B = IsString<1>      // "no"
+                    ```
+
+                    配合 `infer` 还能把类型「拆开」：
+
+                    ```ts
+                    type ElementOf<T> = T extends (infer U)[] ? U : never
+                    type E = ElementOf<string[]>   // string
+                    ```
+
+                    **映射类型**则是对每个键做变换，工具类型其实都是它写出来的：
+
+                    ```ts
+                    type MyPartial<T> = { [K in keyof T]?: T[K] }
+                    ```
+
+                    ⚠️ 这一节的价值不是让你到处写炫技类型，而是**读懂别人的类型定义**：
+                    axios、React 的泛型签名、各种库的 `.d.ts` 全是这套写法。
+                    业务代码里，够用就好 —— 类型太花会把人绕晕，维护成本反而更高。
+                    """,
+                    """
+                    type IsString<T> = T extends string ? "yes" : "no";
+                    type A = IsString<"a">;   // "yes"
+                    type B = IsString<1>;     // "no"
+
+                    // infer：把数组的元素类型取出来
+                    type ElementOf<T> = T extends (infer U)[] ? U : never;
+                    const first = <T,>(arr: ElementOf<T[]>[]): ElementOf<T[]> => arr[0];
+
+                    console.log(first(["a", "b"]));
+
+                    // 映射类型：手写一个 Partial
+                    type MyPartial<T> = { [K in keyof T]?: T[K] };
+                    type P = MyPartial<{ a: number; b: string }>;
+                    const p: P = { a: 1 };
+                    console.log(p);
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`type E = string[] extends (infer U)[] ? U : never` 里 E 是什么？",
+                                    List.of("string[]", "string", "never", "unknown"), 1,
+                                    "`infer U` 是「先占个位置，匹配成功后反推出来」。数组匹配 `(infer U)[]` 时 U 就是元素类型，"
+                                            + "这正是 `ReturnType`、`Parameters` 这些工具类型的实现基础。"),
+                            quiz("业务代码里应该大量使用条件类型吗？",
+                                    List.of("应该，越抽象越好", "不应该 —— 够用就好，类型太花会显著抬高维护成本", "必须用，否则没发挥 TS 优势", "只有写库时才允许"), 1,
+                                    "类型是给人读的。过度抽象的泛型/条件类型会让同事看不懂、跳转后一头雾水，"
+                                            + "而它换来的收益往往只是省了几个字。读懂它（尤其是库的类型）比会写它更重要。"))));
+
+    // --------------------------------------------------------------------------------
+    // TypeScript · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> TS_PRO_LESSONS = List.of(
+            lesson("ts-07", "类型安全的请求层：泛型封装 API", 25,
+                    """
+                    项目里最容易「类型虚假安全」的地方就是请求层：接口返回什么，
+                    编译期其实一无所知，全靠你手动断言。
+
+                    一个基础的泛型封装长这样：
+
+                    ```ts
+                    async function request<T>(url: string, init?: RequestInit): Promise<T> {
+                      const res = await fetch(url, init)
+                      if (!res.ok) throw new Error("HTTP " + res.status)
+                      return (await res.json()) as T      // ⚠️ 这里是唯一的「信任点」
+                    }
+
+                    const users = await request<User[]>("/api/users")   // users 推断为 User[]
+                    ```
+
+                    关键认识：**`as T` 是骗编译器，不是校验**。运行时数据不符不会报错。
+                    要让类型与运行时真正对齐，得在返回前加一层校验（zod 这类）：
+
+                    ```ts
+                    const schema = z.array(z.object({ id: z.number(), name: z.string() }))
+                    return schema.parse(await res.json())     // 不符合就抛错
+                    ```
+
+                    ⚠️ 别把校验做成摆设：只在校验、到处断言，等于把 `any` 换了个写法。
+
+                    应用场景：所有数据入口（HTTP、WebSocket、localStorage、URL 参数）
+                    都应该在**边界处**校验一次 —— 内部代码就可以放心地用类型。
+                    """,
+                    """
+                    interface User { id: number; name: string }
+
+                    // 泛型封装：调用方声明期望的类型，返回值自动推断
+                    async function request<T>(fakeJson: unknown): Promise<T> {
+                      return fakeJson as T;   // ⚠️ 只是断言，运行时不会检查
+                    }
+
+                    async function main() {
+                      const users = await request<User[]>([
+                        { id: 1, name: "Alice" },
+                        { id: 2, name: "Bob" },
+                      ]);
+                      // users 现在是 User[]，能自动补全 name / id
+                      console.log(users.map((u) => u.name));
+
+                      // 运行时给错数据，断言不会拦（这正是要在边界做校验的原因）
+                      const bad = await request<User[]>([{ nope: 1 }]);
+                      console.log("断言后的第一个元素:", bad[0]);
+                    }
+                    main();
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`const data = (await res.json()) as User` 这行的实际保护力度是？",
+                                    List.of("运行时会校验数据是不是 User", "没有任何运行时保护，只是让编译器不再报错", "会自动补默认值", "会在开发模式校验"), 1,
+                                    "`as` 是**类型断言**，编译后完全消失。数据不符合 User 也不会报错，"
+                                            + "直到某处访问 `data.name` 拿到 undefined 才炸 —— 而且报错点离源头很远。"),
+                            quiz("为什么把校验放在「边界」（请求返回处）而不是到处校验？",
+                                    List.of("因为边界处性能更好", "边界校验一次后，内部代码可以信任类型，避免重复判断", "因为 TS 只支持在边界校验", "没有区别"), 1,
+                                    "这是类型系统的核心思路：**入口收敛、内部信任**。"
+                                            + "在边界处把 unknown 校验成具体类型，之后整条调用链都能用类型安全换掉防御代码。"))),
+
+            lesson("ts-08", "工程配置：tsconfig 与严格模式", 15,
+                    """
+                    同一份代码，`tsconfig.json` 不同，TS 能帮你抓出的问题数量完全不同。
+
+                    最该打开的一个开关是 `strict`：
+
+                    ```json
+                    {
+                      "compilerOptions": {
+                        "strict": true,
+                        "noUncheckedIndexedAccess": true,
+                        "noImplicitOverride": true
+                      }
+                    }
+                    ```
+
+                    `strict` 是**一组开关的集合**，其中最重要的两个：
+
+                    - `strictNullChecks`：`null` / `undefined` 不再能赋给任意类型 ——
+                      「十亿美元的错误」就是从这里开始被挡住的
+                    - `noImplicitAny`：推断不出来时必须显式写类型，不能悄悄变成 `any`
+
+                    `noUncheckedIndexedAccess` 是新项目值得单开的一条：
+                    它让 `arr[0]` 的类型变成 `T | undefined`，逼你处理「数组可能是空的」。
+
+                    ⚠️ 两个实践建议：
+
+                    1. **老项目别一次性全开** —— 先开 `strict`，把报错按目录逐步清零，否则会产生一堆 `// @ts-ignore`
+                    2. `any` 可以暂时用，但要**有注释说明为什么**；`// @ts-ignore` 尽量换成 `// @ts-expect-error`
+                       （后者在错误消失时会反过来报错，不会留下失效的忽略）
+
+                    应用场景：CI 里跑 `tsc --noEmit` 做类型检查（不产文件），
+                    这是「把类型问题挡在合并之前」的最低成本手段。
+                    """,
+                    """
+                    // strict 模式下的两个典型差异
+                    function pick(arr: number[], i: number): number {
+                      // 打开 noUncheckedIndexedAccess 后，这行会提示可能是 undefined
+                      return arr[i];
+                    }
+                    console.log(pick([10, 20], 1));
+
+                    // strictNullChecks：null / undefined 不能乱赋值
+                    let maybe: string | null = null;
+                    maybe = "ok";
+                    console.log(maybe.toUpperCase());
+
+                    // 处理可选值必须显式收窄
+                    function len(s: string | null): number {
+                      return s === null ? 0 : s.length;
+                    }
+                    console.log(len(null), len("abc"));
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`strictNullChecks` 打开后，`let s: string = null` 会怎样？",
+                                    List.of("编译通过", "编译报错：null 不能赋给 string", "运行时抛错", "自动变成 string | null"), 1,
+                                    "这正是它存在的意义 —— 把「可能为 null」逼到类型上显式表达，"
+                                            + "而不是等到运行时读属性才崩。TS 官方称之为「避免十亿美元的错误」。"),
+                            quiz("`// @ts-expect-error` 与 `// @ts-ignore` 的关键区别是？",
+                                    List.of("没有区别，只是别名", "如果下方真的没有错误，@ts-expect-error 会反过来报错", "前者能忽略运行时错误", "后者只能在 .d.ts 里用"), 1,
+                                    "@ts-expect-error 的语义是「我**预期**这里有错」，所以错误消失时它会报「未使用的 expect-error」，"
+                                            + "等于自带过期提醒；@ts-ignore 则会无声地一直留在那里。"))));
+
+    // --------------------------------------------------------------------------------
+    // Python · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> PY_ADV_LESSONS = List.of(
+            lesson("py-04", "字典与集合：哈希表能做什么", 20,
+                    """
+                    列表靠下标找元素，**字典（dict）和集合（set）靠哈希**，查找是 O(1) ——
+                    这是 Python 里最该先建立的数据结构直觉。
+
+                    ```python
+                    counts = {}                 # 空字典
+                    counts["a"] = counts.get("a", 0) + 1    # 计数惯用法
+                    seen = set()                # 集合：只关心「有没有」
+                    ```
+
+                    三种典型用途：
+
+                    1. **计数 / 分组**：遍历一遍建 `{key: [...]}` 或 `{key: n}`
+                    2. **去重**：`set(items)` 一步搞定（但会丢掉顺序）
+                    3. **成员判断**：`if x in seen` —— 用集合而不是列表，数据量大时差距是量级的
+
+                    ⚠️ 三个必须知道的点：
+
+                    - 字典的键必须**可哈希**（不可变）：数字、字符串、元组可以，列表不行
+                    - `d[k]` 取不存在的键会抛 `KeyError`，不确定时用 `d.get(k)` 或 `d.get(k, 默认值)`
+                    - `collections.Counter` 直接把计数做完：`Counter("aabbbc")` → `{"b": 3, "a": 2, "c": 1}`
+
+                    应用场景：**词频统计、按字段分组、判断重复提交** —— 几乎每个数据处理任务都会用到。
+                    """,
+                    """
+                    from collections import Counter
+
+                    # 计数：手写版
+                    counts = {}
+                    for ch in "aabbbc":
+                        counts[ch] = counts.get(ch, 0) + 1
+                    print(counts)
+
+                    # 标准库版，一步到位
+                    print(Counter("aabbbc"))
+
+                    # 分组
+                    by_first = {}
+                    for w in ["apple", "avocado", "banana"]:
+                        by_first.setdefault(w[0], []).append(w)
+                    print(by_first)
+
+                    # 去重 + 成员判断
+                    seen = set(["x", "y", "x"])
+                    print(seen, "x" in seen)
+
+                    # 取不存在的键：get 不会抛，d[k] 会
+                    print(counts.get("z"), counts.get("z", 0))
+                    """,
+                    "python",
+                    List.of(
+                            quiz("为什么 `if x in some_set` 比 `if x in some_list` 快得多？",
+                                    List.of("集合底层是哈希表，查找是 O(1)；列表要逐个比，是 O(n)", "集合是 C 实现的，列表不是", "列表会自动排序", "其实一样快"), 0,
+                                    "集合/字典用哈希定位，元素越多优势越明显。"
+                                            + "把「成员判断」和「去重」从列表换成集合，是最常见的一处低成本性能优化。"),
+                            quiz("`d = {}; d[\"a\"]` 会怎样？",
+                                    List.of("返回 None", "返回空字符串", "抛 KeyError", "自动创建并返回 0"), 2,
+                                    "方括号是「一定存在」的语义，取不到就抛 KeyError。"
+                                            + "不确定时用 `d.get(\"a\")`（返回 None）或 `d.get(\"a\", 0)` 给默认值。"))),
+
+            lesson("py-05", "类与魔术方法：让对象像内建类型一样工作", 25,
+                    """
+                    类是把**数据**和**操作数据的方法**绑在一起。除了 `__init__`，
+                    一组以双下划线包起来的「魔术方法」决定你的对象能不能像内建类型那样使用。
+
+                    ```python
+                    class Money:
+                        def __init__(self, amount):
+                            self.amount = amount
+
+                        def __repr__(self):                      # print / 调试时显示什么
+                            return f"Money({self.amount})"
+
+                        def __add__(self, other):                # 支持 m1 + m2
+                            return Money(self.amount + other.amount)
+
+                        def __eq__(self, other):                 # 支持 ==
+                            return self.amount == other.amount
+                    ```
+
+                    几个最常用的：
+
+                    | 魔术方法 | 让它能这样写 |
+                    |---|---|
+                    | `__repr__` | `print(obj)`、调试时看得懂 |
+                    | `__eq__` | `a == b` |
+                    | `__len__` | `len(obj)` |
+                    | `__iter__` | `for x in obj` |
+                    | `__enter__` / `__exit__` | `with obj:` |
+
+                    ⚠️ 两个坑：
+
+                    1. 只写 `__eq__` 不写 `__hash__`，对象会**变得不可哈希**（不能放进 set / 当字典键）
+                    2. `__repr__` 和 `__str__` 不一样：前者给开发者看（要能重建对象），后者给用户看
+
+                    应用场景：写业务模型（订单、金额、配置）时，实现 `__eq__` / `__repr__`
+                    能让调试和比较都省事 —— `print(order)` 直接看到内容，而不是一串内存地址。
+                    """,
+                    """
+                    class Money:
+                        def __init__(self, amount):
+                            self.amount = amount
+
+                        def __repr__(self):
+                            return "Money(" + str(self.amount) + ")"
+
+                        def __add__(self, other):
+                            return Money(self.amount + other.amount)
+
+                        def __eq__(self, other):
+                            return isinstance(other, Money) and self.amount == other.amount
+
+                    a = Money(10)
+                    b = Money(20)
+                    print(a + b)          # Money(30) —— 靠 __add__
+                    print(a == Money(10)) # True     —— 靠 __eq__
+                    print(a)              # Money(10) —— 靠 __repr__
+                    """,
+                    "python",
+                    List.of(
+                            quiz("只定义了 `__eq__` 而没有定义 `__hash__`，对象会怎样？",
+                                    List.of("没什么影响", "变成不可哈希，不能放进 set 或当字典键", "自动用内存地址当哈希", "`__eq__` 会失效"), 1,
+                                    "Python 的约定是「可比较相等」就要「可哈希」，两者必须一致。"
+                                            + "只重写 `__eq__` 时 Python 会把 `__hash__` 置为 None，于是对象不能进集合 —— 要一起重写。"),
+                            quiz("`__repr__` 和 `__str__` 的分工是？",
+                                    List.of("完全等价", "repr 给开发者调试（尽量可重建对象），str 给用户看", "str 性能更好", "repr 只用于日志"), 1,
+                                    "`repr` 面向开发者：`Money(10)`、`User(id=1)` 这种能直接看懂结构的写法；"
+                                            + "`str` 面向终端用户，可以更友好。没定义 `__str__` 时默认回落到 `__repr__`。"))),
+
+            lesson("py-06", "异常与文件：让程序在出错时优雅收场", 20,
+                    """
+                    Python 的哲学是「**请求原谅比请求许可容易**」：
+                    与其到处 `if 文件存在`，不如直接做、出错再处理。
+
+                    ```python
+                    try:
+                        n = int(text)
+                    except ValueError:
+                        n = 0            # 只处理「能预料到」的那一种
+                    ```
+
+                    完整的 try 有四个分支，各有用处：
+
+                    ```python
+                    try:
+                        f = open(path)
+                    except FileNotFoundError:
+                        ...        # 出错时
+                    else:
+                        ...        # 没出错才走（放「依赖成功」的逻辑）
+                    finally:
+                        f.close()  # 无论如何都走（收尾）
+                    ```
+
+                    ⚠️ 三条纪律：
+
+                    1. **不要裸 `except:`** —— 它会连键盘中断都吞掉，且掩盖真实 bug。只捕具体异常
+                    2. 文件一律用 `with`：`with open(p, encoding="utf-8") as f:` —— 离开缩进块自动关闭，
+                       即使中途抛异常也会关（这就是上面 `finally` 的常见替代）
+                    3. 读文件要**显式写 `encoding="utf-8"`**：Windows 默认用 GBK，中文会直接乱码
+                       （本项目就踩过这个坑）
+
+                    应用场景：解析用户输入、读配置、调外部接口 —— 这些「可能失败」的地方都要处理，
+                    但只处理你**知道怎么应对**的那种错误。
+                    """,
+                    """
+                    # 只捕获能预料到的异常
+                    def to_int(text):
+                        try:
+                            return int(text)
+                        except ValueError:
+                            return 0
+
+                    print(to_int("42"), to_int("abc"))
+
+                    # else / finally 的分工
+                    def load(path, content):
+                        try:
+                            data = content
+                        except Exception:
+                            print("读取出错")
+                            return None
+                        else:
+                            print("读取成功")
+                            return data
+                        finally:
+                            print("收尾（无论如何都执行）")
+
+                    print(load("x.txt", "hello"))
+                    """,
+                    "python",
+                    List.of(
+                            quiz("为什么不应该写裸 `except:`？",
+                                    List.of("性能不好", "会连 KeyboardInterrupt 这类都吞掉，并掩盖真实 bug", "语法已废弃", "会导致内存泄漏"), 1,
+                                    "裸 except 把「我能处理的错误」和「我完全没预料到的 bug」一视同仁地吞掉，"
+                                            + "结果是程序带着坏状态继续跑，排查时毫无线索。永远捕获具体异常类型。"),
+                            quiz("用 `with open(p)` 相比手动 `f = open(p)` 的核心好处是？",
+                                    List.of("读得更快", "无论是否抛异常都会自动关闭文件", "自动创建文件", "支持并发读"), 1,
+                                    "`with` 靠上下文管理器保证 `__exit__` 一定被调用 —— 即使块里抛异常也会关文件。"
+                                            + "手动 open 一旦忘了 close（或中途抛错），文件句柄就会泄漏。"))));
+
+    // --------------------------------------------------------------------------------
+    // Python · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> PY_PRO_LESSONS = List.of(
+            lesson("py-07", "标准库三件套：json / re / datetime", 20,
+                    """
+                    日常脚本里出现频率最高的三个标准库，不用装任何东西就能用。
+
+                    **json** —— 与接口/配置打交道：
+
+                    ```python
+                    import json
+                    data = json.loads('{"a": 1}')        # 字符串 → 对象
+                    text = json.dumps(data, ensure_ascii=False)   # 对象 → 字符串
+                    ```
+
+                    ⚠️ 中文一定要写 `ensure_ascii=False`，否则会变成 `\\u4e2d` 这样的转义。
+
+                    **re** —— 从文本里捞内容：
+
+                    ```python
+                    import re
+                    re.findall("[0-9]+", "订单 12 件，单价 345 元")   # ['12', '345']
+                    ```
+
+                    ⚠️ 正则串一律加 `r` 前缀（`r"[0-9]+"`），否则反斜杠会被 Python 先解释一遍。
+
+                    **datetime** —— 处理时间（也是最容易出错的地方）：
+
+                    ```python
+                    from datetime import datetime, timedelta
+                    now = datetime.now()
+                    yesterday = now - timedelta(days=1)
+                    stamp = now.strftime("%Y-%m-%d %H:%M")
+                    ```
+
+                    ⚠️ 能用 `datetime` 就别自己拿字符串算日期；跨时区要用带时区的对象，
+                    不然线上会出现「差 8 小时」这类经典问题。
+
+                    应用场景：写数据清洗、日志分析、接口对接脚本 —— 这三个库基本能覆盖八成需求。
+                    """,
+                    """
+                    import json
+                    import re
+                    from datetime import datetime, timedelta
+
+                    # json：中文不要被转义
+                    data = json.loads('{"name": "张三", "age": 30}')
+                    print(json.dumps(data, ensure_ascii=False))
+
+                    # re：用 r 前缀，避免反斜杠被二次解释
+                    nums = re.findall(r"[0-9]+", "订单 12 件，单价 345 元")
+                    print(nums, [int(n) for n in nums])
+
+                    # datetime：别用字符串算日期
+                    now = datetime(2026, 10, 13, 12, 0)
+                    print((now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M"))
+                    """,
+                    "python",
+                    List.of(
+                            quiz("`json.dumps` 不写 `ensure_ascii=False` 时，中文会变成什么？",
+                                    List.of("原样输出", "变成 \\u 开头的转义序列", "报错", "变成问号"), 1,
+                                    "默认 `ensure_ascii=True` 会把所有非 ASCII 字符转成转义，可读性极差。"
+                                            + "给接口返回或写文件时基本都要显式关掉它。"),
+                            quiz("正则字符串前加 `r`（如 `r\"[0-9]+\"`）的作用是？",
+                                    List.of("表示正则表达式", "让反斜杠不被 Python 提前转义，原样交给 re 模块", "提高匹配速度", "开启多行模式"), 1,
+                                    "普通字符串里 `\\n`、`\\d` 会先被 Python 解释；`r` 前缀（raw）关掉这层处理，"
+                                            + "让正则引擎看到你真正想写的模式。写正则时几乎是默认习惯。"))),
+
+            lesson("py-08", "虚拟环境与数据处理场景", 20,
+                    """
+                    这一节把前面学的串起来 —— 一个典型的「数据处理」流程，以及它的工程前提。
+
+                    **工程前提：每个项目一个虚拟环境**。全局装包迟早会版本冲突：
+
+                    ```bash
+                    python -m venv .venv          # 建一个隔离环境
+                    .venv/Scripts/pip install requests   # Windows（Linux 是 .venv/bin/pip）
+                    ```
+
+                    装完把依赖冻下来，别人才能复现：
+
+                    ```bash
+                    pip freeze > requirements.txt
+                    ```
+
+                    **数据处理的关键选择：列表 vs 生成器**。
+
+                    ```python
+                    [x * 2 for x in range(10**7)]        # 列表：立刻算完，占内存
+                    (x * 2 for x in range(10**7))        # 生成器：惰性、省内存
+                    ```
+
+                    ⚠️ 数据量大时用生成器：它不一次性建出所有元素，而是用的时候才算一个。
+                    代价是**只能遍历一次**，且不能下标访问。
+
+                    一个完整的小流程：读文件 → 逐行解析 → 用字典聚合 → 输出。
+                    用生成器逐行读，几百万行也不会把内存吃满：
+
+                    ```python
+                    def parse(lines):
+                        for line in lines:
+                            key, value = line.split(",")
+                            yield key, int(value)
+                    ```
+
+                    应用场景：日志统计、报表导出、数据清洗 —— 这是 Python 最主流的用途之一。
+                    """,
+                    """
+                    # 生成器：惰性求值，不一次性占内存
+                    def parse(text):
+                        for line in text.strip().split(chr(10)):
+                            key, value = line.split(",")
+                            yield key, int(value)
+
+                    raw = "apple,3" + chr(10) + "banana,5" + chr(10) + "apple,2"
+
+                    total = {}
+                    for key, value in parse(raw):      # 逐条处理
+                        total[key] = total.get(key, 0) + value
+                    print(total)
+
+                    # 列表 vs 生成器的内存差别（这里用小数字演示语义）
+                    gen = (x * 2 for x in range(5))
+                    print(list(gen))                   # 生成器只能遍历一次
+                    print(list(gen))                   # 第二次已经是空的
+                    """,
+                    "python",
+                    List.of(
+                            quiz("生成器表达式 `(x for x in data)` 相比列表推导 `[x for x in data]` 的核心优势是？",
+                                    List.of("跑得更快", "惰性求值、不一次性占用内存", "结果更准确", "支持随机访问"), 1,
+                                    "生成器用一个算一个，适合大数据量或流式处理。"
+                                            + "代价是只能遍历一次、也不能用下标访问 —— 需要多次用就还是得转成列表。"),
+                            quiz("为什么要给每个项目建独立的虚拟环境（venv）？",
+                                    List.of("能提升运行速度", "把依赖隔离在各项目内，避免全局装包导致版本冲突", "Python 强制要求", "方便打包发布"), 1,
+                                    "两个项目分别依赖 A 库的 1.x 和 2.x 时，全局环境只能留一个版本 —— 必然有一个跑不起来。"
+                                            + "venv 让每个项目的依赖各管各的，也让 `pip freeze` 出来的清单可复现。"))));
+
+    // --------------------------------------------------------------------------------
+    // SQL · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> SQL_ADV_LESSONS = List.of(
+            lesson("sql-04", "子查询与 CTE：把复杂查询拆开", 25,
+                    """
+                    一个查询里嵌套另一个查询，就是子查询。三种常见位置：
+
+                    ```sql
+                    -- 1) 在 WHERE 里当条件
+                    SELECT name FROM users
+                    WHERE id IN (SELECT user_id FROM orders WHERE amount > 100)
+
+                    -- 2) 在 FROM 里当临时表（必须起别名）
+                    SELECT t.city, t.cnt FROM (
+                      SELECT city, COUNT(*) AS cnt FROM users GROUP BY city
+                    ) t WHERE t.cnt > 10
+
+                    -- 3) 在 SELECT 里当标量（只能返回一个值）
+                    SELECT name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_cnt
+                    FROM users u
+                    ```
+
+                    **CTE（WITH）**是对付复杂查询的利器 —— 把每一步命名，从上往下读：
+
+                    ```sql
+                    WITH paid AS (
+                      SELECT * FROM orders WHERE status = 'paid'
+                    ),
+                    per_user AS (
+                      SELECT user_id, SUM(amount) AS total FROM paid GROUP BY user_id
+                    )
+                    SELECT u.name, p.total
+                    FROM per_user p JOIN users u ON u.id = p.user_id
+                    WHERE p.total > 1000
+                    ```
+
+                    ⚠️ 两个要点：
+
+                    1. `IN + 子查询` 里如果子查询可能返回 `NULL`，`NOT IN` 会**全部为假**（NULL 参与比较结果是 unknown）——
+                       这种场景改用 `NOT EXISTS`
+                    2. CTE 比层层嵌套的子查询**可读性高一个量级**，优先用它；但要注意它不一定能提升性能
+                       （有的数据库会把 CTE 当优化屏障）
+
+                    应用场景：多步聚合、先过滤再关联的报表查询 —— 用 CTE 把「每一层在干什么」写清楚。
+                    """,
+                    """
+                    WITH paid AS (
+                      SELECT * FROM orders WHERE status = 'paid'
+                    ),
+                    per_user AS (
+                      SELECT user_id, SUM(amount) AS total FROM paid GROUP BY user_id
+                    )
+                    SELECT u.name, p.total
+                    FROM per_user p JOIN users u ON u.id = p.user_id
+                    WHERE p.total > 100;
+
+                    -- 对照：不用 CTE 的嵌套写法（能跑，但难读）
+                    SELECT u.name, t.total
+                    FROM (SELECT user_id, SUM(amount) AS total FROM orders
+                          WHERE status = 'paid' GROUP BY user_id) t
+                    JOIN users u ON u.id = t.user_id;
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("`WHERE id NOT IN (SELECT user_id FROM orders)` 在子查询结果含 NULL 时会怎样？",
+                                    List.of("正常返回所有未下单用户", "一行都不返回 —— NOT IN 遇上 NULL 恒为 unknown", "报语法错误", "只返回第一条"), 1,
+                                    "`x NOT IN (1, NULL)` 等价于 `x != 1 AND x != NULL`，而任何值与 NULL 比较结果都是 unknown（不为真），"
+                                            + "于是整行被过滤掉。这种场景要用 `NOT EXISTS`。"),
+                            quiz("把嵌套子查询改写成 CTE（WITH）的主要好处是？",
+                                    List.of("一定更快", "可读性 —— 每一步有名字、从上往下读", "能省内存", "能自动加索引"), 1,
+                                    "CTE 的价值首先是**可维护**：复杂查询拆成命名步骤，改一层不影响其它层。"
+                                            + "性能上视数据库而定，有些会把 CTE 物化反而更慢，别默认「用了 CTE 就快了」。"))),
+
+            lesson("sql-05", "窗口函数：分组后还想保留明细", 25,
+                    """
+                    `GROUP BY` 会把多行压成一行 —— 但你经常想「既要分组排名，又要保留每一行明细」，
+                    这时就要用**窗口函数**：
+
+                    ```sql
+                    SELECT name, city, salary,
+                           ROW_NUMBER() OVER (PARTITION BY city ORDER BY salary DESC) AS rn,
+                           RANK()       OVER (PARTITION BY city ORDER BY salary DESC) AS rk,
+                           AVG(salary)  OVER (PARTITION BY city) AS city_avg
+                    FROM employees
+                    ```
+
+                    `OVER (...)` 里两件事：
+
+                    - `PARTITION BY`：按什么分组（不写就是整张表一个窗口）
+                    - `ORDER BY`：组内怎么排
+
+                    三个排名函数的区别常考：
+
+                    | 函数 | 并列时 |
+                    |---|---|
+                    | `ROW_NUMBER` | 给不同编号（1,2,3） |
+                    | `RANK` | 并列同名，**跳号**（1,1,3） |
+                    | `DENSE_RANK` | 并列同名，**不跳号**（1,1,2） |
+
+                    ⚠️ 窗口函数**不能写在 WHERE 里** —— WHERE 比窗口计算先执行。
+                    要按排名过滤，得套一层子查询或 CTE：
+
+                    ```sql
+                    SELECT * FROM (
+                      SELECT *, ROW_NUMBER() OVER (PARTITION BY city ORDER BY salary DESC) AS rn
+                      FROM employees
+                    ) t WHERE t.rn = 1        -- 每个城市工资最高的那位
+                    ```
+
+                    应用场景：**组内 Top N**（每个分类销量前三）、**同比环比**、**累计求和** —— 报表
+                    场景的刚需。
+                    """,
+                    """
+                    -- 每个城市工资最高的员工（组内 Top 1）
+                    SELECT * FROM (
+                      SELECT name, city, salary,
+                             ROW_NUMBER() OVER (PARTITION BY city ORDER BY salary DESC) AS rn
+                      FROM employees
+                    ) t
+                    WHERE t.rn = 1;
+
+                    -- 排名函数并列时的差别
+                    SELECT name, salary,
+                           ROW_NUMBER() OVER (ORDER BY salary DESC) AS rn,
+                           RANK()       OVER (ORDER BY salary DESC) AS rk,
+                           DENSE_RANK() OVER (ORDER BY salary DESC) AS dr
+                    FROM employees;
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("按工资降序排列时，`RANK()` 与 `DENSE_RANK()` 遇到并列第二会分别给出什么？",
+                                    List.of("都给 2,2,3", "RANK 给 1,1,3；DENSE_RANK 给 1,1,2", "RANK 给 1,2,3；DENSE_RANK 给 1,2,2", "完全一样"), 1,
+                                    "RANK 并列后**跳号**（下一个是 3），DENSE_RANK 不跳号（下一个是 2）；"
+                                            + "ROW_NUMBER 则不管并列不给重复编号（1,2,3）。要「第几名」用 RANK/DENSE_RANK，要「取几条」用 ROW_NUMBER。"),
+                            quiz("`WHERE ROW_NUMBER() OVER (ORDER BY salary DESC) = 1` 能跑吗？",
+                                    List.of("可以", "不行 —— 窗口函数在 WHERE 之后才计算，必须套子查询/CTE", "只有 MySQL 不行", "需要加 PARTITION BY"), 1,
+                                    "SQL 的执行顺序是 FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY（窗口函数在 SELECT 阶段算），"
+                                            + "所以 WHERE 时它还不存在。包一层子查询把结果当作普通列再筛即可。"))),
+
+            lesson("sql-06", "索引与执行计划：为什么查询会慢", 20,
+                    """
+                    数据量小的时候怎么写都快，一到几百万行就会现原形。先建立一条直觉：
+
+                    **没有索引 = 全表扫描**（逐行比对），有索引 = 先查目录再定位。
+
+                    ```sql
+                    CREATE INDEX idx_orders_user ON orders(user_id);
+                    EXPLAIN QUERY PLAN SELECT * FROM orders WHERE user_id = 42;
+                    ```
+
+                    看执行计划时找关键词：出现 `SCAN`（全表扫）通常是问题，`SEARCH ... USING INDEX` 才是走了索引。
+
+                    ⚠️ 五条最实用的规矩：
+
+                    1. **索引建在「用在 WHERE / JOIN / ORDER BY 的列」上**，不是越多越好 ——
+                       每个索引都会拖慢写入，并占空间
+                    2. **联合索引遵循「最左前缀」**：建了 `(a, b)`，则 `WHERE a = 1` 能用、`WHERE b = 2` **不能**
+                    3. 在索引列上做运算/函数会**失效**：`WHERE YEAR(created_at) = 2026` 用不到索引，
+                       改成范围比较 `WHERE created_at >= '2026-01-01'`
+                    4. `LIKE '%abc'`（前置通配）用不到索引，`LIKE 'abc%'` 可以
+                    5. 查询返回的列如果都在索引里（覆盖索引），可以不再回表
+
+                    应用场景：接口慢查询排查的固定套路 —— 先 `EXPLAIN`，再看有没有走索引，
+                    最后才考虑改 SQL 或加索引。
+                    """,
+                    """
+                    CREATE INDEX idx_orders_user ON orders(user_id);
+
+                    -- 走索引：能从 EXPLAIN 输出里看到 USING INDEX
+                    EXPLAIN QUERY PLAN
+                    SELECT * FROM orders WHERE user_id = 42;
+
+                    -- 反面例子：在列上用函数，索引失效
+                    EXPLAIN QUERY PLAN
+                    SELECT * FROM orders WHERE YEAR(created_at) = 2026;
+
+                    -- 改成范围比较就能用上索引
+                    EXPLAIN QUERY PLAN
+                    SELECT * FROM orders WHERE created_at >= '2026-01-01';
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("建了联合索引 `(a, b)`，下面哪个查询用不上它？",
+                                    List.of("WHERE a = 1", "WHERE a = 1 AND b = 2", "WHERE b = 2", "WHERE a = 1 ORDER BY b"), 2,
+                                    "联合索引像一本按「先姓后名」排的电话簿：只给「名」（b）是查不了的。"
+                                            + "这就是**最左前缀**规则 —— 要单独按 b 查，就得为 b 再建一个索引。"),
+                            quiz("`WHERE YEAR(created_at) = 2026` 为什么通常用不到 created_at 上的索引？",
+                                    List.of("因为 YEAR 是保留字", "列被函数包住后索引里存的原始值对不上了，只能逐行算", "因为 created_at 是日期类型", "其实能用"), 1,
+                                    "索引存的是列的原始值，一旦套上函数，数据库没法用「按值定位」的目录去查。"
+                                            + "改成 `created_at >= '2026-01-01' AND created_at < '2027-01-01'` 就能走索引。"))));
+
+    // --------------------------------------------------------------------------------
+    // SQL · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> SQL_PRO_LESSONS = List.of(
+            lesson("sql-07", "经典业务查询：分页、去重、留存", 25,
+                    """
+                    这一节把语法用在真实需求上 —— 三个几乎每个项目都会遇到的花样。
+
+                    **① 分页**。`LIMIT offset, size` 直观，但**深分页会越来越慢**：
+
+                    ```sql
+                    SELECT * FROM orders ORDER BY id LIMIT 20 OFFSET 100000;   -- 翻到第 5000 页
+                    ```
+
+                    数据库仍要先把前 100020 行扫出来再丢掉。优化思路是用**游标（keyset）分页**：
+                    记住上一页最后一行的 id，从那里往后取：
+
+                    ```sql
+                    SELECT * FROM orders WHERE id > 100020 ORDER BY id LIMIT 20;
+                    ```
+
+                    ⚠️ 前提是排序字段唯一且有序 —— 这正好是主键。
+
+                    **② 去重**。要「每个用户的最近一条订单」：
+
+                    ```sql
+                    SELECT * FROM (
+                      SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC) AS rn
+                      FROM orders
+                    ) t WHERE t.rn = 1
+                    ```
+
+                    **③ 留存**。要「今天下单、且昨天也下单的用户」：
+
+                    ```sql
+                    SELECT DISTINCT a.user_id
+                    FROM orders a JOIN orders b
+                      ON a.user_id = b.user_id
+                     AND b.order_date = date(a.order_date, '-1 day')
+                    ```
+
+                    ⚠️ 三处常见疏漏：分页没固定排序（结果会重复/丢失）、
+                    去重只按一个字段 `GROUP BY`（拿到的是「某个值」而不是「那一整行」）、
+                    自连接忘了加时间条件（变成笛卡尔积）。
+
+                    应用场景：后台列表、报表、用户行为分析 —— 这三条基本覆盖日常查询的八成。
+                    """,
+                    """
+                    -- ① 深分页：游标法（比 OFFSET 大数字快得多）
+                    SELECT * FROM orders WHERE id > 100020 ORDER BY id LIMIT 20;
+
+                    -- ② 每个用户最近一条订单
+                    SELECT * FROM (
+                      SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_at DESC) AS rn
+                      FROM orders
+                    ) t WHERE t.rn = 1;
+
+                    -- ③ 连续两天都下单的用户
+                    SELECT DISTINCT a.user_id
+                    FROM orders a
+                    JOIN orders b ON a.user_id = b.user_id
+                     AND b.order_date = date(a.order_date, '-1 day');
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("为什么 `LIMIT 20 OFFSET 100000` 会越来越慢？",
+                                    List.of("因为 LIMIT 本身慢", "数据库仍要扫描并丢弃前面 10 万行", "OFFSET 不支持索引", "因为没加 ORDER BY"), 1,
+                                    "OFFSET 的语义是「先数过去再取」，扫描量随页码线性增长。"
+                                            + "游标分页（记住上一页末位的 id，用 `WHERE id > ?` 往后取）能把每页代价拉回常数级。"),
+                            quiz("用 `SELECT user_id, MAX(created_at) FROM orders GROUP BY user_id` 想拿「每个用户最近那**一整行**」，问题在哪？",
+                                    List.of("语法错误", "只能拿到聚合出来的字段，拿不到那一行的其它列（如金额）", "性能太差", "没有 PARTITION BY"), 1,
+                                    "`GROUP BY` 后其它列要么被聚合、要么值不确定，所以只能拿到时间，拿不到那笔订单的金额。"
+                                            + "要「整行」得用窗口函数 `ROW_NUMBER() ... = 1` 或自连接。"))),
+
+            lesson("sql-08", "事务与并发：别把数据写坏", 20,
+                    """
+                    转账要「扣 A 加 B」，两步必须**一起成功或一起失败** —— 这就是事务。
+
+                    ```sql
+                    BEGIN;
+                    UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+                    UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+                    COMMIT;      -- 出错就 ROLLBACK
+                    ```
+
+                    事务的四个特性（ACID）：原子性（全做或全不做）、一致性（约束不被破坏）、
+                    隔离性（并发互不干扰）、持久性（提交后不丢）。
+
+                    **隔离级别**是「性能」和「正确性」的旋钮，级别越低并发越好、越容易出怪现象：
+
+                    | 级别 | 挡住的怪现象 |
+                    |---|---|
+                    | 读未提交 | 基本不挡 |
+                    | 读已提交 | 脏读 |
+                    | 可重复读 | 脏读 + 不可重复读（MySQL 默认，靠 MVCC） |
+                    | 串行化 | 以上全部（含幻读），但并发最差 |
+
+                    ⚠️ 并发写时的经典问题：**丢失更新**（两个人同时读到 100，各自 +10，最后是 110 不是 120）。
+                    两种解法：
+
+                    1. **原子更新**：`UPDATE ... SET n = n + 1`（让数据库在一条语句里读改写）
+                    2. **乐观锁**：加版本号 `UPDATE ... SET n = ?, version = version + 1 WHERE id = ? AND version = ?`，
+                       影响行数为 0 说明被别人改过，重试
+
+                    应用场景：下单扣库存、余额变动、状态机流转 —— 凡是「读出来再写回去」都有并发风险。
+                    """,
+                    """
+                    -- 事务：要么全成功、要么全回滚
+                    BEGIN;
+                    UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+                    UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+                    COMMIT;
+
+                    -- 原子更新：把「读改写」压在一条语句里，避免丢失更新
+                    UPDATE counters SET n = n + 1 WHERE id = 7;
+
+                    -- 乐观锁：版本号不匹配就更新 0 行，由应用层决定重试
+                    UPDATE counters
+                       SET n = 5, version = version + 1
+                     WHERE id = 7 AND version = 3;
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("两个人同时执行「读到 100，各自加 10，再写回」，最终结果通常是 110 而不是 120，这叫什么？",
+                                    List.of("脏读", "幻读", "丢失更新", "死锁"), 2,
+                                    "两次「读-改-写」交错，后写的覆盖了先写的。"
+                                            + "解法：把运算放进一条 SQL（`SET n = n + 1`，数据库自己保证原子），或用乐观锁/悲观锁。"),
+                            quiz("「可重复读」隔离级别下，MySQL 主要靠什么机制实现，让同一事务里两次读到的数据一致？",
+                                    List.of("全局加锁", "MVCC（多版本并发控制）", "把数据复制一份", "禁用并发写"), 1,
+                                    "MVCC 给每行保留多个版本，读的时候按事务开始的时间点取对应快照，所以读不阻塞写、写也不阻塞读。"
+                                            + "这是 MySQL 默认级别比「串行化」并发好得多的原因。"))));
+
+    // --------------------------------------------------------------------------------
+    // Lua · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> LUA_ADV_LESSONS = List.of(
+            lesson("lua-04", "迭代器与泛型 for：pairs 和 ipairs 的区别", 15,
+                    """
+                    遍历 table 有两种写法，选错了会**悄悄少遍历元素**：
+
+                    ```lua
+                    for i, v in ipairs(t) do end    -- 从 1 开始连续取，遇到 nil 就停
+                    for k, v in pairs(t)  do end    -- 遍历所有键值对（顺序不保证）
+                    ```
+
+                    ⚠️ 关键差别：
+
+                    - `ipairs` 从 1 一直取到**第一个 nil** 就停 —— 表中间有空洞时后面的元素全看不到
+                    - `pairs` 遍历全部键，但**顺序是哈希顺序**，不要依赖它（每次运行可能不同）
+
+                    ```lua
+                    local t = { "a", nil, "c" }
+                    print(#t)                      -- 1 或 3（未定义行为）
+                    for i, v in ipairs(t) do print(i, v) end   -- 只打印 1 a
+                    ```
+
+                    **自定义迭代器**：泛型 for 期待的第一个返回值就是迭代函数。写一个「按步长取偶数」的：
+
+                    ```lua
+                    local function evens(n)
+                      local i = 0
+                      return function()       -- 迭代函数
+                        i = i + 2
+                        if i <= n then return i end
+                      end
+                    end
+                    for v in evens(10) do io.write(v, " ") end   -- 2 4 6 8 10
+                    ```
+
+                    应用场景：读配置表（`pairs` 遍历所有项）、按顺序处理数组（`ipairs`）。
+                    **只要表可能是稀疏的，就用 `pairs`**。
+                    """,
+                    """
+                    -- ipairs 遇 nil 就停
+                    local sparse = { "a", nil, "c" }
+                    for i, v in ipairs(sparse) do
+                      print("ipairs", i, v)      -- 只输出第 1 项
+                    end
+
+                    -- pairs 全部遍历，但顺序不保证
+                    local conf = { host = "localhost", port = 8080 }
+                    for k, v in pairs(conf) do
+                      print("pairs", k, v)
+                    end
+
+                    -- 自定义迭代器：泛型 for 的第一个返回值就是迭代函数
+                    local function evens(n)
+                      local i = 0
+                      return function()
+                        i = i + 2
+                        if i <= n then return i end
+                      end
+                    end
+                    for v in evens(10) do print("even", v) end
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`local t = { \"a\", nil, \"c\" }` 用 `ipairs(t)` 会遍历到几个元素？",
+                                    List.of("3 个", "1 个 —— 遇到第一个 nil 就停", "2 个", "报错"), 1,
+                                    "`ipairs` 的定义就是从下标 1 递增、遇到 nil 终止。表中间有空洞时，nil 之后的元素都取不到。"
+                                            + "这种表要用 `pairs`（代价是顺序不保证）。"),
+                            quiz("`pairs` 遍历的顺序可以依赖吗？",
+                                    List.of("可以，总是按插入顺序", "可以，总是按键升序", "不可以 —— 哈希顺序，不保证稳定", "取决于 Lua 版本"), 2,
+                                    "`pairs` 走的是表的哈希部分，顺序与哈希分布有关，既不是插入顺序也不是排序顺序。"
+                                            + "需要稳定顺序就得先把键取出来排序（`table.sort`）再遍历。"))),
+
+            lesson("lua-05", "错误处理与协程：pcall 与 coroutine", 20,
+                    """
+                    Lua 的错误处理很轻：出问题用 `error` 抛出，用 `pcall` 捕获。
+                    **没有 try/catch**，取而代之的是「返回状态 + 结果」的写法。
+
+                    ```lua
+                    local ok, err = pcall(function()
+                      error("出错了")
+                    end)
+                    print(ok, err)      -- false   ...: 出错了
+                    ```
+
+                    `pcall` 返回两个值：**第一个是布尔**（成功与否），后面跟返回值或错误信息。
+                    这正是上一节「多返回值」的典型用法。
+
+                    ⚠️ 三条要点：
+
+                    1. `pcall` 保护的是**整个调用**，用它包住可能失败的边界（解析配置、调外部接口）
+                    2. `xpcall` 可以传一个错误处理函数，在栈展开前拿到更多信息（如 traceback）
+                    3. `error("msg")` 里的 msg 若是**非字符串**（比如 table），抛出时原样传回，
+                       适合带结构化错误信息
+
+                    **协程（coroutine）**是独立于错误处理的另一件事：让函数能「暂停 / 恢复」。
+                    最典型的用途是**用同步写法表达异步流程**，以及生产者-消费者：
+
+                    ```lua
+                    local co = coroutine.create(function()
+                      for i = 1, 3 do coroutine.yield(i) end
+                    end)
+                    print(coroutine.resume(co))   -- true 1
+                    print(coroutine.resume(co))   -- true 2
+                    ```
+
+                    ⚠️ `resume` 同样返回 `(ok, value)`，失败时第二个值是错误信息，别直接当成结果用。
+
+                    应用场景：游戏脚本里等待动画/网络结果 —— 写起来像阻塞，实际不卡主循环。
+                    """,
+                    """
+                    -- pcall：返回 (是否成功, 结果或错误)
+                    local ok, err = pcall(function()
+                      error("配置读取失败")
+                    end)
+                    print("pcall:", ok, err)
+
+                    -- 成功时第二个值是正常返回值
+                    local ok2, v = pcall(function() return 42 end)
+                    print("成功:", ok2, v)
+
+                    -- 错误对象可以是 table，便于带结构化信息
+                    local ok3, e = pcall(function() error({ code = 500 }) end)
+                    print("结构化错误:", ok3, e.code)
+
+                    -- 协程：可暂停可恢复
+                    local co = coroutine.create(function()
+                      for i = 1, 3 do coroutine.yield(i) end
+                    end)
+                    print("co1:", coroutine.resume(co))
+                    print("co2:", coroutine.resume(co))
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`pcall` 的返回值是什么？",
+                                    List.of("只有错误信息", "第一个是布尔（是否成功），后面跟返回值或错误", "只有返回值", "一个协程对象"), 1,
+                                    "这是 Lua 的惯用法：`local ok, result = pcall(f)`。"
+                                            + "因为返回多值，所以不成功时 result 里装的是错误信息 —— 用之前一定要先判断 ok。"),
+                            quiz("`coroutine.resume(co)` 返回的第二个值可能是什么？",
+                                    List.of("永远是正确的返回值", "可能是协程 yield 的值，也可能是错误信息（看第一个值是否为 true）", "永远是 nil", "协程的 id"), 1,
+                                    "resume 也是「状态 + 值」的结构：第一个值为 true 时第二个是 yield 出来的值，"
+                                            + "为 false 时第二个是错误信息。直接当结果用是常见 bug。"))));
+
+    // --------------------------------------------------------------------------------
+    // Lua · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> LUA_PRO_LESSONS = List.of(
+            lesson("lua-06", "模块与 require：把代码组织起来", 15,
+                    """
+                    Lua 没有内建 class，也**没有强制性的模块语法** —— 约定是「一个文件返回一个 table」。
+
+                    ```lua
+                    -- mathx.lua
+                    local M = {}
+                    function M.add(a, b) return a + b end
+                    function M.sub(a, b) return a - b end
+                    return M
+                    ```
+
+                    用的时候：
+
+                    ```lua
+                    local mathx = require("mathx")
+                    print(mathx.add(1, 2))
+                    ```
+
+                    ⚠️ 四条实战约定：
+
+                    1. **每个模块文件最后 `return` 一个 table** —— 这是唯一的约定，Lua 就这样认
+                    2. `require` 有**缓存**：同一个模块只会执行一次，多次 require 拿到的是同一份
+                       （所以模块里的状态天然是「单例」）
+                    3. `local M = {}` 前面的 `local` 别省 —— 写成全局的 `M = {}` 会污染全局命名空间
+                    4. 局部变量要 `local`，否则默认全局：这是 Lua 最该养成的习惯
+
+                    **组合起来就是面向对象**：模块返回「类」，类的实例用上一节学的 metatable 创建。
+
+                    应用场景：把配置、工具函数、业务逻辑拆成文件 —— 这也是为什么游戏引擎（如 Love2D、
+                    OpenResty）的 Lua 代码都是「一堆 require」。
+                    """,
+                    """
+                    -- 模拟一个模块文件 mathx.lua 的内容
+                    local M = {}
+                    function M.add(a, b) return a + b end
+                    function M.sub(a, b) return a - b end
+
+                    -- require 有缓存：这里直接复用同一张表
+                    local mathx = M
+                    print(mathx.add(3, 4), mathx.sub(9, 2))
+
+                    -- ⚠️ 不写 local 就是全局变量（下面这行会污染全局，仅作演示）
+                    -- total = 0
+
+                    -- 模块里用 local 保存私有状态
+                    local counter = dofile_counter and dofile_counter or 0
+                    local function bump() counter = counter + 1 return counter end
+                    print("bump:", bump(), bump())
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("Lua 模块的约定是？",
+                                    List.of("用 module 关键字声明", "文件最后 return 一个 table", "必须叫同名的全局变量", "用 export 导出"), 1,
+                                    "Lua 只认「`require(名字)` 返回什么」——默认按文件名找到文件并执行，取它的返回值。"
+                                            + "所以「一个文件 return 一个 table」就是全部约定，没有任何语法糖。"),
+                            quiz("两次 `require(\"config\")` 会执行几次模块文件？",
+                                    List.of("2 次", "1 次 —— require 有缓存，之后直接返回同一份结果", "取决于文件是否变化", "0 次"), 1,
+                                    "require 把已加载模块记在 `package.loaded` 里，第二次直接取缓存。"
+                                            + "这带来一个副作用：**模块里的变量天然是单例**，可以当共享状态用（也要小心被意外共享）。"))),
+
+            lesson("lua-07", "元表实战：只读表、默认值与 __index 链", 20,
+                    """
+                    上一节学过 metatable 的 `__index` 是「找不到就往上找」。这一节看它怎么解决真实问题。
+
+                    **① 给表设默认值**：让缺失的键返回 0，而不是 nil。
+
+                    ```lua
+                    local function withDefault(t, d)
+                      return setmetatable(t, { __index = function() return d end })
+                    end
+                    local conf = withDefault({}, 0)
+                    print(conf.retry)      -- 0（表里没有，走默认）
+                    ```
+
+                    **② 只读表**：用 `__newindex` 拦住写入。
+
+                    ```lua
+                    local function readonly(t)
+                      return setmetatable({}, {
+                        __index = t,
+                        __newindex = function() error("这张表是只读的") end,
+                      })
+                    end
+                    local cfg = readonly({ host = "localhost" })
+                    print(cfg.host)        -- localhost
+                    -- cfg.host = "x"      -- 抛错
+                    ```
+
+                    ⚠️ 两个要点：
+
+                    1. **`__newindex` 只在键「不存在」时触发** —— 要拦住对已有键的修改，得让代理表本身为空
+                       （上面就是这么做的：数据放在被代理的 `t` 里）
+                    2. `__index` 可以是函数，也可以是**另一张表**。是表时，查找会沿这条链继续往下 ——
+                       这就是「原型链」式的继承
+
+                    应用场景：**配置对象**（缺省值 + 防误改）是元表最实用的落地场景之一。
+                    元方法还有 `__call`（对象可当函数调）、`__tostring`（自定义打印）、
+                    `__add`（重载 `+`）等，需要时再查即可。
+                    """,
+                    """
+                    -- ① 默认值 —— 缺的键返回 0 而不是 nil
+                    local function withDefault(d)
+                      return setmetatable({}, { __index = function() return d end })
+                    end
+                    local conf = withDefault(0)
+                    print("默认值:", conf.retry)     -- 0
+
+                    -- ② 只读表 —— 写入就报错
+                    local function readonly(t)
+                      return setmetatable({}, {
+                        __index = t,
+                        __newindex = function() error("这张表是只读的") end,
+                      })
+                    end
+                    local cfg = readonly({ host = "localhost", port = 8080 })
+                    print("读:", cfg.host, cfg.port)
+
+                    local ok, err = pcall(function() cfg.host = "hacked" end)
+                    print("写:", ok, err)
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`__newindex` 在什么时候被触发？",
+                                    List.of("每次写任意键时", "只在写的键**不存在**于原表时", "只在读的时候", "只在表被销毁时"), 1,
+                                    "已存在的键会直接赋值、不经过 `__newindex`。所以「只读代理」的写法是让代理表本身为空，"
+                                            + "数据全放在被代理的表里，这样任何写入都是「不存在的键」→ 必然触发拦截。"),
+                            quiz("`__index` 设成**一张表**而不是函数时，会发生什么？",
+                                    List.of("报错", "查找会沿着这张表继续往下找，形成链式的继承结构", "只查一层就停", "表和函数不能互换"), 1,
+                                    "正是这个「链」让 Lua 能用 metatable 搭出面向对象：实例的 `__index` 指向类表，"
+                                            + "类表的 `__index` 又可以指向父类 —— 属性查找就沿链一路上溯。"))));
+
+    // --------------------------------------------------------------------------------
+    // C / C++ · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> CPP_ADV_LESSONS = List.of(
+            lesson("c-04", "结构体与内存布局", 20,
+                    """
+                    结构体是把几个字段打包成一个整体 —— 但它在内存里**不一定是你写的那个顺序大小**。
+
+                    ```c
+                    struct Point { int x; int y; };      /* 8 字节 */
+                    struct Bad { char c; int n; };        /* 你以为是 5，其实是 8 */
+                    ```
+
+                    `Bad` 里 `char` 占 1 字节、`int` 占 4 字节，但编译器会在 `c` 后面塞 3 字节的
+                    **填充（padding）**，让 `n` 落在 4 的倍数地址上 —— 这叫**内存对齐**。
+
+                    为什么要有对齐？因为 CPU 读 4 字节整数时，对齐地址只需要一次总线操作。
+                    **不对齐要么更慢，要么直接不被允许**（某些架构上会崩）。
+
+                    ⚠️ 三条实战要点：
+
+                    1. `sizeof(struct)` **包含填充**，别拿它当「字段大小之和」
+                    2. **把字段按从大到小排**能减少填充。`{ char; int; char; }` 是 12 字节，
+                       改成 `{ int; char; char; }` 只要 8 字节 —— 同样的字段，省三分之一
+                    3. `#pragma pack(1)` 能关掉填充（做协议/文件格式时常用），但会牺牲访问速度，
+                       且在某些平台无法直接访问成员
+
+                    应用场景：**跨进程通信、网络协议、二进制文件读写**时，内存布局就是协议本身，
+                    差一个字节就对不上 —— 这也是为什么这些场景都要显式指定对齐。
+                    """,
+                    """
+                    #include <stdio.h>
+
+                    struct Point { int x; int y; };
+                    struct Bad   { char c; int n; };
+                    struct Good  { int n; char a; char b; };
+
+                    int main(void) {
+                      puts("sizeof 包含填充，不等于字段之和：");
+                      printf("Point = %zu（2 个 int）\\n", sizeof(struct Point));
+                      printf("Bad   = %zu（char + int，你以为是 5）\\n", sizeof(struct Bad));
+                      printf("Good  = %zu（换个顺序就变小了）\\n", sizeof(struct Good));
+
+                      struct Point p = { 3, 4 };
+                      printf("字段访问：%d %d\\n", p.x, p.y);
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("`struct { char c; int n; }` 的 `sizeof` 通常是 8 而不是 5，为什么？",
+                                    List.of("char 也占 4 字节", "编译器插入了 3 字节填充以满足内存对齐", "编译器有 bug", "int 是 8 字节"), 1,
+                                    "对齐要求 `int` 落在 4 的倍数地址上，所以 `c` 后面补 3 个空字节。"
+                                            + "这解释了「明明只有 5 字节数据，结构体却占 8 字节」这个高频疑问。"),
+                            quiz("把结构体字段按「从大到小」排列能带来什么好处？",
+                                    List.of("读取更快", "减少填充字节，结构体更小、更省内存与带宽", "自动对齐", "可以让字段变公有"), 1,
+                                    "填充是为了对齐而插的空洞，把大字段放前面能显著减少空洞。"
+                                            + "在高频创建的结构体（如游戏实体、网络包）上，这一项能省下可观的内存。"))),
+
+            lesson("c-05", "编译、链接与头文件", 20,
+                    """
+                    从 `.c` 到可执行文件经过四步：**预处理 → 编译 → 汇编 → 链接**。
+                    大多数「莫名奇妙的错误」都出在第一步和最后一步。
+
+                    **头文件（.h）放声明，源文件（.c）放定义**：
+
+                    ```c
+                    /* mathx.h —— 只声明「有什么」 */
+                    int add(int a, int b);
+
+                    /* mathx.c —— 定义「怎么做」 */
+                    #include "mathx.h"
+                    int add(int a, int b) { return a + b; }
+
+                    /* main.c —— 用 */
+                    #include "mathx.h"
+                    ```
+
+                    ⚠️ 五个必须知道的东西：
+
+                    1. `#include` 是**文本替换**：把文件内容原样粘进来。所以头文件里要写**头文件保护**
+                       （`#ifndef` / `#pragma once`），否则重复包含会「重复定义」
+                    2. `""` 先找当前目录，`<>` 只找系统路径 —— 引自己的头文件用双引号
+                    3. **声明 vs 定义**：声明只是告诉编译器「有这个东西」（可以出现多次），
+                       定义是真正分配存储（一个程序里只能有一次）
+                    4. 编译报 **`undefined reference`** 是**链接**错误 —— 说明声明有、定义没被链进来
+                       （文件没加入编译、或库没加 `-l`）
+                    5. `static` 修饰全局变量/函数 → **只在本文件可见**；修饰函数内局部变量 → 生命周期变成整个程序
+
+                    应用场景：多文件项目的组织方式。理解这一步之后再看到
+                    「undefined reference」「multiple definition」就知道分别该往哪查。
+                    """,
+                    """
+                    #include <stdio.h>
+
+                    /* 头文件保护：避免同一个头被包含多次导致重复定义 */
+                    #ifndef MATHX_H
+                    #define MATHX_H
+
+                    /* 声明：告诉编译器「有这么个函数」，不分配存储 */
+                    static int add(int a, int b);
+
+                    #endif
+
+                    /* 定义：真正实现（static 让它在本文件可见即可） */
+                    static int add(int a, int b) { return a + b; }
+
+                    int main(void) {
+                      printf("add(3,4) = %d\\n", add(3, 4));
+
+                      /* 函数内 static：只初始化一次，且生命周期是整个程序 */
+                      static int call_count = 0;
+                      call_count++;
+                      printf("call_count = %d\\n", call_count);
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("编译出现 `undefined reference to 'add'` 属于哪个阶段的问题？",
+                                    List.of("预处理", "编译", "链接 —— 声明有但定义没被链进来", "运行"), 2,
+                                    "编译器看到声明就放行，链接器才负责把符号和实现对上。"
+                                            + "报这个错要查：定义那个 .c 有没有参与编译、库有没有用 `-l` 加上、函数签名是否一致。"),
+                            quiz("头文件里为什么要写 `#ifndef ... #define ... #endif`（或 `#pragma once`）？",
+                                    List.of("提升编译速度", "防止同一个头文件被多次包含导致重复定义", "让函数变成静态的", "压缩代码体积"), 1,
+                                    "`#include` 是纯文本粘贴，A 和 B 都包含 C 时 C 的内容就出现两次 —— "
+                                            + "类型/宏/内联函数会因此「重复定义」。头文件保护是把这个粘进来的动作限定为一次。"))),
+
+            lesson("c-06", "C++ 模板与 STL 容器", 25,
+                    """
+                    C++ 和 C 最大的分工差异之一：**C++ 有标准库，很多轮子不用自己造**。
+
+                    **模板**让同一份代码适配多种类型，编译期展开（所以没有运行时开销）：
+
+                    ```cpp
+                    template <typename T>
+                    T maxOf(T a, T b) { return a > b ? a : b; }
+
+                    maxOf(3, 4);          // T = int
+                    maxOf(2.5, 1.5);      // T = double
+                    ```
+
+                    **STL 容器**是日常主力，先记四个和它们的取舍：
+
+                    | 容器 | 特点 | 常用场景 |
+                    |---|---|---|
+                    | `std::vector` | 连续内存、随机访问快 | 默认选择，绝大多数情况 |
+                    | `std::string` | 自动管理内存的字符串 | 替代 C 的 `char*` |
+                    | `std::unordered_map` | 哈希表，查找 O(1) | 按 key 查 |
+                    | `std::map` | 红黑树，**有序**，O(log n) | 需要按序遍历 |
+
+                    ```cpp
+                    std::vector<int> v = { 3, 1, 2 };
+                    v.push_back(4);
+                    std::sort(v.begin(), v.end());
+                    for (int x : v) std::cout << x << ' ';
+                    ```
+
+                    ⚠️ 三个高频坑：
+
+                    1. `vector` 扩容后**之前的指针/引用/迭代器全部失效**（内存被重新分配了）
+                    2. `v[i]` **不做边界检查**，越界是未定义行为；要安全用 `v.at(i)`（越界抛异常）
+                    3. `map` 和 `unordered_map` 用 `m[k]` 取不存在的键会**默认插入**一个 —— 只查用 `find` / `count`
+
+                    应用场景：**先想「STL 里有没有现成的」再动手**。C++ 里手写链表/动态数组，
+                    九成情况是在重复造一个更差的轮子。
+                    """,
+                    """
+                    #include <iostream>
+                    #include <vector>
+                    #include <algorithm>
+                    #include <unordered_map>
+
+                    template <typename T>
+                    T maxOf(T a, T b) { return a > b ? a : b; }
+
+                    int main() {
+                      std::cout << maxOf(3, 4) << " " << maxOf(2.5, 1.5) << std::endl;
+
+                      std::vector<int> v = { 3, 1, 2 };
+                      v.push_back(4);
+                      std::sort(v.begin(), v.end());
+                      for (int x : v) std::cout << x << ' ';
+                      std::cout << std::endl;
+
+                      std::unordered_map<std::string, int> age;
+                      age["alice"] = 30;
+
+                      // 只查不要用 m[k]，会默认插入一个 0
+                      auto it = age.find("bob");
+                      std::cout << "bob 存在？" << (it != age.end()) << std::endl;
+                      std::cout << "size 仍是 " << age.size() << std::endl;
+                      return 0;
+                    }
+                    """,
+                    "cpp",
+                    List.of(
+                            quiz("`std::vector` 扩容之后，之前保存的元素指针还能用吗？",
+                                    List.of("可以", "不能 —— 内存被重新分配，旧指针/迭代器全部失效", "只有第一个失效", "取决于元素类型"), 1,
+                                    "vector 为保证连续存储，扩容时会申请一块更大的内存并搬过去，原地址随即释放。"
+                                            + "这就是「遍历时 push_back」容易崩的原因 —— 要预留就用 `reserve`。"),
+                            quiz("只想查询 `map` 里某个键是否存在，应该用？",
+                                    List.of("m[key]", "m.at(key)", "m.find(key) != m.end()", "m[key] == nullptr"), 2,
+                                    "`m[key]` 在键不存在时会**默认构造并插入**一个值，既改了容器又可能掩盖问题（还让 `size()` 变大）。"
+                                            + "纯查询用 `find` 或 `count`。"))));
+
+    // --------------------------------------------------------------------------------
+    // C / C++ · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> CPP_PRO_LESSONS = List.of(
+            lesson("c-07", "内存 bug 排查：段错误与内存泄漏", 25,
+                    """
+                    C/C++ 最花时间的不是写功能，而是排查内存问题。先能**认脸**：
+
+                    | 现象 | 通常是 |
+                    |---|---|
+                    | Segmentation fault | 解引用空指针/野指针、越界写 |
+                    | 程序跑一会儿内存涨 | new/malloc 了但没 delete/free |
+                    | 结果时对时错 | **未定义行为**（越界、用已释放的内存） |
+                    | double free | 同一块内存释放两次 |
+
+                    **三类经典错误**：
+
+                    ```c
+                    int *p;            /* 未初始化 → 野指针 */
+                    *p = 1;            /* 崩 */
+
+                    int *q = malloc(sizeof(int));
+                    free(q);
+                    *q = 2;            /* 释放后使用（use-after-free） */
+
+                    char buf[4];
+                    strcpy(buf, "hello");   /* 越界写：会踩坏相邻内存 */
+                    ```
+
+                    ⚠️ 最坑的是「时对时错」：越界/释放后使用属于**未定义行为**，
+                    今天跑通了不代表对，换个编译器或数据就崩。**别用「试了没问题」当证据。**
+
+                    **正确姿势是用工具，而不是靠 printf**：
+
+                    - **AddressSanitizer**（编译器自带）：`gcc -fsanitize=address -g main.c`
+                      能直接指出越界、use-after-free 发生在哪一行，且给出调用栈
+                    - **Valgrind**：`valgrind ./a.out`，擅长找内存泄漏与未初始化读
+                    - 编译时开 `-Wall -Wextra`：很多低级错误编译期就会警告
+
+                    应用场景：任何用 C/C++ 写的常驻服务，**上线前跑一遍 ASan/Valgrind 是标准动作** ——
+                    它比线上崩了再啃 core dump 便宜得多。
+                    """,
+                    """
+                    #include <stdio.h>
+                    #include <stdlib.h>
+
+                    int main(void) {
+                      /* 正确做法：初始化 + 检查 malloc 是否成功 */
+                      int *p = (int *)malloc(sizeof(int));
+                      if (p == NULL) {
+                        puts("分配失败");
+                        return 1;
+                      }
+                      *p = 42;
+                      printf("值 = %d\\n", *p);
+
+                      /* 释放后立刻置空，避免误用（free(NULL) 是安全的） */
+                      free(p);
+                      p = NULL;
+
+                      /* 上面这些「看起来没问题」的代码，
+                         真正的检查手段是编译时加 -fsanitize=address 跑一遍 */
+                      puts("提示：发布前用 gcc -fsanitize=address -g 再跑一次");
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("程序「有时正常有时崩」，最可能是哪类问题？",
+                                    List.of("编译器优化", "未定义行为（越界、释放后使用、未初始化）", "内存不够", "CPU 过热"), 1,
+                                    "未定义行为的结果取决于内存里恰好是什么 —— 数据一变、编译器一换结果就不同。"
+                                            + "所以「本机跑通了」不能作为证据，必须用 ASan/Valgrind 这类工具验证。"),
+                            quiz("`free(p)` 之后马上写 `p = NULL`，好处是？",
+                                    List.of("释放得更彻底", "避免之后误用这个已释放的指针（free(NULL) 本身是安全的）", "能防止内存泄漏", "可以提升性能"), 1,
+                                    "悬空指针是最难查的 bug 之一。置空之后，万一还有代码去解引用它会立刻崩（好定位），"
+                                            + "而不是悄悄地改坏一块已经属于别人的内存。"))),
+
+            lesson("c-08", "性能：缓存友好与移动语义", 20,
+                    """
+                    写完能跑之后，下一步是「跑得快」。C/C++ 的性能优化里，**最容易被忽视的是内存访问模式**。
+
+                    **① 缓存友好**：CPU 读内存是按「缓存行」（通常 64 字节）整块读的。
+                    访问连续内存能白拿后面几十个字节，跳跃访问则每次都白跑一趟。
+
+                    ```c
+                    for (int i = 0; i < N; i++)
+                      for (int j = 0; j < N; j++)
+                        sum += a[i][j];        /* 行优先：顺着内存走，快 */
+                    ```
+
+                    把内外层循环对调（`a[j][i]`）结果一样，但速度可能差几倍 ——
+                    因为 C 的二维数组是**行优先**存储，按列访问等于每次跳一行。
+
+                    **② C++ 的移动语义**：拷贝大对象很贵，`std::move` 把资源「移交」而不是复制。
+
+                    ```cpp
+                    std::vector<int> makeBig() {
+                      std::vector<int> v(1000000, 1);
+                      return v;                  // 编译器会做 RVO / 移动，不会真的拷 100 万个 int
+                    }
+                    std::vector<int> a = makeBig();     // 移交所有权
+                    ```
+
+                    ⚠️ 三个要点：
+
+                    1. `std::move` **本身不移动任何东西**，它只是把值转成「右值引用」，让移动构造函数有机会被调用
+                    2. 被 move 之后的对象处于**有效但未指定**的状态 —— 别再假设里面的内容还在
+                    3. 返回值优化（RVO）通常已经足够，**不要为了「性能」到处写 move**，
+                       它有时反而会阻止编译器优化
+
+                    应用场景：先拿 profiler 找到热点，再考虑这两件事。
+                    **凭直觉优化往往优化错了地方**。
+                    """,
+                    """
+                    #include <stdio.h>
+                    #include <stdlib.h>
+
+                    #define N 2000
+
+                    int main(void) {
+                      static int a[N][N];
+
+                      /* 行优先遍历：顺着内存走，缓存命中高 */
+                      long long s1 = 0;
+                      for (int i = 0; i < N; i++)
+                        for (int j = 0; j < N; j++)
+                          s1 += a[i][j];
+
+                      /* 列优先遍历：每次跳一行，缓存命中低（结果一样，慢得多） */
+                      long long s2 = 0;
+                      for (int j = 0; j < N; j++)
+                        for (int i = 0; i < N; i++)
+                          s2 += a[i][j];
+
+                      printf("两种顺序结果相同：%lld %lld\\n", s1, s2);
+                      puts("差别只在内存访问模式 —— 用 profiler 验证，别凭直觉");
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("同样是「先拿 profiler 找热点」这个建议，为什么它比凭经验优化更可靠？",
+                                    List.of("profiler 更准，且人的直觉经常猜错热点在哪", "因为 profiler 会自动改代码", "因为编译器要求这样做", "其实凭经验更快"), 0,
+                                    "性能瓶颈常常出现在没人想到的地方（一次隐式的字符串拷贝、一个没走索引的查询）。"
+                                            + "先测量、再优化，是避免「优化了半天、热点根本不在那」的唯一办法。"),
+                            quiz("`std::move(x)` 本身做了什么？",
+                                    List.of("把 x 的资源搬到新对象", "只是把 x 转成右值引用，让移动构造有机会被调用", "删除 x", "深拷贝 x"), 1,
+                                    "`std::move` 是个类型转换（准确说是 `static_cast<T&&>`），不产生任何搬运动作。"
+                                            + "真正干活的是随后被选中的移动构造/移动赋值函数。"))));
+
+    // --------------------------------------------------------------------------------
+    // Java · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JAVA_ADV_LESSONS = List.of(
+            lesson("java-04", "泛型与类型擦除", 20,
+                    """
+                    泛型让容器「装什么类型」写进类型系统，编译期就能发现类型错误：
+
+                    ```java
+                    List<String> names = new ArrayList<>();
+                    names.add("Alice");
+                    // names.add(1);          // 编译期就报错
+                    String first = names.get(0);   // 不用强转
+                    ```
+
+                    但没有泛型的年代，`List` 里什么都装、取出来都是 `Object`，
+                    要靠强转，错误只能等运行时暴露 —— 泛型把这个问题提前到了编译期。
+
+                    ⚠️ **最关键的一条：Java 的泛型是「类型擦除」**。
+                    编译之后 `List<String>` 和 `List<Integer>` 是**同一个类**，泛型信息没了。
+                    这带来三个后果：
+
+                    1. **不能 `new T()`**、不能 `new T[]` —— 运行时不知道 T 是什么
+                    2. **不能对泛型做 `instanceof`**：`x instanceof List<String>` 编译不过
+                    3. 正因为擦除，**Java 的泛型是编译期的**；C# 的泛型会保留到运行时，这是两者一个大差异
+
+                    通配符是配对使用的规则（PECS）：
+                    - `? extends T`（上界）：只能**读**，读出来是 T
+                    - `? super T`（下界）：只能**写**，可以写 T 进去
+
+                    ```java
+                    void printAll(List<? extends Number> list) {   // 只读
+                      for (Number n : list) System.out.println(n);
+                    }
+                    ```
+
+                    应用场景：写工具方法、框架 API 时用泛型把「类型契约」表达清楚；
+                    业务里最常见的就是 `List<T>` / `Map<K, V>` / 自定义的 `Result<T>`。
+                    """,
+                    """
+                    import java.util.ArrayList;
+                    import java.util.List;
+
+                    public class Main {
+                      // 泛型方法：类型由调用时推断
+                      static <T> T firstOf(List<T> list) {
+                        return list.isEmpty() ? null : list.get(0);
+                      }
+
+                      // 上界通配符：只读安全
+                      static double sum(List<? extends Number> list) {
+                        double s = 0;
+                        for (Number n : list) s += n.doubleValue();
+                        return s;
+                      }
+
+                      public static void main(String[] args) {
+                        List<String> names = new ArrayList<>();
+                        names.add("Alice");
+                        System.out.println(firstOf(names));
+
+                        List<Integer> nums = new ArrayList<>();
+                        nums.add(1);
+                        nums.add(2);
+                        System.out.println(sum(nums));
+
+                        // 擦除的证据：两者的运行时类相同
+                        System.out.println(names.getClass() == nums.getClass());
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("为什么 Java 里不能写 `new T()` 或 `T[] arr = new T[10]`？",
+                                    List.of("语法不允许而已", "类型擦除 —— 运行时拿不到 T 的实际类型，无法创建实例/数组", "因为泛型只能是引用类型", "因为要配合反射"), 1,
+                                    "编译后 T 被擦成它的上界（默认 Object），运行时不存在 T 这个信息，"
+                                            + "所以既不能 `new` 也不能建数组。要创建得把 `Class<T>` 作为参数传进来。"),
+                            quiz("`List<String>` 与 `List<Integer>` 在运行时是？",
+                                    List.of("两个不同的类", "同一个类（都是 List），泛型信息被擦除了", "父类与子类", "接口与实现"), 1,
+                                    "擦除后都是 `List`，这也是「泛型不能重载」的原因 —— `f(List<String>)` 和 `f(List<Integer>)` "
+                                            + "擦除后签名一样，编译会报重复定义。"))),
+
+            lesson("java-05", "并发基础：线程、线程池与锁", 25,
+                    """
+                    Java 的并发不用直接 `new Thread` —— 生产代码基本都用**线程池**。
+
+                    ```java
+                    ExecutorService pool = Executors.newFixedThreadPool(4);
+                    Future<Integer> f = pool.submit(() -> 1 + 1);
+                    System.out.println(f.get());     // 阻塞等结果
+                    pool.shutdown();
+                    ```
+
+                    ⚠️ 三条最实用的：
+
+                    1. **别用 `Executors.newXxx()` 建池**（面试与规范都这么说）：它用无界队列，
+                       任务堆积时会 OOM。用 `new ThreadPoolExecutor(...)` 自己指定**有界队列 + 拒绝策略**
+                    2. `Future.get()` 会**阻塞**，也会把内部异常包成 `ExecutionException` 抛出，要拆开看
+                    3. 共享可变状态**必须同步**，否则结果不可预测
+
+                    **锁与内存可见性**：
+
+                    ```java
+                    private int count = 0;
+                    public synchronized void inc() { count++; }      // 方法级锁
+                    private final AtomicInteger n = new AtomicInteger();
+                    public void inc2() { n.incrementAndGet(); }      // 无锁原子类
+                    ```
+
+                    ⚠️ `count++` **不是原子的**（读-改-写三步），并发下会丢更新 ——
+                    这和 SQL 里的「丢失更新」是同一个问题。简单累加优先用 `AtomicInteger`。
+
+                    另外 `volatile` 只保证**可见性**（一个线程改了另一个马上能看到），
+                    **不保证原子性** —— 用它来保护 `count++` 是无效的。
+
+                    应用场景：批量任务并行、接口聚合、定时任务。
+                    写并发代码的第一原则是**尽量不共享状态**（线程池 + 无共享的任务），而不是想办法加锁。
+                    """,
+                    """
+                    import java.util.concurrent.*;
+                    import java.util.concurrent.atomic.AtomicInteger;
+
+                    public class Main {
+                      private static final AtomicInteger counter = new AtomicInteger();
+
+                      public static void main(String[] args) throws Exception {
+                        // ⚠️ 生产上要用 ThreadPoolExecutor 指定有界队列与拒绝策略
+                        ExecutorService pool = new ThreadPoolExecutor(
+                            4, 4, 0L, TimeUnit.MILLISECONDS,
+                            new ArrayBlockingQueue<>(100),
+                            new ThreadPoolExecutor.CallerRunsPolicy());
+
+                        for (int i = 0; i < 100; i++) {
+                          pool.submit(counter::incrementAndGet);
+                        }
+                        pool.shutdown();
+                        pool.awaitTermination(5, TimeUnit.SECONDS);
+
+                        System.out.println("计数 = " + counter.get());
+
+                        // Future 阻塞取结果，异常会被包成 ExecutionException
+                        Future<Integer> ok = pool.isShutdown()
+                            ? CompletableFuture.completedFuture(42)
+                            : null;
+                        System.out.println("结果 = " + (ok != null ? ok.get() : "n/a"));
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("为什么规范建议不要用 `Executors.newFixedThreadPool()`？",
+                                    List.of("性能差", "它用无界队列，任务堆积时容易 OOM", "不能复用线程", "它不返回 ExecutorService"), 1,
+                                    "`newFixedThreadPool` 内部用的是 `LinkedBlockingQueue`（无界），任务来得比消费快时队列无限增长，"
+                                            + "最终 `OutOfMemoryError`。正确做法是 `new ThreadPoolExecutor` 显式指定有界队列和拒绝策略。"),
+                            quiz("用 `volatile int count` 保护 `count++` 为什么不行？",
+                                    List.of("volatile 性能太差", "volatile 只保证可见性，`count++` 是读-改-写三步、非原子", "volatile 只能修饰对象", "其实可行"), 1,
+                                    "两个线程可能同时读到 5、各自加 1 写回 6 —— 丢了一次更新。"
+                                            + "要原子性用 `synchronized` 或 `AtomicInteger`；`volatile` 解决的是「一个线程改了另一个看不见」。"))),
+
+            lesson("java-06", "IO 与 NIO：文件与流", 20,
+                    """
+                    Java 的文件读写分两代：老的 **IO（流式）** 和新的 **NIO（通道 + 缓冲区）**。
+                    日常读个小文件，用 `java.nio.file.Files` 最省事：
+
+                    ```java
+                    Path p = Path.of("data.txt");
+                    List<String> lines = Files.readAllLines(p);              // 一次读全部
+                    String text = Files.readString(p);                        // 读成一个字符串
+                    Files.writeString(p, "hello");                            // 写
+                    ```
+
+                    大文件不能一次读进内存，要**流式处理**：
+
+                    ```java
+                    try (BufferedReader r = Files.newBufferedReader(p)) {
+                      String line;
+                      while ((line = r.readLine()) != null) { ... }
+                    }
+                    ```
+
+                    ⚠️ 四条要点：
+
+                    1. **流一律用 try-with-resources**（`try (资源)`）：离开块自动关闭，
+                       即使抛异常也会关 —— 忘了关文件句柄会泄漏，用久了就是「too many open files」
+                    2. **必须显式指定字符集**：`Files.readString(p, StandardCharsets.UTF_8)`。
+                       不指定就用平台默认，Windows 上中文会乱码（这个坑在 Python 那边也一样）
+                    3. IO 是**阻塞**的：一个线程读文件时干不了别的。NIO 的 `Channel` + `Selector`
+                       能用少量线程管理大量连接 —— 这是 Netty 这类框架的基础
+                    4. 写文件也有缓冲区：`BufferedWriter` 比每次 `write` 都落盘快得多
+
+                    应用场景：读配置、导出报表、解析日志。**先看 `Files` 有没有现成方法，
+                    再考虑 `FileInputStream` 那一套老 API。**
+                    """,
+                    """
+                    import java.nio.charset.StandardCharsets;
+                    import java.nio.file.*;
+                    import java.util.List;
+
+                    public class Main {
+                      public static void main(String[] args) throws Exception {
+                        Path p = Path.of("demo.txt");
+
+                        // 写：显式指定 UTF-8，不依赖平台默认编码
+                        Files.writeString(p, "第一行" + System.lineSeparator() + "第二行",
+                                StandardCharsets.UTF_8);
+
+                        // 小文件：一次读全部
+                        List<String> lines = Files.readAllLines(p, StandardCharsets.UTF_8);
+                        System.out.println("行数 = " + lines.size());
+
+                        // 大文件：流式逐行读（try-with-resources 保证关闭）
+                        try (var reader = Files.newBufferedReader(p, StandardCharsets.UTF_8)) {
+                          String line;
+                          while ((line = reader.readLine()) != null) {
+                            System.out.println("读到: " + line);
+                          }
+                        }
+
+                        Files.deleteIfExists(p);
+                        System.out.println("文件大小 = " + Files.size(p));
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("为什么读写文件必须显式指定 `StandardCharsets.UTF_8`？",
+                                    List.of("性能更好", "否则用平台默认编码，跨平台（尤其 Windows）中文会乱码", "UTF-8 是唯一合法的", "为了安全"), 1,
+                                    "不指定时走系统默认字符集：Linux 常是 UTF-8，Windows 常是 GBK —— 同一份代码换个环境就乱码。"
+                                            + "显式写死编码，是让行为可预期的唯一办法。"),
+                            quiz("`try (BufferedReader r = ...) { }` 这种写法相比手动 close 的核心好处？",
+                                    List.of("读得更快", "无论是否抛异常都会自动关闭资源", "可以同时读多个文件", "能提升缓冲大小"), 1,
+                                    "try-with-resources 会在离开代码块时（含异常路径）自动调用 `close()`。"
+                                            + "手动 close 一旦漏掉或在异常处提前返回，文件句柄就泄漏了。"))));
+
+    // --------------------------------------------------------------------------------
+    // Java · 实战
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JAVA_PRO_LESSONS = List.of(
+            lesson("java-07", "Spring Boot 入门：写一个 REST 接口", 25,
+                    """
+                    后端 Java 的实际工作，绝大多数是在写 Spring Boot。它的核心是**依赖注入**与**约定优于配置**。
+
+                    一个最小的接口：
+
+                    ```java
+                    @RestController
+                    @RequestMapping("/api/users")
+                    public class UserController {
+
+                      private final UserService service;
+
+                      // 构造器注入：依赖从外面给，而不是自己 new
+                      public UserController(UserService service) {
+                        this.service = service;
+                      }
+
+                      @GetMapping("/{id}")
+                      public User get(@PathVariable long id) {
+                        return service.find(id);
+                      }
+
+                      @PostMapping
+                      public User create(@RequestBody CreateUser body) {
+                        return service.create(body);
+                      }
+                    }
+                    ```
+
+                    ⚠️ 五条入门要点：
+
+                    1. **`@RestController` = `@Controller` + 返回值直接写进响应体**（默认序列化成 JSON）
+                    2. **构造器注入优于字段注入**（`@Autowired` 写在字段上）：依赖不可变、便于测试、能暴露循环依赖
+                    3. `@Service` / `@Repository` / `@Component` 都是把类交给容器管理，语义上有分工
+                    4. **HTTP 状态码要用对**：查不到返回 404、参数错返回 400、建成功返回 201，别一律 200
+                    5. 配置写在 `application.yml`，敏感项（密码/密钥）**走环境变量**，别提交进仓库
+
+                    应用场景：这就是「后端」的日常 —— 定义资源 + 路由 + 参数校验 + 调 service + 返回。
+                    前端会用到的那套 REST 约定，在这一侧就是这些注解。
+                    """,
+                    """
+                    import org.springframework.web.bind.annotation.*;
+                    import java.util.*;
+                    import java.util.concurrent.ConcurrentHashMap;
+
+                    @RestController
+                    @RequestMapping("/api/notes")
+                    public class NoteController {
+
+                      private final Map<Long, String> store = new ConcurrentHashMap<>();
+                      private long seq = 0;
+
+                      @GetMapping
+                      public Collection<String> list() {
+                        return store.values();
+                      }
+
+                      @GetMapping("/{id}")
+                      public String get(@PathVariable long id) {
+                        String v = store.get(id);
+                        if (v == null) throw new NoSuchElementException("不存在: " + id);
+                        return v;
+                      }
+
+                      @PostMapping
+                      public String create(@RequestBody String body) {
+                        long id = ++seq;
+                        store.put(id, body);
+                        return "created " + id;
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("`@RestController` 相比 `@Controller` 的主要差别是？",
+                                    List.of("性能更好", "方法返回值直接写入响应体（默认序列化成 JSON），不需要 @ResponseBody", "只能处理 GET", "必须搭配 @Service"), 1,
+                                    "`@RestController` 是 `@Controller` + `@ResponseBody` 的组合注解。"
+                                            + "返回对象会被消息转换器自动序列化成 JSON —— 这就是「写 Java 也能给前端返回 JSON」的机制。"),
+                            quiz("为什么推荐**构造器注入**而不是把 `@Autowired` 写在字段上？",
+                                    List.of("性能更好", "依赖可以在构造时确定、字段可为 final，也更容易在测试里替换", "字段注入已被废弃", "可以少写一行"), 1,
+                                    "字段注入让对象在「没被容器管理」时无法创建（依赖为 null，只能反射硬塞），也掩盖了循环依赖。"
+                                            + "构造器注入把依赖变成显式的、不可变的，这是 Spring 官方推荐的做法。"))),
+
+            lesson("java-08", "JVM 内存与 GC 基础", 20,
+                    """
+                    理解 JVM 内存，是为了看懂两类线上问题：**内存溢出**和**频繁 GC 导致卡顿**。
+
+                    运行时数据区大致分几块（重点记住前两块）：
+
+                    | 区域 | 放什么 | 会不会回收 |
+                    |---|---|---|
+                    | 堆（Heap） | 所有 `new` 出来的对象 | 会（GC 的主战场） |
+                    | 栈（Stack） | 每个线程的方法调用、局部变量 | 方法结束自动释放 |
+                    | 方法区/元空间 | 类信息、常量 | 很少回收 |
+
+                    **GC 的核心思路是分代**：绝大多数对象「朝生夕死」，所以把堆分成
+                    **新生代**（频繁小回收，快）和**老年代**（不常回收，慢）。
+
+                    对象怎么进老年代？不是看年龄到了就进那么简单 —— 关键是**晋升**：
+                    在新生代躲过若干次回收后（默认 15 次）会被移到老年代。
+
+                    ⚠️ 四条实践要点：
+
+                    1. `OutOfMemoryError: Java heap space` = **堆不够或真的泄漏了**。
+                       先怀疑「有集合一直加元素没清理」（缓存没上限是重灾区）
+                    2. 不要靠 `System.gc()` 解决问题 —— 它只是「建议」，且会触发 Full GC 让服务卡住
+                    3. **内存泄漏 ≠ 内存没被引用**：Java 里的泄漏通常是「对象还被引用着，但你已经不需要它了」
+                       （静态集合、监听器没注销、ThreadLocal 没 remove）
+                    4. 排查用工具：`jmap -heap <pid>` 看各区占用，`jstack` 看线程栈，
+                       或加上 `-XX:+HeapDumpOnOutOfMemoryError` 让 OOM 时自动 dump 堆
+
+                    应用场景：服务跑着跑着变慢、重启后恢复 —— 十有八九是内存问题，
+                    先看 GC 日志与堆占用，而不是急着调大 `-Xmx`。
+                    """,
+                    """
+                    import java.util.ArrayList;
+                    import java.util.List;
+
+                    public class Main {
+                      public static void main(String[] args) {
+                        Runtime rt = Runtime.getRuntime();
+
+                        // 观察堆占用变化（真实场景用 jmap / GC 日志）
+                        List<byte[]> hold = new ArrayList<>();
+                        System.out.println("初始已用内存(MB) = "
+                            + (rt.totalMemory() - rt.freeMemory()) / 1024 / 1024);
+
+                        for (int i = 0; i < 20; i++) {
+                          hold.add(new byte[1024 * 1024]);
+                        }
+                        System.out.println("持有 20MB 后已用(MB) = "
+                            + (rt.totalMemory() - rt.freeMemory()) / 1024 / 1024);
+
+                        // 典型泄漏写法：静态集合只增不减
+                        hold.clear();
+                        System.out.println("清空引用后仍要等 GC —— 泄漏的本质是「还被引用着」");
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("Java 里的「内存泄漏」通常是什么形态？",
+                                    List.of("对象没有被任何变量引用", "对象还被引用着，但程序已经不再需要它（如无上限的静态缓存）", "虚拟内存不足", "栈溢出"), 1,
+                                    "Java 有 GC，所以泄漏不是「忘了 free」，而是**引用没释放**："
+                                            + "静态集合一直加、监听器没注销、ThreadLocal 没 remove —— GC 看着它有引用，自然不能回收。"),
+                            quiz("遇到 `OutOfMemoryError: Java heap space`，第一步应该做什么？",
+                                    List.of("直接调大 -Xmx", "先定位是谁在占用内存（堆 dump / GC 日志），判断是泄漏还是容量真不够", "调用 System.gc()", "重启服务"), 1,
+                                    "调大堆只是把问题推迟 —— 如果是泄漏，加了内存照样会再次 OOM。"
+                                            + "先拿证据（`-XX:+HeapDumpOnOutOfMemoryError` 出的堆 dump）再决定是修代码还是扩容。"))));
+
+    // --------------------------------------------------------------------------------
+    // Go · 入门（runner=server：浏览器里跑不了，代码仅作讲解）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> GO_LESSONS = List.of(
+            lesson("go-01", "变量、类型与多返回值", 15,
+                    """
+                    Go 的语法刻意做得很少，一眼能看完全部。变量有两种写法：
+
+                    ```go
+                    var age int = 30      // 完整写法
+                    name := "Alice"        // 短变量声明（函数内可用，类型自动推断）
+                    ```
+
+                    ⚠️ Go 有两条「强制」的规矩，一开始会不习惯，但能省掉大量争论：
+
+                    1. **声明了就必须用** —— 没用的变量/导入会**编译报错**，不是警告
+                    2. **没有隐式类型转换** —— `int` 和 `int64` 相加必须显式转换，不会自动兼容
+
+                    **多返回值**是 Go 的标志性设计，最典型的用途就是「结果 + 错误」一起返回：
+
+                    ```go
+                    func div(a, b float64) (float64, error) {
+                      if b == 0 {
+                        return 0, errors.New("除数不能为 0")
+                      }
+                      return a / b, nil
+                    }
+
+                    v, err := div(10, 2)
+                    if err != nil { /* 处理 */ }
+                    ```
+
+                    ⚠️ 注意这个惯用法：**错误是普通返回值**，`err != nil` 必须当场处理，
+                    Go 里没有异常机制（`panic` 只用于「不该发生」的情况）。
+
+                    应用场景：写返回值的函数时，「值 + error」是两个返回值 —— 这正是 Go 与其它语言
+                    最不一样的地方，也是它代码里满屏 `if err != nil` 的原因。
+                    """,
+                    """
+                    package main
+
+                    import (
+                    	"errors"
+                    	"fmt"
+                    )
+
+                    func div(a, b float64) (float64, error) {
+                    	if b == 0 {
+                    		return 0, errors.New("除数不能为 0")
+                    	}
+                    	return a / b, nil
+                    }
+
+                    func main() {
+                    	name := "Alice"          // 短变量声明
+                    	var age int = 30
+                    	fmt.Println(name, age)
+
+                    	v, err := div(10, 4)
+                    	if err != nil {
+                    		fmt.Println("出错:", err)
+                    		return
+                    	}
+                    	fmt.Println("结果:", v)
+
+                    	// 错误作为普通返回值，必须显式判断
+                    	if _, err := div(1, 0); err != nil {
+                    		fmt.Println("预期内的错误:", err)
+                    	}
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("Go 里声明了一个变量却没用，会怎样？",
+                                    List.of("编译器警告", "编译报错，必须删掉或使用", "运行时崩溃", "自动忽略"), 1,
+                                    "Go 把「未使用」当成错误而不是警告，从语言层面杜绝了死代码与漏用的变量。"
+                                            + "同理，导入了包没用也会编译失败。"),
+                            quiz("Go 处理错误的惯用方式是？",
+                                    List.of("try/catch 捕获异常", "错误作为函数的普通返回值，调用方显式判断 err != nil", "断言 assert", "全局错误处理器"), 1,
+                                    "Go 刻意不做异常（`panic` 只留给「程序不该继续」的场景），把错误变成返回值后，"
+                                            + "**编译器能保证你不会「忘记处理」**（因为不处理就拿不到值）——代价是 `if err != nil` 写得很多。"))),
+
+            lesson("go-02", "goroutine 与 channel：并发的核心", 25,
+                    """
+                    Go 的并发口号是「**不要通过共享内存来通信，而要通过通信来共享内存**」。
+                    两个关键字就够了：`go` 和 `chan`。
+
+                    ```go
+                    go doWork()        // 起一个 goroutine（比线程轻得多，几 KB 栈）
+
+                    ch := make(chan int)
+                    go func() { ch <- 42 }()    // 发送
+                    v := <-ch                    // 接收（会阻塞直到有值）
+                    ```
+
+                    **channel 是带类型的管道**，天然解决「两个 goroutine 之间怎么传数据」。
+
+                    ⚠️ 五条必须记住的：
+
+                    1. **无缓冲 channel 是同步的**：发送方会一直阻塞，直到有人接收 ——
+                       这本身就是一种「交接完成」的信号
+                    2. **有缓冲的 channel**（`make(chan int, 10)`）在缓冲没满时发送不阻塞，
+                       适合「生产者快、消费者慢」的削峰
+                    3. **向已关闭的 channel 发送会 panic**；接收已关闭的会立刻返回零值 + `ok=false`
+                    4. **只有发送方该关闭 channel**，接收方不该关（否则多个接收者会双重关闭）
+                    5. `main` 函数结束 = 程序退出，**不会等 goroutine 跑完** ——
+                       要么用 `WaitGroup` 等，要么用 channel 收结果
+
+                    ```go
+                    var wg sync.WaitGroup
+                    wg.Add(1)
+                    go func() { defer wg.Done(); doWork() }()
+                    wg.Wait()
+                    ```
+
+                    应用场景：并发请求多个下游再汇总、任务池、超时控制（`select` + `time.After`）。
+                    """,
+                    """
+                    package main
+
+                    import (
+                    	"fmt"
+                    	"sync"
+                    )
+
+                    func main() {
+                    	// 简单的生产者/消费者
+                    	ch := make(chan int, 3)
+                    	go func() {
+                    		for i := 1; i <= 3; i++ {
+                    			ch <- i
+                    		}
+                    		close(ch)          // 只有发送方关闭
+                    	}()
+
+                    	for v := range ch {     // 关闭后自动结束循环
+                    		fmt.Println("收到:", v)
+                    	}
+
+                    	// WaitGroup：等所有 goroutine 跑完（main 不会自动等）
+                    	var wg sync.WaitGroup
+                    	for i := 0; i < 3; i++ {
+                    		wg.Add(1)
+                    		go func(n int) {
+                    			defer wg.Done()
+                    			fmt.Println("任务", n)
+                    		}(i)
+                    	}
+                    	wg.Wait()
+                    	fmt.Println("全部完成")
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("向一个**已关闭**的 channel 发送数据会怎样？",
+                                    List.of("静默丢弃", "panic", "返回错误", "阻塞直到重新打开"), 1,
+                                    "关闭表示「不会再发了」，再发就是逻辑错误，Go 直接 panic。"
+                                            + "而**接收**已关闭的 channel 是安全的：会立刻返回零值和 `ok=false`，`range` 也会正常结束。"),
+                            quiz("`main` 函数返回后，还没跑完的 goroutine 会怎样？",
+                                    List.of("继续跑到结束", "程序直接退出，它们被一起终止", "自动转成后台线程", "阻塞 main 等待"), 1,
+                                    "goroutine 不是「后台服务」，主函数一结束整个程序就退出。"
+                                            + "所以要收结果就用 channel，要等完成就用 `sync.WaitGroup`。"))),
+
+            lesson("go-03", "结构体、接口与 error 处理", 20,
+                    """
+                    Go 没有 class，用**结构体 + 方法**来表达对象：
+
+                    ```go
+                    type User struct {
+                      Name string
+                      Age  int
+                    }
+
+                    // 值接收者：不修改原对象
+                    func (u User) Hello() string { return "hi " + u.Name }
+
+                    // 指针接收者：能修改原对象
+                    func (u *User) Birthday() { u.Age++ }
+                    ```
+
+                    ⚠️ 接收者的选择有实际影响：**需要修改 或 结构体较大时用指针接收者**，
+                    否则每次调用都会复制一份。
+
+                    **接口是隐式实现的** —— 这是 Go 最特别的设计：
+
+                    ```go
+                    type Speaker interface { Speak() string }
+
+                    // 没有 implements 关键字：只要方法签名对得上，就自动满足接口
+                    func (u User) Speak() string { return "我是 " + u.Name }
+                    ```
+
+                    ⚠️ 好处是**解耦**：接口可以定义在调用方（而不是实现方），
+                    实现方甚至不知道自己满足了这个接口。这也是 Go 生态「小接口」风格（如 `io.Reader`）的来源。
+
+                    **error 处理**：错误是普通值，可以包装与判断：
+
+                    ```go
+                    if err != nil {
+                      return fmt.Errorf("读取配置失败: %w", err)   // %w 包装，保留原因
+                    }
+                    ```
+
+                    ⚠️ 用 `%w` 包装后，上层仍能用 `errors.Is(err, 目标错误)` 判断出根因 ——
+                    这是「加日志上下文」和「保留可判断性」兼得的写法。
+
+                    应用场景：定义领域模型（`User` / `Order`）、用 `error` 把失败原因逐层带上去。
+                    """,
+                    """
+                    package main
+
+                    import (
+                    	"errors"
+                    	"fmt"
+                    )
+
+                    type User struct {
+                    	Name string
+                    	Age  int
+                    }
+
+                    func (u User) Speak() string  { return "我是 " + u.Name }
+                    func (u *User) Birthday()     { u.Age++ }
+
+                    // 隐式接口：没有 implements，方法签名对上就行
+                    type Speaker interface{ Speak() string }
+
+                    var ErrNotFound = errors.New("未找到")
+
+                    func find(name string) (User, error) {
+                    	if name == "" {
+                    		return User{}, fmt.Errorf("查询用户: %w", ErrNotFound)
+                    	}
+                    	return User{Name: name, Age: 20}, nil
+                    }
+
+                    func main() {
+                    	var s Speaker = User{Name: "Alice"}
+                    	fmt.Println(s.Speak())
+
+                    	u := User{Name: "Bob", Age: 20}
+                    	u.Birthday()                   // 指针接收者，能改到原对象
+                    	fmt.Println(u.Age)
+
+                    	// %w 包装后仍能用 errors.Is 判断根因
+                    	_, err := find("")
+                    	fmt.Println("是 ErrNotFound 吗:", errors.Is(err, ErrNotFound))
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("Go 的接口是「隐式实现」意味着什么？",
+                                    List.of("必须用 implements 声明", "只要方法签名匹配就自动满足接口，不需要显式声明", "接口不能有多个实现", "接口必须定义在实现方"), 1,
+                                    "这正是 Go「小接口」风格的基础：接口可以定义在**使用方**，实现方无须知道它的存在。"
+                                            + "带来的好处是解耦和可组合 —— `io.Reader` 这类接口小到只有一个方法，所以到处都能满足。"),
+                            quiz("`fmt.Errorf(\"...: %w\", err)` 里的 `%w` 有什么作用？",
+                                    List.of("把错误转成字符串", "包装错误并保留原因，上层可用 errors.Is / errors.As 判断根因", "打印错误堆栈", "忽略这个错误"), 1,
+                                    "`%w` 会建立一个「错误链」：既加上下文（哪一步失败的），又保留原始错误，"
+                                            + "所以 `errors.Is(err, ErrNotFound)` 仍然成立 —— 这是 Go 处理错误分层的标准做法。"))));
+
+    // --------------------------------------------------------------------------------
+    // Rust · 入门（runner=server：浏览器里跑不了，代码仅作讲解）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> RUST_LESSONS = List.of(
+            lesson("rust-01", "变量、可变性与所有权", 20,
+                    """
+                    Rust 的变量**默认不可变**：
+
+                    ```rust
+                    let x = 5;
+                    // x = 6;          // 编译错误
+                    let mut y = 5;
+                    y = 6;             // 加 mut 才行
+                    ```
+
+                    这是刻意的：默认不可变让编译器能帮你排除大量意外修改。
+
+                    **所有权（ownership）**是 Rust 最核心、也最区别于其它语言的设计。三条规则：
+
+                    1. 每个值有且只有一个**所有者**
+                    2. 同一时刻只能有一个所有者
+                    3. 所有者离开作用域，值就被释放（不需要 GC，也不需要手动 free）
+
+                    ```rust
+                    let s1 = String::from("hello");
+                    let s2 = s1;               // 所有权**移动**给 s2
+                    // println!("{}", s1);      // 编译错误：s1 已经失效
+                    ```
+
+                    ⚠️ 注意这里是「移动」不是「浅拷贝」：`s1` 之后完全不能用了。
+                    这就是 Rust 能在没有 GC 的前提下保证内存安全的原因 —— **在编译期就查出了悬空引用**。
+
+                    想保留原来的值就用 `.clone()`（显式深拷贝，代价看得见）。
+
+                    应用场景：Rust 的学习曲线基本全在这套规则上。过了这一关，
+                    你换来的是「编译通过 ≈ 没有内存错误和数据竞争」。
+                    """,
+                    """
+                    fn main() {
+                        // 默认不可变
+                        let x = 5;
+                        println!("x = {}", x);
+
+                        let mut y = 6;
+                        y += 1;
+                        println!("y = {}", y);
+
+                        // 所有权移动：s1 交给 s2 后就不能再用
+                        let s1 = String::from("hello");
+                        let s2 = s1;
+                        println!("s2 = {}", s2);
+                        // println!("{}", s1);   // 打开这行会编译失败
+
+                        // 想保留就显式 clone
+                        let s3 = String::from("world");
+                        let s4 = s3.clone();
+                        println!("s3 = {}, s4 = {}", s3, s4);
+
+                        // 栈上的简单类型实现了 Copy，赋值是复制不是移动
+                        let a = 5;
+                        let b = a;
+                        println!("a = {}, b = {}", a, b);
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("`let s2 = s1;` 之后继续使用 `s1` 会怎样？",
+                                    List.of("正常使用", "编译错误 —— String 的所有权已移动", "运行时 panic", "自动复制一份"), 1,
+                                    "String 持有堆内存，赋值时**移动**所有权（避免两个所有者重复释放）。"
+                                            + "而 `i32` 这类栈上、实现了 `Copy` 的类型则是复制 —— 所以 `let b = a;` 之后 a 还能用。"),
+                            quiz("Rust 不需要 GC 却能做到内存安全，靠的是什么？",
+                                    List.of("引用计数", "编译期的所有权与借用检查", "运行时标记清除", "手动 free"), 1,
+                                    "所有权规则让「谁负责释放」在编译期就唯一确定（所有者出作用域即释放），"
+                                            + "借用检查则保证不会出现悬空引用与数据竞争。代价是编译期要过更严的检查。"))),
+
+            lesson("rust-02", "借用与生命周期", 25,
+                    """
+                    如果每次传参都转移所有权，代码会很难写。**借用**解决了这个问题：
+                    只借出去用一下，所有权还在原处。
+
+                    ```rust
+                    let s = String::from("hello");
+                    let len = calc(&s);        // &s 是「借用」：借出去，不转移
+                    println!("{} {}", s, len);  // s 仍然可用
+                    ```
+
+                    规则只有两条，但要记住：
+
+                    1. 同一时刻，**要么有多个不可变借用 `&T`，要么只有一个可变借用 `&mut T`** —— 二者不能同时存在
+                    2. 借用的**生命周期不能超过**所有者
+
+                    ⚠️ 第一条就是「数据竞争」的解药：允许多个读者，或一个写者，但绝不允许「边读边写」。
+                    这些在其它语言里是运行时偶发的 bug，在 Rust 里是**编译不过**。
+
+                    ```rust
+                    let mut v = vec![1, 2, 3];
+                    let first = &v[0];
+                    // v.push(4);        // 编译错误：v 已被不可变借用，不能再可变借用
+                    println!("{}", first);
+                    ```
+
+                    **生命周期标注**（`<'a>`）不是让你手动管理内存 ——
+                    它是在告诉编译器「这几个引用的存活关系」，用于函数返回引用等编译器推不出来的场景：
+
+                    ```rust
+                    fn longest<'a>(a: &'a str, b: &'a str) -> &'a str {
+                      if a.len() > b.len() { a } else { b }
+                    }
+                    ```
+
+                    应用场景：**99% 的代码不需要写生命周期标注** —— 编译器有「生命周期省略」规则，
+                    只有返回引用且来源不明确时才需要手写。
+                    """,
+                    """
+                    // 借用：所有权不转移
+                    fn calc_len(s: &str) -> usize {
+                        s.len()
+                    }
+
+                    // 可变借用：能改，但同一时刻只能有一个
+                    fn push_item(v: &mut Vec<i32>, n: i32) {
+                        v.push(n);
+                    }
+
+                    // 需要返回引用时才要标生命周期
+                    fn longest<'a>(a: &'a str, b: &'a str) -> &'a str {
+                        if a.len() > b.len() { a } else { b }
+                    }
+
+                    fn main() {
+                        let s = String::from("hello");
+                        let len = calc_len(&s);
+                        println!("{} 长度 {}", s, len);     // s 还能用
+
+                        let mut v = vec![1, 2, 3];
+                        push_item(&mut v, 4);
+                        println!("{:?}", v);
+
+                        let r = longest("abcd", "xy");
+                        println!("更长的是 {}", r);
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("Rust 中同一时刻的借用规则是？",
+                                    List.of("可以任意多个可变借用", "要么多个不可变借用 &T，要么一个可变借用 &mut T，两者不能共存", "可变借用和不可变借用可以共存", "没有限制"), 1,
+                                    "这条规则从编译期就消灭了「边读边写」导致的数据竞争。"
+                                            + "它让 Rust 的并发代码在编译后就是安全的 —— 这正是 `Send`/`Sync` 那些约束的基础。"),
+                            quiz("生命周期标注 `<'a>` 的作用是？",
+                                    List.of("手动申请和释放内存", "告诉编译器多个引用的存活关系，不改变运行时行为", "延长变量的生命周期", "开启垃圾回收"), 1,
+                                    "生命周期标注是**给编译器的提示**（签注），编译后完全消失、不产生任何运行时动作。"
+                                            + "大多数情况编译器能自己推断，只有返回引用的来源不明确时才需要手写。"))),
+
+            lesson("rust-03", "结构体、枚举与模式匹配", 20,
+                    """
+                    Rust 用 **struct** 建模数据，用 **enum** 建模「几种可能之一」——
+                    后者的表达力比多数语言的枚举强得多，因为**每个变体可以带不同的数据**。
+
+                    ```rust
+                    struct User { name: String, age: u32 }
+
+                    enum Shape {
+                      Circle(f64),                  // 带一个值
+                      Rect { w: f64, h: f64 },      // 带字段
+                    }
+                    ```
+
+                    **模式匹配（match）** 是配套的消费方式，而且**必须穷尽所有情况**，
+                    编译器会强制你处理完：
+
+                    ```rust
+                    fn area(s: Shape) -> f64 {
+                      match s {
+                        Shape::Circle(r) => 3.14 * r * r,
+                        Shape::Rect { w, h } => w * h,
+                      }   // 少写一个分支 → 编译报错
+                    }
+                    ```
+
+                    ⚠️ 这是 Rust 一个很值钱的特性：**漏处理分支根本编译不过**。
+                    其它语言里「新增了一个枚举值，某处 switch 忘了改」是典型的生产事故。
+
+                    最经典的用法是标准库的 `Option` 与 `Result`：
+
+                    ```rust
+                    match maybe {
+                      Some(v) => println!("有值: {}", v),
+                      None => println!("没有"),
+                    }
+                    // Option 强制你处理「可能没有」，从语言层面消除了空指针
+                    ```
+
+                    方法用 `impl` 块定义：
+
+                    ```rust
+                    impl User {
+                      fn greet(&self) -> String { format!("hi {}", self.name) }
+                    }
+                    ```
+
+                    应用场景：用 enum 表达状态机（`Pending / Paid / Refunded` 各自带不同数据），
+                    配合 match 保证「每个状态都被处理」—— 这就是「让非法状态无法表示」在 Rust 里的形态。
+                    """,
+                    """
+                    struct User { name: String, age: u32 }
+
+                    impl User {
+                        fn greet(&self) -> String {
+                            format!("hi {}", self.name)
+                        }
+                    }
+
+                    enum Shape {
+                        Circle(f64),
+                        Rect { w: f64, h: f64 },
+                    }
+
+                    fn area(s: &Shape) -> f64 {
+                        match s {
+                            Shape::Circle(r) => 3.14 * r * r,
+                            Shape::Rect { w, h } => w * h,
+                        }
+                    }
+
+                    fn main() {
+                        let u = User { name: String::from("Alice"), age: 30 };
+                        println!("{}", u.greet());
+
+                        println!("{}", area(&Shape::Circle(2.0)));
+                        println!("{}", area(&Shape::Rect { w: 2.0, h: 3.0 }));
+
+                        // Option 强制处理「可能没有」
+                        let maybe: Option<i32> = None;
+                        match maybe {
+                            Some(v) => println!("有值 {}", v),
+                            None => println!("没有值"),
+                        }
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("Rust 的 `match` 漏写了某个分支会怎样？",
+                                    List.of("运行时报错", "编译错误 —— 必须穷尽所有可能", "自动走默认分支", "返回 None"), 1,
+                                    "穷尽性检查让「新增枚举变体后忘了处理」在编译期暴露。"
+                                            + "这也是 `Option`/`Result` 能替代空指针与异常的基础：不处理就编译不过。"),
+                            quiz("Rust 的 enum 和其它语言（如 C/Java）的枚举相比，最大的不同是？",
+                                    List.of("性能更好", "每个变体可以携带不同类型的数据，能直接当状态机用", "不能有方法", "必须是数字"), 1,
+                                    "Rust 的 enum 是「和类型」（几种可能之一，各带各自的数据），"
+                                            + "所以能用一个类型精确表达「进行中 / 成功(带结果) / 失败(带原因)」这类状态 —— 这是它比传统枚举强的地方。"))));
+
     public static final List<Map<String, Object>> BASE_TRACKS = List.of(
             track("javascript", "JavaScript", "🟨",
-                    "从变量、函数到数组处理，把语言核心语法走一遍。浏览器里可以直接跑，改完立刻看结果。",
+                    "从变量、函数到数组处理，再走到异步、原型与 DOM —— 浏览器里可以直接跑，改完立刻看结果。",
                     "worker",
-                    List.of(stage("js-basic", "入门", "能读懂并写出日常的函数与数组处理代码", JS_LESSONS))),
+                    List.of(
+                            stage("js-basic", "入门", "读懂并写出日常的函数与数组处理代码", JS_LESSONS),
+                            stage("js-adv", "进阶", "掌握对象解构、异步编程与 this / 原型的真实行为", JS_ADV_LESSONS),
+                            stage("js-pro", "实战", "把数据变成界面：DOM、事件委托与模块化请求", JS_PRO_LESSONS))),
             track("python", "Python", "🐍",
                     "强类型动态语言，语法干净、生态庞大。教程里的每段代码都能在浏览器里真跑（Pyodide）。",
                     "pyodide",
-                    List.of(stage("py-basic", "入门", "掌握变量、列表推导式与函数参数这两个最常用的语言特性", PY_LESSONS))),
+                    List.of(
+                            stage("py-basic", "入门", "掌握变量、列表推导式与函数参数这两个最常用的语言特性", PY_LESSONS),
+                            stage("py-adv", "进阶", "用字典集合做数据组织，用类与异常写出可维护的代码", PY_ADV_LESSONS),
+                            stage("py-pro", "实战", "标准库三件套与数据处理流程，跑通一个真实的清洗脚本", PY_PRO_LESSONS))),
             track("sql", "SQL", "🗄️",
                     "关系数据库查询语言。用 sql.js 在浏览器里建临时库，每条语句都能真跑真看结果。",
                     "sqljs",
-                    List.of(stage("sql-basic", "入门", "能独立写出联表、分组、排序的查询，并知道常见陷阱", SQL_LESSONS))),
+                    List.of(
+                            stage("sql-basic", "入门", "能独立写出联表、分组、排序的查询，并知道常见陷阱", SQL_LESSONS),
+                            stage("sql-adv", "进阶", "用 CTE 与窗口函数表达复杂逻辑，理解索引为什么影响性能", SQL_ADV_LESSONS),
+                            stage("sql-pro", "实战", "分页、去重、留存与事务 —— 业务查询与并发写的高频场景", SQL_PRO_LESSONS))),
             track("typescript", "TypeScript", "🔷",
                     "在 JS 之上加静态类型：类型只在编译期存在、运行时全被擦除。浏览器里可直接转译运行（只去类型、不做类型检查）。",
                     "worker",
-                    List.of(stage("ts-basic", "入门", "理解类型标注、判别联合与泛型分别在解决什么问题", TS_LESSONS))),
+                    List.of(
+                            stage("ts-basic", "入门", "理解类型标注、判别联合与泛型分别在解决什么问题", TS_LESSONS),
+                            stage("ts-adv", "进阶", "用工具类型与类型守卫把「运行时数据」收窄成确定的类型", TS_ADV_LESSONS),
+                            stage("ts-pro", "实战", "封装类型安全的请求层，并把 tsconfig 的严格档打开", TS_PRO_LESSONS))),
             track("lua", "Lua", "🌙",
                     "极简的嵌入式脚本语言：只有一种数据结构（table），索引从 1 开始。运行方案体积在这几门里最小（Fengari 约 300KB）。",
                     "fengari",
-                    List.of(stage("lua-basic", "入门", "掌握 table 的引用语义，以及用 metatable 搭出面向对象", LUA_LESSONS))),
-            // 下面几门暂时只有骨架：运行方案要么代价大、要么得走后端，先把位置与说明留出来
+                    List.of(
+                            stage("lua-basic", "入门", "掌握 table 的引用语义，以及用 metatable 搭出面向对象", LUA_LESSONS),
+                            stage("lua-adv", "进阶", "迭代器与协程：把遍历、错误处理与「可暂停的流程」讲清楚", LUA_ADV_LESSONS),
+                            stage("lua-pro", "实战", "用模块组织代码，用元表做出只读配置与默认值", LUA_PRO_LESSONS))),
+            // 下面几门 runner 不是 ready：能跑但要权衡（体积/外部依赖），或只能走后端沙箱 —— 内容照写，页面上如实标注
             track("c", "C / C++", "⚙️",
                     "指针、内存与 C++ 的 RAII。内容已写全；运行需要把 Clang 编译成 WASM，首屏要下几十兆 —— 适合做成「点了才下载」的可选能力。",
                     "clang-wasm",
-                    List.of(stage("c-basic", "入门", "理解指针与内存，以及 RAII 为什么让 C++ 少犯内存错", CPP_LESSONS))),
+                    List.of(
+                            stage("c-basic", "入门", "理解指针与内存，以及 RAII 为什么让 C++ 少犯内存错", CPP_LESSONS),
+                            stage("c-adv", "进阶", "结构体布局、编译链接与 STL —— 把 C/C++ 的工程面补齐", CPP_ADV_LESSONS),
+                            stage("c-pro", "实战", "内存 bug 排查与性能：用工具定位，而不是凭直觉", CPP_PRO_LESSONS))),
             track("java", "Java", "☕",
                     "类型系统、集合框架与面向对象。内容已写全；浏览器里只有 CheerpJ（社区版不许自托管、且只到 Java 8），要学现代 Java 得走后端沙箱。",
                     "cheerpj",
-                    List.of(stage("java-basic", "入门", "掌握包装类型陷阱、集合选型与异常分类", JAVA_LESSONS))),
+                    List.of(
+                            stage("java-basic", "入门", "掌握包装类型陷阱、集合选型与异常分类", JAVA_LESSONS),
+                            stage("java-adv", "进阶", "泛型擦除、线程池与 IO —— 服务端开发绕不开的三块", JAVA_ADV_LESSONS),
+                            stage("java-pro", "实战", "写一个 Spring Boot 接口，并看懂 JVM 内存与 GC 的线上问题", JAVA_PRO_LESSONS))),
             track("go", "Go", "🐹",
-                    "编译链太重，浏览器里没有实用方案：官方 playground 也是把源码发到后端编译。",
+                    "内容已写全，但编译链太重、浏览器里没有实用方案：官方 playground 也是把源码发到后端编译。要真跑需接后端沙箱。",
                     "server",
-                    List.of(stage("go-basic", "入门", "goroutine 与 channel", List.of()))),
+                    List.of(stage("go-basic", "入门", "多返回值与 error、goroutine / channel、结构体与隐式接口", GO_LESSONS))),
             track("rust", "Rust", "🦀",
-                    "同上，需要后端 rustc。浏览器内只能跑预编译好的 WASM 产物，不能现场编译源码。",
+                    "内容已写全，同样需要后端 rustc。浏览器内只能跑预编译好的 WASM 产物，不能现场编译源码。",
                     "server",
-                    List.of(stage("rust-basic", "入门", "所有权与借用", List.of()))))
+                    List.of(stage("rust-basic", "入门", "所有权与借用、结构体与枚举 —— 先从「编译期内存安全」这条主线入手", RUST_LESSONS))))
     ;
 
     // ==================================================================================
