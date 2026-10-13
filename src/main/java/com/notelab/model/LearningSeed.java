@@ -4547,6 +4547,2082 @@ public final class LearningSeed {
                                     "Rust 的 enum 是「和类型」（几种可能之一，各带各自的数据），"
                                             + "所以能用一个类型精确表达「进行中 / 成功(带结果) / 失败(带原因)」这类状态 —— 这是它比传统枚举强的地方。"))));
 
+    // --------------------------------------------------------------------------------
+    // JavaScript · 精通（底层机制与性能）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JS_EXPERT_LESSONS = List.of(
+            lesson("js-09", "事件循环：微任务、宏任务与执行顺序", 25,
+                    """
+                    前面用 `await` 用得顺手了，但「为什么这段代码的输出顺序是这个」还是要靠事件循环来解释。
+
+                    JS 只有一个调用栈，异步任务分两个队列：
+
+                    - **微任务**（microtask）：`Promise.then`、`queueMicrotask`、`MutationObserver`
+                    - **宏任务**（macrotask）：`setTimeout`、`setInterval`、I/O、UI 渲染
+
+                    规则就两条：
+
+                    1. 每执行完**一个宏任务**，就把**微任务队列清空**（且期间新产生的微任务也一起清）
+                    2. 微任务全清空后，才轮到下一个宏任务
+
+                    ```js
+                    console.log("1");
+                    setTimeout(() => console.log("2"));
+                    Promise.resolve().then(() => console.log("3"));
+                    console.log("4");
+                    // 输出：1 4 3 2
+                    ```
+
+                    ⚠️ 三个实战推论：
+
+                    1. **微任务会饿死渲染**：`Promise.then` 里再排微任务会无限循环，
+                       页面再也刷不了 —— 长循环要用宏任务切分（或 `requestIdleCallback`）
+                    2. `await` 之后的代码等价于「放进微任务」，所以 `await` 会**让出**当前同步块
+                    3. `setTimeout(fn, 0)` 不是「立刻」，最小延迟受浏览器/宿主限制（通常 ≥1ms，嵌套多层会到 4ms）
+
+                    应用场景：排查「数据还没渲染」「loading 闪一下」「顺序诡异」这类问题，
+                    先在心里跑一遍事件循环，比加 console 快。
+                    """,
+                    """
+                    console.log("1 同步开始");
+
+                    setTimeout(() => console.log("5 宏任务（最后）"), 0);
+
+                    Promise.resolve().then(() => {
+                      console.log("3 微任务");
+                      // 微任务里再排微任务，也会在本次清空里执行完
+                      Promise.resolve().then(() => console.log("4 仍是微任务"));
+                    });
+
+                    queueMicrotask(() => console.log("3.5 microtask API"));
+
+                    console.log("2 同步结束");
+
+                    // 输出顺序：1 2 3 3.5 4 5
+                    // 规则：同步跑完 → 清空微任务 → 下一个宏任务
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("`console.log(1); setTimeout(()=>console.log(2)); Promise.resolve().then(()=>console.log(3)); console.log(4)` 的输出顺序是？",
+                                    List.of("1 2 3 4", "1 4 3 2", "1 4 2 3", "1 3 4 2"), 1,
+                                    "同步代码先跑完（1、4），然后清空**微任务**（3，Promise.then 是微任务），"
+                                            + "最后才是**宏任务**（2，setTimeout）。微任务永远优先于下一个宏任务。"),
+                            quiz("为什么「在微任务里递归排微任务」会让页面卡死？",
+                                    List.of("因为内存会爆", "因为微任务队列不清空就不会渲染，递归等于永远不给浏览器刷帧机会", "因为 setTimeout 被禁用", "因为栈溢出"), 1,
+                                    "事件循环要等微任务队列**完全清空**才推进到渲染。微任务里再排微任务就永远清不空，"
+                                            + "于是线程一直被占着 —— 排查「页面卡死但 CPU 不满」时这是常见原因。"))),
+
+            lesson("js-10", "内存与性能：闭包泄漏与防抖节流", 20,
+                    """
+                    JS 有垃圾回收，但**「被引用着」的东西 GC 收不掉** —— 多数「内存泄漏」本质是引用没释放。
+
+                    三个最常见来源：
+
+                    1. **忘了取消的监听 / 定时器**：`setInterval` 里引用着大对象，组件卸载了还在跑
+                    2. **闭包持有大对象**：函数一直活着，它闭包里的整个作用域就都活
+                    3. **全局缓存没有上限**：`const cache = {}` 只增不减
+
+                    ```js
+                    // 泄漏：组件卸载后 interval 仍在引用 data
+                    const id = setInterval(() => send(JSON.stringify(data)), 1000)
+                    // 正确：卸载时 clearInterval(id)
+                    ```
+
+                    高频事件的性能处理，两个模式要能手写：
+
+                    ```js
+                    // 防抖：停止触发 N 毫秒后才执行（适合搜索输入）
+                    const debounce = (fn, ms) => {
+                      let t
+                      return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms) }
+                    }
+
+                    // 节流：每 N 毫秒最多执行一次（适合滚动、拖拽）
+                    const throttle = (fn, ms) => {
+                      let last = 0
+                      return (...a) => {
+                        const now = Date.now()
+                        if (now - last >= ms) { last = now; fn(...a) }
+                      }
+                    }
+                    ```
+
+                    ⚠️ 两者选择只看一件事：**你要的是「最后一次」还是「均匀的每一次」**。
+                    搜索框要防抖（只要最终输入），滚动要节流（要持续反馈）。
+
+                    应用场景：性能问题先定位（Performance 面板看内存曲线 / 长任务），再选手段。
+                    """,
+                    """
+                    // 防抖：停止触发后才执行
+                    const debounce = (fn, ms) => {
+                      let t;
+                      return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+                    };
+
+                    // 节流：固定间隔最多一次
+                    const throttle = (fn, ms) => {
+                      let last = 0;
+                      return (...a) => {
+                        const now = Date.now();
+                        if (now - last >= ms) { last = now; fn(...a); }
+                      };
+                    };
+
+                    let d = 0, t = 0;
+                    const onDebounced = debounce(() => { d++; }, 50);
+                    const onThrottled = throttle(() => { t++; }, 50);
+
+                    // 模拟 10 次连续触发
+                    for (let i = 0; i < 10; i++) { onDebounced(); onThrottled(); }
+
+                    console.log("节流已立即执行", t, "次（连续触发里几乎每次都过阈值）");
+                    setTimeout(() => console.log("防抖只在停止后执行", d, "次"), 120);
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("搜索框输入建议应该用防抖还是节流？",
+                                    List.of("节流，保证持续请求", "防抖，只在用户停止输入后请求一次", "都不用", "两者一样"), 1,
+                                    "防抖的语义是「等你停下来再执行」—— 输入过程中不该每个字符都发请求。"
+                                            + "节流是「固定频率仍然执行」，适合滚动/拖拽这类需要持续反馈的场景。"),
+                            quiz("「闭包导致的泄漏」具体是泄漏了什么？",
+                                    List.of("泄漏了函数本身", "函数一直活着 → 它闭包捕获的整个作用域（含大对象）都收不回", "泄漏了 CPU", "代码字符串"), 1,
+                                    "闭包会把外层变量「关」在函数里。只要这个函数还被引用（定时器、全局回调、未解绑的监听），"
+                                            + "那些变量就一直可达 —— 于是 GC 不会回收它们。"))),
+
+            lesson("js-11", "渲染性能：重排、重绘与长列表", 20,
+                    """
+                    界面卡顿基本来自两件事：**改 DOM 太多** 和 **算得太久**。
+
+                    浏览器把渲染拆成几步：样式计算 → **布局（重排 reflow）** → **绘制（重绘 repaint）** → 合成。
+                    代价差别很大：
+
+                    - 改 `color` / `background` → 只**重绘**（便宜）
+                    - 改 `width` / `margin` / 位置 → 触发**重排**（贵，可能连带整棵子树）
+                    - 改 `transform` / `opacity` → 只走**合成层**（最便宜，还能上 GPU）
+
+                    ⚠️ 所以动画优先用 `transform: translate()` 而不是 `left/top`。
+
+                    第二条规矩：**别在循环里读布局属性**（`offsetHeight`、`getBoundingClientRect`），
+                    那会强制浏览器立即重排（布局抖动 layout thrashing）：
+
+                    ```js
+                    // 差：每次读 offsetTop 都强制重排
+                    for (const el of list) el.style.top = el.offsetTop + 10 + "px"
+
+                    // 好：先批量读，再批量写
+                    const tops = list.map((el) => el.offsetTop)
+                    list.forEach((el, i) => { el.style.top = tops[i] + 10 + "px" })
+                    ```
+
+                    第三条：**长列表要虚拟化**。一次渲染 1 万行 DOM 必然卡；
+                    只渲染可视区那几十行、滚动时替换内容，才撑得住 —— 这就是「虚拟列表」，
+                    也是各种表格组件的核心优化。
+
+                    应用场景：Performance 面板看「长任务」与「Layout Shift」，
+                    定位瓶颈后再决定是减 DOM、批量改样式还是上虚拟列表。
+                    """,
+                    """
+                    // 批量读 → 批量写，避免「读一次写一次」触发的反复重排
+                    // （浏览器里用真实元素，这里用对象模拟布局属性）
+                    const items = Array.from({ length: 5 }, (_, i) => ({ offsetTop: i * 20, top: 0 }));
+
+                    // 坏写法：每次都读 + 写（真实 DOM 里会强制同步布局，极慢）
+                    for (const it of items) it.top = it.offsetTop + 10;
+
+                    // 好写法：先读齐，再统一写
+                    const tops = items.map((it) => it.offsetTop);
+                    items.forEach((it, i) => { it.top = tops[i] + 10; });
+
+                    console.log(items.map((it) => it.top));
+
+                    // 动画优先用 transform / opacity（只走合成层，不重排）
+                    const styleHint = { transform: "translateX(10px)", opacity: 0.9 };
+                    console.log("推荐写法:", styleHint);
+                    """,
+                    "javascript",
+                    List.of(
+                            quiz("要做位移/淡入动画，改哪个属性代价最小？",
+                                    List.of("left / top", "width / height", "transform / opacity", "margin"), 2,
+                                    "`transform` 与 `opacity` 只影响**合成**阶段，不会触发布局计算，还能交给 GPU；"
+                                            + "而 `left`/`width` 这类会引发重排，元素一多就掉帧。"),
+                            quiz("「长列表一次性渲染 1 万行」的根因问题是？",
+                                    List.of("数据太大", "DOM 节点太多，布局与绘制开销随节点数暴涨", "CSS 太复杂", "内存不够"), 1,
+                                    "每个 DOM 节点都要参与样式计算与布局。解法是**虚拟列表**：只渲染可视区附近的行，"
+                                            + "滚动时复用节点 —— 把「1 万个节点」降到「几十个节点」。"))));
+
+    // --------------------------------------------------------------------------------
+    // TypeScript · 精通（工程化与类型边界）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> TS_EXPERT_LESSONS = List.of(
+            lesson("ts-09", "声明文件与类型来源：.d.ts 与 @types", 20,
+                    """
+                    你用的每个库，TS 是怎么知道它的类型的？答案全在**声明文件**里。
+
+                    三种来源：
+
+                    1. 库**自带**（`package.json` 的 `types` 字段指向 `.d.ts`）—— 最好的情况
+                    2. **社区补充包**：`@types/lodash` 这类，装在 `node_modules/@types/`
+                    3. **自己写**：给没有类型的库补一个声明文件
+
+                    ```ts
+                    // types/my-lib.d.ts
+                    declare module "my-lib" {
+                      export function parse(input: string): { ok: boolean }
+                    }
+                    ```
+
+                    ⚠️ 四个要点：
+
+                    1. `tsconfig` 的 `typeRoots` / `types` 决定**去哪里找**类型；不写 `types` 时默认加载 `@types` 下全部
+                    2. `declare global` 用于扩展全局（如给 `window` 加字段），要放在模块文件里才生效
+                    3. `import type` 只导入类型、**编译后完全消失** —— 能避免把只用于类型的包打进产物
+                    4. `/// <reference types="..." />` 是老写法，现在多数场景用 `import` 就够
+
+                    应用场景：**接第三方 SDK、给老库补类型、扩展全局对象**时都要写 `.d.ts`。
+                    读懂它之后，遇到「类型找不到 / 类型对不上」就不再是玄学。
+                    """,
+                    """
+                    // 给一个没有类型的库补声明（真实项目放 types/xx.d.ts）
+                    declare module "legacy-sdk" {
+                      export interface Options { timeout?: number }
+                      export function init(opts?: Options): void
+                      export function track(event: string, payload?: Record<string, unknown>): void
+                    }
+
+                    // 模拟使用：类型来自上面的声明
+                    const opts: import("legacy-sdk").Options = { timeout: 3000 };
+                    console.log("声明文件提供了类型，编译期就能校验:", opts.timeout);
+
+                    // import type 只用于类型，编译后消失（不会把包打进产物）
+                    type Payload = Record<string, unknown>;
+                    const p: Payload = { id: 1 };
+                    console.log(p);
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("`import type { Foo } from \"./types\"` 与普通 `import` 的关键差别是？",
+                                    List.of("性能更好但功能少", "只导入类型，编译后完全不产生导入语句（不会把包打进产物）", "只能导入 interface", "没有任何差别"), 1,
+                                    "`import type` 明确告诉编译器「这个只用于类型」，于是产物里不留痕迹。"
+                                            + "对「只在类型位置使用的重型包」能显著减小打包体积，也避免不必要的运行时加载。"),
+                            quiz("一个库没有自带类型、社区也没出 `@types/` 包时，怎么办？",
+                                    List.of("只能用 any", "自己写一个 `declare module` 声明文件补上类型", "改用 JavaScript", "关掉 strict 模式"), 1,
+                                    "自己补 `.d.ts` 是标准做法：既让调用处有补全与校验，也不必改三方源码。"
+                                            + "只声明你真正用到的 API 即可，不必把整个库描一遍。"))),
+
+            lesson("ts-10", "类型体操的边界：什么时候不该写复杂类型", 15,
+                    """
+                    学到这一步，你已经有能力写「类型体操」了。这一节讲的是**什么时候不该写**。
+
+                    下面这种类型能跑，但在业务代码里是负资产：
+
+                    ```ts
+                    type DeepPartial<T> = T extends object
+                      ? { [K in keyof T]?: DeepPartial<T[K]> }
+                      : T
+                    ```
+
+                    判断标准只有一条：**下一个人多久能看懂？**
+
+                    四个「该停手」的信号：
+
+                    1. 需要写注释解释类型本身在干什么（好的类型是自解释的）
+                    2. 报错信息变成一屏红字，反而找不到真正的问题
+                    3. 为了让类型通过而给运行时加判断 —— 类型不该驱动运行时
+                    4. 同一个复杂类型在代码里被复制粘贴
+
+                    ⚠️ 大多数业务场景，这些就够了：**接口定义 + 联合类型 + 一两个工具类型**。
+                    真正需要类型体操的地方是**库的作者**：他们要保证「各种用法都能推导出正确类型」，
+                    所以 axios、React 的类型签名才那么复杂 —— 那是**被需求逼出来的**，不是炫技。
+
+                    应用场景：团队里出现「看不懂的类型」时，优先考虑降级为更朴素但可读的写法；
+                    复杂类型集中在 `types/` 目录、由专人维护，别散落在业务文件里。
+                    """,
+                    """
+                    // 够了：联合 + 工具类型，一眼看懂
+                    interface User { id: number; name: string; email: string }
+                    type UserPatch = Partial<Pick<User, "name" | "email">>;
+
+                    const patch: UserPatch = { name: "Alice" };
+                    console.log(patch);
+
+                    // 过度设计示例（不用真的这么写业务代码）
+                    type Over<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
+                    type UserGetters = Over<User>;
+
+                    const getters: UserGetters = {
+                      getId: () => 1,
+                      getName: () => "Alice",
+                      getEmail: () => "a@b.com",
+                    };
+                    console.log(getters.getName());
+
+                    console.log("结论：能推导出来的类型够用了，别为了抽象而抽象");
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("判断一个复杂类型是否该保留，最实用的标准是？",
+                                    List.of("行数是否够短", "下一个人能不能快速看懂、报错信息是否可定位", "是否用到了 infer", "是否比 any 快"), 1,
+                                    "类型是**给人读的文档**。看不懂的类型会让改代码的人绕开它，甚至用 `as any` 绕过校验 ——"
+                                            + "结果类型安全反而更差。可读性优先于表达力。"),
+                            quiz("为什么 axios / React 的类型签名那么复杂？",
+                                    List.of("作者喜欢炫技", "它们要覆盖极多调用姿势并保证都能正确推导，是需求逼出来的", "为了兼容老 TS", "为了性能"), 1,
+                                    "库的 API 面很宽（不同参数组合、不同泛型、链式调用），必须用条件类型/重载把每种用法都推导准。"
+                                            + "业务代码的调用姿势有限，通常用不上那一层复杂度。"))),
+
+            lesson("ts-11", "渐进式迁移：把 JS 项目一步步换成 TS", 20,
+                    """
+                    真实项目很少「新建一个 TS 工程」，多半是**把存量 JS 项目逐步迁过来**。
+                    一次性全量改完几乎必然烂尾，正确姿势是「先让它能跑 TS，再逐个文件改」。
+
+                    推荐顺序：
+
+                    1. **装依赖、加 `tsconfig`，但 `allowJs: true`** —— 此时 `.ts` 和 `.js` 可以共存
+                    2. **从叶子模块开始改**（工具函数、常量、纯逻辑），它们依赖少、改起来快
+                    3. **逐个文件改名 `xxx.js` → `xxx.ts`**，边改边补类型
+                    4. **入口与骨架最后改**（路由、服务初始化），它们耦合最多
+                    5. 全改完后把 `allowJs` 关掉，才算真正「TS 化」
+
+                    ⚠️ 四个经验：
+
+                    1. **先开 `noImplicitAny: false`**，只保证「能编译」；文件改完再逐个打开严格档 ——
+                       否则一上来几千个报错，人会放弃
+                    2. 迁移期间 `strict` 分目录开：新建目录开严的，老目录先宽
+                    3. 类型不明确的地方先用 `unknown`（不是 `any`），它会逼你收窄，`any` 会传染
+                    4. **给 `// @ts-expect-error` 加注释说明原因**，否则半年后没人敢删
+
+                    应用场景：接手一个几万行的 JS 老项目时，这套流程能让你「每天都有进展」而不是
+                    「改到一半放弃了」。核心心法：**先扩大 TS 的覆盖范围，再慢慢提高严苛度**。
+                    """,
+                    """
+                    // 阶段化 tsconfig 的关键开关（注释说明各自作用）
+                    const tsconfig = {
+                      compilerOptions: {
+                        allowJs: true,          // 让 .js 与 .ts 共存（迁移期必须）
+                        checkJs: false,         // 先不检查 js，只吃新写的 ts
+                        noImplicitAny: false,   // 迁移初期先关掉，避免几千个报错劝退
+                        strict: true,           // 新目录可以单独覆盖成严格
+                        outDir: "dist",
+                      },
+                      include: ["src"],
+                    };
+
+                    console.log("迁移三步：能跑 TS → 逐文件改名 → 收紧严格度");
+                    console.log(JSON.stringify(tsconfig.compilerOptions));
+                    """,
+                    "typescript",
+                    List.of(
+                            quiz("把存量 JS 项目迁移到 TS，为什么建议先 `noImplicitAny: false`？",
+                                    List.of("性能更好", "先保证能编译、能推进；一次性打开会产生海量报错，容易半途而废", "否则不能用 allowJs", "这样类型更准"), 1,
+                                    "迁移是个**长跑**。先让项目「跑在 TS 上」，再一个目录一个目录收紧，"
+                                            + "才能持续交付；反过来（一步到位开严格）绝大多数团队会卡在几千个错误上。"),
+                            quiz("迁移期遇到类型不明的地方，应该先用 `unknown` 还是 `any`？",
+                                    List.of("any，省事", "unknown，它会强制你收窄，不会像 any 那样传染", "都可以", "用 never"), 1,
+                                    "`any` 会让类型检查在整条调用链上失效（传染），问题被推迟到线上；"
+                                            + "`unknown` 要求使用前先判断，虽然稍微麻烦，但保住了类型安全。"))));
+
+    // --------------------------------------------------------------------------------
+    // Python · 精通（并发模型与工程实践）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> PY_EXPERT_LESSONS = List.of(
+            lesson("py-09", "GIL 与并发模型：线程 / 进程 / async 怎么选", 25,
+                    """
+                    Python 并发最容易踩的坑是：**写了多线程，却发现没变快**。原因在 GIL。
+
+                    **GIL（全局解释器锁）**保证同一时刻只有一个线程在执行 Python 字节码。
+                    于是：
+
+                    - **CPU 密集**任务用多线程 → **不会变快**（线程在抢同一把锁）
+                    - **I/O 密集**任务用多线程 → **有效**（等 I/O 时会释放 GIL）
+
+                    所以选型规则很清晰：
+
+                    | 任务类型 | 用什么 | 说明 |
+                    |---|---|---|
+                    | CPU 密集（计算、图像处理） | **多进程** `multiprocessing` | 绕过 GIL，每个进程一个解释器 |
+                    | I/O 密集（网络、文件） | **多线程** 或 **asyncio** | 等待时会释放控制权 |
+                    | 高并发网络服务 | **asyncio** | 单线程 + 事件循环，连接数可以很高 |
+
+                    ```python
+                    from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+
+                    with ThreadPoolExecutor(8) as ex:      # I/O 密集
+                      results = list(ex.map(fetch, urls))
+
+                    with ProcessPoolExecutor() as ex:      # CPU 密集
+                      results = list(ex.map(heavy, items))
+                    ```
+
+                    ⚠️ 三个要点：
+
+                    1. `asyncio` 是**单线程**的：一旦某处有同步阻塞调用（如 `requests`、`time.sleep`），
+                       整个事件循环就卡住 —— 里面必须用 `aiohttp` / `asyncio.sleep` 这类异步 API
+                    2. 多进程有**启动与序列化开销**，任务太小反而更慢（有个几毫秒的阈值）
+                    3. 多进程之间不共享内存，通信要显式（`Queue` / `Pipe`），不能直接改同一个变量
+
+                    应用场景：爬虫选 asyncio、图像/数据批处理选多进程、读写文件选多线程 ——
+                    **先判断任务类型，再选工具**。
+                    """,
+                    """
+                    import time
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    def io_task(n):
+                        time.sleep(0.05)          # 模拟 I/O 等待（会释放 GIL）
+                        return n * 2
+
+                    def cpu_task(n):
+                        s = 0
+                        for i in range(200000):   # 纯计算（受 GIL 限制）
+                            s += i
+                        return s + n
+
+                    # I/O 密集：多线程能并发
+                    t0 = time.time()
+                    with ThreadPoolExecutor(4) as ex:
+                        print("I/O 结果:", list(ex.map(io_task, range(4))))
+                    print("I/O 并发耗时约 %.3fs（4 个 0.05s 的任务）" % (time.time() - t0))
+
+                    # CPU 密集：多线程基本不变快（GIL），要提速得换 ProcessPoolExecutor
+                    t1 = time.time()
+                    with ThreadPoolExecutor(4) as ex:
+                        list(ex.map(cpu_task, range(4)))
+                    print("CPU 密集（多线程）耗时约 %.3fs —— 不会随线程数变快" % (time.time() - t1))
+                    """,
+                    "python",
+                    List.of(
+                            quiz("一个纯计算任务用 `ThreadPoolExecutor` 开 8 个线程，会快 8 倍吗？",
+                                    List.of("会", "不会 —— GIL 让同一时刻只有一个线程执行字节码", "会快 8 倍以上", "取决于机器核数"), 1,
+                                    "GIL 限制了 Python 字节码的并行执行，多线程在 CPU 密集场景只是「轮流跑」。"
+                                            + "要真正并行必须用**多进程**（每个进程独立解释器、各有一把 GIL）。"),
+                            quiz("在 `asyncio` 的事件循环里调用 `requests.get()` 会有什么问题？",
+                                    List.of("报错", "把整个事件循环阻塞住 —— 它是同步阻塞调用，期间所有协程都停摆", "自动变成异步", "没有影响"), 1,
+                                    "asyncio 是单线程协作式调度：一处同步阻塞，整个循环就卡住，"
+                                            + "并发优势荡然无存。异步代码里必须用异步库（aiohttp / httpx.AsyncClient）。"))),
+
+            lesson("py-10", "装饰器与上下文管理器", 20,
+                    """
+                    这两个特性是 Python 「优雅地做横切逻辑」的核心。
+
+                    **装饰器**本质是「接收函数、返回函数」的函数 —— `@deco` 只是 `f = deco(f)` 的语法糖：
+
+                    ```python
+                    import functools
+
+                    def timed(fn):
+                      @functools.wraps(fn)          # 保留原函数的名字/文档
+                      def wrapper(*args, **kwargs):
+                        start = time.time()
+                        try:
+                          return fn(*args, **kwargs)
+                        finally:
+                          print(fn.__name__, "耗时", time.time() - start)
+                      return wrapper
+
+                    @timed
+                    def work(): ...
+                    ```
+
+                    ⚠️ `@functools.wraps` **一定要加**：否则被装饰函数的 `__name__`、文档、签名全丢了，
+                    调试与框架反射（如 Flask 路由）都会出问题。
+
+                    带参数的装饰器要多包一层：
+
+                    ```python
+                    def retry(times):
+                      def deco(fn):
+                        def wrapper(*a, **k):
+                          for i in range(times):
+                            try: return fn(*a, **k)
+                            except Exception:
+                              if i == times - 1: raise
+                        return wrapper
+                      return deco
+
+                    @retry(3)
+                    def flaky(): ...
+                    ```
+
+                    **上下文管理器**让「进入/退出」成对执行，`with` 就是调它的 `__enter__` / `__exit__`。
+                    最省事的写法是 `contextlib`：
+
+                    ```python
+                    from contextlib import contextmanager
+
+                    @contextmanager
+                    def opened(path):
+                      f = open(path, encoding="utf-8")
+                      try:
+                        yield f
+                      finally:
+                        f.close()
+                    ```
+
+                    应用场景：**重试、计时、日志、缓存、事务、资源释放** —— 这些都是「横切关注点」，
+                    用装饰器/上下文管理器包一次，比在每个函数里复制粘贴强得多。
+                    """,
+                    """
+                    import functools, time
+                    from contextlib import contextmanager
+
+                    # 装饰器：计时
+                    def timed(fn):
+                        @functools.wraps(fn)
+                        def wrapper(*args, **kwargs):
+                            t0 = time.time()
+                            try:
+                                return fn(*args, **kwargs)
+                            finally:
+                                print("%s 耗时 %.4fs" % (fn.__name__, time.time() - t0))
+                        return wrapper
+
+                    # 带参数的装饰器：重试
+                    def retry(times):
+                        def deco(fn):
+                            @functools.wraps(fn)
+                            def wrapper(*a, **k):
+                                for i in range(times):
+                                    try:
+                                        return fn(*a, **k)
+                                    except Exception:
+                                        if i == times - 1:
+                                            raise
+                            return wrapper
+                        return deco
+
+                    @timed
+                    @retry(3)
+                    def flaky(n):
+                        if n < 3:
+                            raise ValueError("还没成功")
+                        return "成功"
+
+                    calls = {"n": 0}
+                    def bump():
+                        calls["n"] += 1
+                        return calls["n"]
+
+                    print(flaky(lambda: bump() and 2) if False else "跳过复杂示例")
+                    print("装饰器保住了函数名:", flaky.__name__)
+
+                    # 上下文管理器
+                    @contextmanager
+                    def tag(name):
+                        print("<" + name + ">")
+                        try:
+                            yield
+                        finally:
+                            print("</" + name + ">")
+
+                    with tag("section"):
+                        print("  内容")
+                    """,
+                    "python",
+                    List.of(
+                            quiz("装饰器里不写 `@functools.wraps(fn)` 会有什么后果？",
+                                    List.of("性能下降", "被装饰函数的 `__name__` / 文档 / 签名都变成 wrapper 的，调试和框架反射都会出错", "无法调用", "不会执行"), 1,
+                                    "少了 wraps，`fn.__name__` 变成 `'wrapper'`，`help()` 与日志全是错的信息，"
+                                            + "依赖函数签名的框架（路由注册、依赖注入）也可能失效。这是装饰器最常见的疏漏。"),
+                            quiz("`@contextmanager` 装饰的生成器里，`yield` 之前和之后的代码分别对应？",
+                                    List.of("两次调用", "进入 with 块（__enter__）和退出 with 块（__exit__）", "异步与同步", "读与写"), 1,
+                                    "`yield` 之前是「进入」时的准备，`yield` 之后（通常放 `finally`）是「退出」时的收尾。"
+                                            + "用它可以几行写出一个资源管理上下文，不必定义完整的类。"))),
+
+            lesson("py-11", "性能定位：先测量，再优化", 20,
+                    """
+                    优化 Python 代码的第一原则：**别猜热点，去测**。人的直觉命中率很低。
+
+                    三个层次递进的工具：
+
+                    ```python
+                    # 1) 计时：最粗但最常用
+                    import time
+                    t0 = time.perf_counter()
+                    do_work()
+                    print("耗时", time.perf_counter() - t0)
+
+                    # 2) 逐行统计：哪个函数被调用最多、最耗时
+                    import cProfile, pstats
+                    cProfile.run("main()", "prof.out")
+                    pstats.Stats("prof.out").sort_stats("cumulative").print_stats(10)
+
+                    # 3) 微基准：比较两种写法的实际差异
+                    import timeit
+                    print(timeit.timeit("'-'.join(str(n) for n in range(100))", number=1000))
+                    ```
+
+                    ⚠️ 三条纪律：
+
+                    1. **用 `perf_counter()` 而不是 `time.time()`** —— 后者受系统时钟调整影响，可能测出负数
+                    2. 测之前先想「数据规模」：小数据的结论可能完全不适用于生产（复杂度不同）
+                    3. 优化后**必须重新测**，确认真的变快了 —— 很多「优化」只是把工作挪到了别处
+
+                    **两个高频优化点**：
+
+                    - **把循环里的重复计算提出来**（如属性查找、函数查找）：
+                      `local_append = result.append` 这类「局部化」在 Python 里确实有效
+                    - **用内置函数与批量操作**：`sum()` / `any()` / 列表推导 / `str.join` 都是 C 实现，
+                      比手写 Python 循环快得多
+
+                    应用场景：接口变慢时先 profile 看是**哪一段**慢（数据库、序列化、还是纯计算），
+                    再决定优化手段 —— 多数时候瓶颈在 I/O 而不在算法。
+                    """,
+                    """
+                    import time, timeit
+
+                    # timeit：比较两种写法的真实差距
+                    a = timeit.timeit("s = ''; for i in range(100): s += str(i)", number=2000)
+                    b = timeit.timeit("'-'.join(str(i) for i in range(100))", number=2000)
+                    print("字符串拼接 +=", round(a, 4), "s")
+                    print("join      ", round(b, 4), "s  → 快 %.1f 倍" % (a / b))
+
+                    # 内置函数 + 生成器 vs 手写循环
+                    nums = list(range(100000))
+                    t0 = time.perf_counter()
+                    total = 0
+                    for n in nums:
+                        total += n
+                    manual = time.perf_counter() - t0
+
+                    t1 = time.perf_counter()
+                    builtin = sum(nums)
+                    fast = time.perf_counter() - t1
+                    print("手写循环", round(manual, 5), "s / 内置 sum", round(fast, 5), "s")
+                    print("结果一致:", total == builtin)
+                    """,
+                    "python",
+                    List.of(
+                            quiz("优化 Python 代码的第一步应该是？",
+                                    List.of("把循环改成推导式", "先 profile 测量，找到真正的热点再动手", "加多线程", "重写核心算法"), 1,
+                                    "凭直觉优化最容易优化错地方。`cProfile` 能告诉你时间到底花在哪个函数上，"
+                                            + "通常结论与预期不同（往往是 I/O 或某个被忽略的库调用）。"),
+                            quiz("为什么 `sum(nums)` 比手写 `for` 累加快？",
+                                    List.of("因为它是语法糖", "因为 `sum` 是 C 实现的内置函数，省掉了逐次字节码解释的开销", "因为它用了多线程", "其实一样快"), 1,
+                                    "Python 层的每一步都是解释执行；内置函数在 C 层循环。"
+                                            + "所以「能用内置/批量操作就别手写循环」是 Python 优化里性价比最高的习惯之一。"))));
+
+    // --------------------------------------------------------------------------------
+    // SQL · 精通（慢查询治理与数据一致性）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> SQL_EXPERT_LESSONS = List.of(
+            lesson("sql-09", "慢查询治理：从执行计划到改写", 25,
+                    """
+                    线上「接口变慢」十有八九先怀疑数据库。治理慢查询有一套固定流程，别乱猜。
+
+                    **第一步：找到它**。开慢查询日志，按耗时排序，拿出 TOP N。没有日志就用
+                    `SHOW PROCESSLIST`（MySQL）看当前在跑什么。
+
+                    **第二步：看执行计划**。`EXPLAIN` 的关键列只有几个：
+
+                    | 列 | 要看什么 |
+                    |---|---|
+                    | `type` | `ALL`（全表扫）最差，`index` / `ref` / `const` 依次变好 |
+                    | `key` | 实际用了哪个索引；`NULL` = 没走索引 |
+                    | `rows` | 预估扫描行数，越大越要警惕 |
+                    | `Extra` | 出现 `Using filesort` / `Using temporary` 通常要优化 |
+
+                    **第三步：针对性改写**。四个高频手法：
+
+                    1. **消除前置通配**：`LIKE '%x'` → 改全文索引或前缀匹配
+                    2. **避免索引列上做运算/函数**：`WHERE YEAR(t)=2026` → 改范围比较
+                    3. **用 `EXISTS` 替代 `IN` 且子查询大表时**（`IN` 可能物化整个子查询）
+                    4. **深分页改游标**（`WHERE id > ?`），别用大 `OFFSET`
+
+                    **第四步：验证**。改完必须再跑一次 `EXPLAIN` + 实际计时，
+                    确认 `type` 变好、`rows` 降下来，而不是「看起来快了」。
+
+                    ⚠️ 一条元规则：**先确认瓶颈是数据库**。也可能是序列化、网络、N+1 查询。
+                    查数据库之前，先看接口耗时里 SQL 占多少。
+                    """,
+                    """
+                    -- 第一步：定位（MySQL 里查当前正在跑的语句）
+                    -- SHOW PROCESSLIST;
+                    -- SELECT * FROM information_schema.processlist WHERE time > 2 ORDER BY time DESC;
+
+                    -- 第二步：看执行计划，重点看 type / key / rows / Extra
+                    EXPLAIN SELECT * FROM orders WHERE user_id = 42 AND status = 'paid';
+
+                    -- 第三步：改写对照
+                    -- 坏：函数包住列，索引失效
+                    EXPLAIN SELECT * FROM orders WHERE YEAR(created_at) = 2026;
+                    -- 好：范围比较，能用索引
+                    EXPLAIN SELECT * FROM orders WHERE created_at >= '2026-01-01'
+                                            AND created_at <  '2027-01-01';
+
+                    -- 第四步：验证改动确实让 type 变好、rows 变小（而不是只看「快没快」）
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("`EXPLAIN` 的 `type` 列出现 `ALL` 意味着什么？",
+                                    List.of("走了最优索引", "全表扫描 —— 没有可用索引或没用上", "用到了唯一索引", "查询被缓存了"), 1,
+                                    "`ALL` 是最差的一档：逐行扫描整张表。数据量一大就灾难，"
+                                            + "要往 `index` / `range` / `ref` / `const` 的方向优化。"),
+                            quiz("优化慢查询的第一步应该做什么？",
+                                    List.of("马上加索引", "先确认瓶颈确实在数据库（看 SQL 占接口耗时多少），再定位到具体语句", "调大连接池", "重启数据库"), 1,
+                                    "很多「接口慢」最后发现是 N+1 查询、序列化或外部调用。"
+                                            + "没确认瓶颈就加索引，既解决不了问题，又给写入增加负担。"))),
+
+            lesson("sql-10", "大数据量：游标分页、覆盖索引与分表", 20,
+                    """
+                    数据量上到千万级之后，前面学的东西要再加一层思考。
+
+                    **① 深分页**。`LIMIT 20 OFFSET 1000000` 要扫过 100 万行再丢掉。
+                    游标分页（keyset）把它变成常数代价：
+
+                    ```sql
+                    -- 记住上一页最后一行的排序键，从那里往后取
+                    SELECT * FROM orders WHERE id > 1000000 ORDER BY id LIMIT 20;
+                    ```
+
+                    ⚠️ 前提是**排序键唯一且稳定**（用主键或「时间 + id」组合），否则会漏行/重复。
+
+                    **② 覆盖索引**。如果查询要的列全在索引里，数据库不必回表：
+
+                    ```sql
+                    CREATE INDEX idx_user_time ON orders(user_id, created_at);
+                    -- 只取这两列时可以直接从索引返回
+                    SELECT user_id, created_at FROM orders WHERE user_id = 42;
+                    ```
+
+                    ⚠️ `SELECT *` 几乎总是破坏覆盖索引 —— 这是它被反复劝退的实际原因。
+
+                    **③ 分表（水平拆分）**。单表到几千万行、且已经优化到底时才考虑。
+                    拆之前先确认：**是不是数据本来该归档**（历史订单能不查就不查）。
+
+                    ⚠️ 分表会带来跨片查询、分布式主键、扩容等问题，是**最后手段**而非第一步。
+                    顺序应该是：加索引 → 优化 SQL → 归档冷数据 → 读写分离 → 最后才分表。
+
+                    应用场景：订单/日志/消息这类「越写越多」的表，才是分表讨论的适用场景。
+                    """,
+                    """
+                    -- ① 游标分页（常数代价，不随页码变慢）
+                    SELECT * FROM orders WHERE id > 1000000 ORDER BY id LIMIT 20;
+
+                    -- 对照：深 OFFSET 要扫过前面所有行
+                    SELECT * FROM orders ORDER BY id LIMIT 20 OFFSET 1000000;
+
+                    -- ② 覆盖索引：索引里就有要的列，无需回表
+                    CREATE INDEX idx_user_time ON orders(user_id, created_at);
+                    EXPLAIN SELECT user_id, created_at FROM orders WHERE user_id = 42;
+
+                    -- ③ 拆表之前先想归档：历史数据单独存放
+                    -- ALTER TABLE orders_archive ... ; DELETE FROM orders WHERE created_at < '2024-01-01';
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("游标分页（keyset）的前提条件是什么？",
+                                    List.of("必须用自增主键", "排序键唯一且稳定，否则会漏行或重复", "必须有联合索引", "表不能有删除"), 1,
+                                    "游标分页靠「上一页最后一条的排序值」定位下一条。如果排序键有重复且顺序不稳，"
+                                            + "边界就会算错 —— 所以通常用「时间 + id」组合来保证唯一。"),
+                            quiz("`SELECT *` 为什么会破坏覆盖索引？",
+                                    List.of("语法不合法", "它要求返回所有列，而索引里通常只包含部分列，于是必须回表", "它会强制全表扫描", "它会锁表"), 1,
+                                    "覆盖索引的价值是「所需列都在索引里」。`SELECT *` 把「所需列」扩成全部列，"
+                                            + "索引自然覆盖不全 —— 这也是「只选需要的列」在性能上确有收益的原因。"))),
+
+            lesson("sql-11", "一致性：读写分离与分布式事务概览", 20,
+                    """
+                    单库撑不住之后会走向「读写分离 + 主从复制」，随之带来一个必答题：
+                    **写完立刻读，可能读不到**。
+
+                    **① 主从延迟**。数据先写主库，再异步复制到从库，中间有毫秒到秒级的窗口：
+
+                    ```
+                    写主库 → 提交成功 → (复制延迟) → 从库才有
+                              用户立刻读从库 → 读不到刚写的数据
+                    ```
+
+                    ⚠️ 经典现象：**「刚提交的表单刷新后不见了，过一会儿又有了」**。
+                    解法按代价排序：
+                    1. **关键读走主库**（刚写完的、用户自己的数据）
+                    2. **写后一段时间内的读也走主库**（粘性，如 1 秒内）
+                    3. 用**主键/版本号做「至少读到哪个版本」**的等待
+
+                    **② 分布式事务**。跨库/跨服务的写操作无法用单机事务保证，路径是：
+                    优先用**最终一致性**（消息队列 + 重试 + 幂等），而不是硬上两阶段提交（2PC）——
+                    2PC 会长时间持锁、吞吐差，互联网场景基本不用。
+
+                    ⚠️ 无论哪种方案，**幂等**都是前提：同一个请求重复执行结果必须一致
+                    （靠唯一键、去重表或状态机）。
+
+                    应用场景：分库分表、微服务拆分之后，「一致性」会从「数据库帮我搞定」
+                    变成「我要自己设计」。这一节的目的不是让你实现分布式事务，
+                    而是知道**什么时候该警惕**。
+                    """,
+                    """
+                    -- 主从延迟的现场表现：写完立刻读到「旧数据」
+                    -- 主库写入
+                    INSERT INTO users (name) VALUES ('Alice');
+                    -- 应用立刻查从库（可能还没复制过来）
+                    SELECT * FROM users WHERE name = 'Alice';   -- 可能查不到
+
+                    -- 缓解方案 1：关键读走主库（加注释说明理由，别静默改全局路由）
+                    -- 缓解方案 2：写后 1 秒内的读取强制走主库（粘性会话）
+
+                    -- 幂等是最终一致性的前提：用唯一键挡住重复写入
+                    INSERT INTO orders (order_no, amount)
+                    VALUES ('NO123', 100)
+                    ON DUPLICATE KEY UPDATE amount = amount;   -- 重复执行不产生新行
+                    """,
+                    "sql",
+                    List.of(
+                            quiz("「刚提交的数据刷新后暂时看不到，过一会儿又出现」最可能的原因？",
+                                    List.of("数据丢了", "读写分离下主从复制有延迟，读走了还没同步完的从库", "事务没提交", "缓存穿透"), 1,
+                                    "这是主从架构的固有现象。解法是让「刚写完/读自己的数据」走主库，"
+                                            + "而不是指望复制是即时的 —— 异步复制天生有窗口。"),
+                            quiz("为什么互联网场景通常不选两阶段提交（2PC）做分布式事务？",
+                                    List.of("实现太难", "它需要长时间持锁、吞吐差、协调者成单点，代价与收益不匹配", "不支持 MySQL", "没有标准协议"), 1,
+                                    "2PC 的强一致是用**可用性与吞吐**换来的。大多数业务能接受「秒级最终一致」，"
+                                            + "于是更常用「消息 + 重试 + 幂等」这条路线。"))));
+
+    // --------------------------------------------------------------------------------
+    // Lua · 精通（GC、性能与嵌入式实战）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> LUA_EXPERT_LESSONS = List.of(
+            lesson("lua-08", "GC 与弱表：把内存管起来", 20,
+                    """
+                    Lua 用**增量式 GC**自动回收，但你仍然要理解「什么时候它回收不掉」。
+
+                    GC 的判定标准是**可达性**：从根（全局表、栈上的局部变量）出发能走到的对象都活着。
+
+                    ⚠️ 最常见的内存问题不是「Lua 不回收」，而是**你把引用留在了全局表里**：
+
+                    ```lua
+                    -- 危险：缓存只增不减，永远不会被回收
+                    local cache = {}
+                    function get(k)
+                      if not cache[k] then cache[k] = load(k) end
+                      return cache[k]
+                    end
+                    ```
+
+                    **弱表（weak table）**是解法：用 `__mode` 声明「这些引用不算数」。
+
+                    ```lua
+                    local cache = setmetatable({}, { __mode = "v" })   -- 值是弱引用
+                    cache[key] = heavy_object
+                    -- heavy_object 在别处没人引用时，这一项会被 GC 自动移除
+                    ```
+
+                    ⚠️ `__mode` 三种取值：
+
+                    - `"k"`：键是弱引用
+                    - `"v"`：值是弱引用（最常用，做缓存）
+                    - `"kv"`：都是弱引用
+
+                    ⚠️ 弱表里放**不可回收的值**（数字、布尔、短字符串）没有意义 —— 它们不会被回收，
+                    弱引用等于没写。
+
+                    **另一个常用手段**是显式控制 GC 节奏：`collectgarbage("count")` 查当前用量，
+                    `collectgarbage("collect")` 强制跑一次（会停顿，别频繁调）。
+
+                    应用场景：长时间运行的游戏服务/网关里，**缓存必须能自己缩回去**，
+                    否则内存会一直涨到 OOM。
+                    """,
+                    """
+                    -- 强引用缓存：只增不减（内存会一直涨）
+                    local strong = {}
+                    strong["a"] = { payload = string.rep("x", 1000) }
+                    print("强缓存条目:", #strong)
+
+                    -- 弱值缓存：外部没人引用时，这一项会被 GC 自动清掉
+                    local weak = setmetatable({}, { __mode = "v" })
+                    do
+                      local tmp = { payload = "big" }   -- 只在这个块里被引用
+                      weak["key"] = tmp
+                    end
+                    print("弱缓存条目（GC 前）:", weak["key"] ~= nil)
+
+                    collectgarbage("collect")
+                    print("弱缓存条目（GC 后）:", weak["key"] ~= nil)
+
+                    print("当前内存用量 KB:", math.floor(collectgarbage("count")))
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("`setmetatable({}, { __mode = \"v\" })` 里的 `\"v\"` 表示什么？",
+                                    List.of("值是只读的", "值是弱引用 —— 外部没有其它引用时，这一项可被 GC 回收", "值必须是字符串", "值是私有的"), 1,
+                                    "弱引用不阻止回收。做缓存时用它可以实现「自动缩容」："
+                                            + "只要别处还持有对象，缓存就在；一旦没人用，GC 就顺手清掉。"),
+                            quiz("往弱表里放数字（如 `t[1] = 42`）有意义吗？",
+                                    List.of("有，能省内存", "没有 —— 数字这类值不会被回收，弱引用等于没写", "会报错", "数字会变成强引用"), 1,
+                                    "弱引用只对**可被回收的对象**（table、function、userdata 等）起作用。"
+                                            + "数字/布尔/短字符串在 Lua 里是值类型，根本没「回收」这回事。"))),
+
+            lesson("lua-09", "性能：局部变量、table 复用与 LuaJIT", 20,
+                    """
+                    Lua 的性能优化有几条非常具体、收益又明显的规矩。
+
+                    **① 把全局访问变成局部变量**。全局变量要走 `_ENV` 查表，局部变量是寄存器访问：
+
+                    ```lua
+                    -- 慢：每次循环都查全局
+                    for i = 1, 1e6 do result = math.max(result, data[i]) end
+
+                    -- 快：提到循环外，局部化
+                    local max = math.max
+                    local result = 0
+                    for i = 1, 1e6 do result = max(result, data[i]) end
+                    ```
+
+                    这是 Lua 里**收益/成本比最高**的优化，没有之一。
+
+                    **② `table` 预分配与复用**。table 会频繁触发扩容，用 `table.new`（LuaJIT）预分配；
+                    更通用的是**池化**：高频创建的临时表复用同一个：
+
+                    ```lua
+                    local tmp = {}
+                    for _, v in ipairs(items) do
+                      for k in pairs(tmp) do tmp[k] = nil end   -- 清空而不是新建
+                      build_into(tmp, v)
+                    end
+                    ```
+
+                    ⚠️ 清空时用 `tmp[k] = nil` 而不是 `tmp = {}` —— 后者每次都分配新表、把 GC 压力拉满。
+
+                    **③ `#` 只用在连续数组上**。有空洞时长度是未定义的，遍历请用 `pairs` 或自己维护计数。
+
+                    **④ 认识 LuaJIT**。它是 Lua 的高性能实现（JIT 编译热点），
+                    但要避开它**无法优化**的写法（如频繁改变 table 结构的形状）。
+
+                    应用场景：网关/游戏逻辑这类对延迟敏感的场景，先按这三条改，
+                    通常就有数倍提升，比换硬件划算得多。
+                    """,
+                    """
+                    local N = 200000
+                    local data = {}
+                    for i = 1, N do data[i] = i end
+
+                    local t0 = os.clock()
+                    -- 慢：每次迭代都查全局 math
+                    local r1 = 0
+                    for i = 1, N do r1 = math.max(r1, data[i]) end
+                    local t1 = os.clock()
+
+                    -- 快：局部化函数引用
+                    local max = math.max
+                    local r2 = 0
+                    for i = 1, N do r2 = max(r2, data[i]) end
+                    local t2 = os.clock()
+
+                    print("全局访问:", string.format("%.4f", t1 - t0), "s")
+                    print("局部化  :", string.format("%.4f", t2 - t1), "s")
+                    print("结果一致:", r1 == r2)
+
+                    -- 复用临时表，而不是在循环里不断新建
+                    local tmp = {}
+                    for i = 1, 5 do
+                      for k in pairs(tmp) do tmp[k] = nil end   -- 清空复用
+                      tmp.a = i
+                    end
+                    print("复用后的临时表:", tmp.a)
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("Lua 里「把 `math.max` 存成局部变量」为什么能明显提速？",
+                                    List.of("因为局部变量类型更快", "因为全局访问要走 `_ENV` 查表，局部变量是直接的寄存器访问", "因为省内存", "其实没差别"), 1,
+                                    "热点循环里每次全局查找都是真金白银的开销，乘上百万次就很可观。"
+                                            + "把常用的全局函数/常量提到循环外 `local` 一下，是 Lua 最经典的优化手法。"),
+                            quiz("循环里想复用一张临时表，应该 `tmp = {}` 还是逐个 `tmp[k] = nil`？",
+                                    List.of("`tmp = {}` 更干净", "逐个置 nil —— 新建表会持续分配内存、拉高 GC 压力", "两者等价", "都该避免"), 1,
+                                    "`tmp = {}` 每次都申请新表，高频循环里会给 GC 制造大量垃圾；"
+                                            + "原地清空则复用了同一块内存。这正是「对象池」思路在 Lua 里的最小形态。"))),
+
+            lesson("lua-10", "嵌入式实战：沙箱、热更新与服务端脚本", 25,
+                    """
+                    Lua 真正的价值是「**嵌进别的程序当脚本层**」。这一节讲落地时的三件事。
+
+                    **① 沙箱：只给脚本该有的能力。** 直接把全局环境交给用户脚本是危险的
+                    （能 `os.exit()`、能读任意文件）。用受限环境执行：
+
+                    ```lua
+                    local safe_env = {
+                      print = print,                    -- 只放行需要的
+                      math = math, string = string, table = table,
+                    }
+                    local chunk = load(script, "sandbox", "t", safe_env)
+                    if not chunk then error("语法错误") end
+                    local ok, err = pcall(chunk)
+                    ```
+
+                    ⚠️ 三条纪律：
+                    1. **白名单**（只放行需要的），不是黑名单（拦已知危险的）—— 黑名单永远漏
+                    2. 用 `pcall` 包住执行，脚本报错不能带崩宿主
+                    3. 生产环境还应加**指令数上限**（LuaJIT 的 `debug.sethook`）防死循环
+
+                    **② 热更新：不重启换逻辑。** 做法是「模块放全局表 + 重新 require」：
+
+                    ```lua
+                    package.loaded["game.skill"] = nil   -- 清掉缓存
+                    require("game.skill")                 -- 重新加载
+                    ```
+
+                    ⚠️ 热更新要小心**旧引用**：已经取到的函数引用仍指向旧代码，
+                    所以外部要每次通过 `package.loaded[...].fn()` 取，别在启动时缓存下来。
+
+                    **③ 服务端脚本**（OpenResty 场景）：Lua 跑在 Nginx worker 里，
+                    **绝对不能有阻塞操作**（同步读文件、阻塞网络），否则整个 worker 卡死 ——
+                    一律用 `ngx.socket` 这类非阻塞 API。
+
+                    应用场景：游戏技能/配置热更、网关的鉴权与限流、插件系统 ——
+                    这些都是「宿主是 C/C++/Nginx，业务用 Lua 写」的典型形态。
+                    """,
+                    """
+                    -- ① 沙箱：白名单环境 + pcall 兜底
+                    local safe_env = { print = print, math = math, string = string, table = table }
+                    local script = "local s = 0; for i = 1, 10 do s = s + i end; print('脚本结果', s)"
+
+                    local chunk = load(script, "sandbox", "t", safe_env)
+                    if chunk then
+                      local ok, err = pcall(chunk)
+                      print("执行:", ok, err)
+                    end
+
+                    -- 危险调用会被「找不到函数」挡住，而不是真的执行
+                    local bad = load("os.exit(1)", "sandbox", "t", safe_env)
+                    if bad then
+                      local ok2, err2 = pcall(bad)
+                      print("被沙箱挡住:", ok2, err2)
+                    end
+
+                    -- ② 热更新：清缓存再 require
+                    package.loaded["demo.mod"] = nil
+                    print("已清掉模块缓存，下次 require 会重新加载")
+                    """,
+                    "lua",
+                    List.of(
+                            quiz("做 Lua 沙箱时，为什么必须用白名单（只放行需要的）而不是黑名单？",
+                                    List.of("白名单性能更好", "黑名单只能拦住已知危险项，总会有漏网的；白名单默认拒绝，漏不掉", "黑名单不能用于 load", "只是风格问题"), 1,
+                                    "安全设计的基本功：**默认拒绝**。黑名单要求你穷举所有危险 API（包括未来新增的），"
+                                            + "而白名单只需要列出真的需要的那几个。"),
+                            quiz("热更新时为什么不能在启动时把函数引用缓存下来？",
+                                    List.of("会内存泄漏", "缓存的引用仍指向旧代码，重新 require 后新逻辑不会被执行", "会报语法错误", "Lua 禁止缓存函数"), 1,
+                                    "重新 `require` 只是替换了 `package.loaded` 里的模块表。"
+                                            + "此前取出的旧函数引用依然存在 —— 所以要通过模块表**每次现取**，才能吃到新逻辑。"))));
+
+    // --------------------------------------------------------------------------------
+    // C / C++ · 精通（未定义行为、并发与工程）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> CPP_EXPERT_LESSONS = List.of(
+            lesson("c-09", "未定义行为与可移植性", 20,
+                    """
+                    C/C++ 有一类问题叫**未定义行为（UB）**：标准不规定结果，编译器可以做任何事 ——
+                    包括「看起来正常工作」，直到换个编译器、换个优化级别就崩。
+
+                    常见的 UB 清单（要能背出来）：
+
+                    | 代码 | 问题 |
+                    |---|---|
+                    | `int i; arr[i]` | 读未初始化变量 |
+                    | `a[i]` 越界 | 数组越界（哪怕只多一个） |
+                    | `p = NULL; *p` | 解引用空指针 |
+                    | `free(p); *p` | 释放后使用 |
+                    | `i = i++ + 1` | 同一表达式里多次修改同一变量 |
+                    | `int` 溢出的有符号运算 | 有符号溢出是 UB（无符号是回绕） |
+                    | `p = (int*)ptr; *p` | 违反严格别名 / 未对齐访问 |
+
+                    ⚠️ 三个必须建立的认知：
+
+                    1. **UB 不等于「报错」**。它可能「恰好正常」，所以「我这儿跑通了」**不能作为证据**
+                    2. **优化会放大 UB**。编译器假设「代码没有 UB」，据此做的优化会让越界访问变成完全不同的行为 ——
+                       这是「debug 正常、release 崩」的常见根因
+                    3. **可移植性来自避免 UB**，而不是来自「在我机器上能跑」
+
+                    **怎么防**：
+                    - 开 `-Wall -Wextra -Werror`，把警告当错误
+                    - 用 `-fsanitize=undefined,address` 在测试期跑一遍（UBSan 能抓溢出的有符号运算等）
+                    - 容器用 `std::vector` / `std::string`，让库替你管边界
+
+                    应用场景：跨平台项目、嵌入式、需要长期维护的底层库 ——
+                    这些场景「换编译器就出问题」的代价极高。
+                    """,
+                    """
+                    #include <stdio.h>
+
+                    int main(void) {
+                      /* 正确：显式初始化，编译期就确定 */
+                      int i = 0;
+                      int arr[3] = { 10, 20, 30 };
+
+                      /* 有符号溢出属于未定义行为 —— 下面这种写法要避免：
+                         int a = 2147483647; a = a + 1;   不要依赖它的结果 */
+
+                      /* 越界的反面：把长度也用常量表达，方便静态检查 */
+                      for (i = 0; i < 3; i++) {
+                        printf("arr[%d] = %d\\n", i, arr[i]);
+                      }
+
+                      puts("提示：测试期用 -fsanitize=undefined,address -g 跑一遍");
+                      puts("编译期开 -Wall -Wextra -Werror：把警告当错误");
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("「这段代码在我机器上跑通了」为什么不能证明没有未定义行为？",
+                                    List.of("因为编译器会随机化", "UB 的结果不确定，可能恰好正常；换编译器/优化级别/数据就会变", "因为机器性能不同", "因为 UB 只影响性能"), 1,
+                                    "UB 的定义就是「标准不规定行为」。它今天正常只是运气 —— "
+                                            + "而且编译器的优化**建立在「不存在 UB」的假设上**，一旦有 UB，优化后的行为可能完全出乎意料。"),
+                            quiz("测试阶段应该用什么来抓未定义行为？",
+                                    List.of("多跑几遍", "UBSan / ASan（-fsanitize=undefined,address）", "提高优化级别", "关掉所有警告"), 1,
+                                    "Sanitizer 是编译期插桩，能在 UB 真正发生的那一刻报出位置与调用栈 ——"
+                                            + "比线上崩了再排查便宜得多，是 C/C++ 项目的标准测试配置。"))),
+
+            lesson("c-10", "并发与内存模型：数据竞争与原子操作", 25,
+                    """
+                    多线程 C/C++ 最难的不是「怎么开线程」，而是**内存可见性与顺序**。
+
+                    **数据竞争（data race）**的定义：两个线程同时访问同一内存、至少一个是写、且没有同步。
+                    有数据竞争 = **未定义行为**（又是 UB）。
+
+                    ```c
+                    int counter = 0;
+                    void *worker(void *arg) {
+                      for (int i = 0; i < 100000; i++) counter++;   /* 有数据竞争！ */
+                      return NULL;
+                    }
+                    ```
+
+                    ⚠️ 这不是「少加了几次」的问题，而是 UB —— 编译器可以把 `counter++` 优化得你认不出来。
+
+                    **三种手段**，按代价从低到高：
+
+                    1. **原子操作**（C11 / C++11）：单变量的读改写
+                       ```c
+                       #include <stdatomic.h>
+                       atomic_int counter;
+                       atomic_fetch_add(&counter, 1);
+                       ```
+                    2. **互斥锁**：保护一段临界区（多个变量要一起保证一致时用它）
+                    3. **无锁数据结构**：性能最高，但正确性极难保证，**非必要不要自己写**
+
+                    ⚠️ 还有两个反直觉的点：
+
+                    - **`volatile` 不是同步手段**。它只阻止编译器优化对该变量的重复读取，
+                      **不保证原子性、也不建立线程间顺序** —— 用它当同步是经典错误
+                    - **双重检查锁定**里如果变量不加原子/不配内存序，是坏的（经典的 DCLP 问题）
+
+                    **内存序（memory order）**是进阶话题：默认的 `seq_cst` 最安全、慢一点；
+                    追求性能才考虑 `acquire/release`、`relaxed` —— 但**先能用对，再谈快**。
+
+                    应用场景：写线程池、无锁队列、高性能服务时才会深入；日常业务代码里
+                    把共享状态收进锁或原子变量，就够了。
+                    """,
+                    """
+                    #include <stdio.h>
+                    #include <pthread.h>
+                    #include <stdatomic.h>
+
+                    #define N 100000
+                    #define T 4
+
+                    static int plain = 0;             /* 裸变量：多线程写 = 数据竞争（UB） */
+                    static atomic_int safe = 0;        /* 原子变量：正确 */
+                    static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+                    static int locked = 0;
+
+                    static void *worker(void *arg) {
+                      for (int i = 0; i < N; i++) {
+                        atomic_fetch_add(&safe, 1);          /* 原子：无需加锁 */
+                        pthread_mutex_lock(&mtx);
+                        locked++;                             /* 临界区 */
+                        pthread_mutex_unlock(&mtx);
+                        plain++;                              /* 反面教材：别这么写 */
+                      }
+                      return NULL;
+                    }
+
+                    int main(void) {
+                      pthread_t t[T];
+                      for (int i = 0; i < T; i++) pthread_create(&t[i], NULL, worker, NULL);
+                      for (int i = 0; i < T; i++) pthread_join(t[i], NULL);
+
+                      printf("期望值 = %d\\n", N * T);
+                      printf("原子变量 = %d（正确）\\n", atomic_load(&safe));
+                      printf("互斥锁   = %d（正确）\\n", locked);
+                      printf("裸变量   = %d（数据竞争，结果不可信）\\n", plain);
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("多线程里对共享 `int` 做 `counter++`，为什么说它是未定义行为而不是「少加几次」？",
+                                    List.of("因为 int 太小", "因为它构成数据竞争（无同步的并发读写），标准直接判定为 UB，编译器可任意优化", "因为没加 volatile", "因为没对齐"), 1,
+                                    "数据竞争在 C/C++ 里就是 UB。它不只是丢更新，编译器的优化可能让结果完全不可预测 ——"
+                                            + "这也是「加上 atomic / mutex 之后才对」的根本原因。"),
+                            quiz("用 `volatile int flag` 做线程间同步为什么是错的？",
+                                    List.of("volatile 太慢", "volatile 不保证原子性、也不建立线程间顺序（只约束编译器优化）", "volatile 只能用于指针", "其实是对的"), 1,
+                                    "`volatile` 的语义是「每次都从内存读」，与多线程同步无关。"
+                                            + "同步需要的是**原子性 + 内存序**，要用 `atomic` 或锁 —— 这是并发编程里最经典的误区之一。"))),
+
+            lesson("c-11", "ABI、二进制兼容与构建系统", 20,
+                    """
+                    最后一节讲「工程面」：C/C++ 项目如何组织、升级、发版。
+
+                    **① 头文件与实现分离**（已有），但要知道 ABI 的存在：
+                    **ABI（应用二进制接口）**决定「编译好的二进制能否互相调用」。
+                    它包含调用约定、结构体布局、名字修饰（C++ 的 name mangling）、
+                    对象内存布局（虚表）。
+
+                    ⚠️ 破坏 ABI 的改动会让**已编译好的下游**直接崩：
+                    - 给类加虚函数 / 改成员顺序 / 改结构体大小
+                    - 改函数签名、改内联函数实现
+                    - 换编译器或编译选项（如 `-fno-exceptions`）
+
+                    这也解释了为什么 C++ 库常提供**纯 C 接口**（`extern "C"`）作为稳定边界 ——
+                    C 的 ABI 简单且稳定。
+
+                    **② `extern "C"` 与 `static` 的用途**：
+
+                    ```c
+                    #ifdef __cplusplus
+                    extern "C" {
+                    #endif
+                    int add(int a, int b);      /* 不给 C++ 做名字修饰，C 也能链接 */
+                    #ifdef __cplusplus
+                    }
+                    #endif
+                    ```
+
+                    `static` 让符号**只在本编译单元可见**，避免多文件重名冲突。
+
+                    **③ 构建系统**：小项目 `Makefile`，跨平台用 **CMake**：
+
+                    ```cmake
+                    cmake_minimum_required(VERSION 3.20)
+                    project(demo C)
+                    add_executable(demo main.c mathx.c)
+                    target_compile_options(demo PRIVATE -Wall -Wextra)
+                    ```
+
+                    ⚠️ 三个必备选项：`-Wall -Wextra`（警告）、`-g`（调试符号）、`-O2`（发布优化）。
+                    **别把 `-g` 和 `-O2` 当互斥** —— 发布版也带符号，线上崩了才排得动。
+
+                    应用场景：对外提供 SDK、做跨团队/跨语言的库、长期维护的基础组件 ——
+                    这些地方 ABI 稳定性的价值远高于「重构得爽」。
+                    """,
+                    """
+                    #include <stdio.h>
+
+                    /* 稳定的 C ABI 边界：C 与 C++ 都能链接 */
+                    #ifdef __cplusplus
+                    extern "C" {
+                    #endif
+
+                    static int add(int a, int b) { return a + b; }
+
+                    #ifdef __cplusplus
+                    }
+                    #endif
+
+                    int main(void) {
+                      printf("add(2,3) = %d\\n", add(2, 3));
+                      puts("构建建议：");
+                      puts("  -Wall -Wextra     把警告当错误（配 -Werror）");
+                      puts("  -g                发布版也带调试符号，线上才排得动");
+                      puts("  -O2               优化级别");
+                      puts("  cmake 跨平台构建：add_executable + target_compile_options");
+                      return 0;
+                    }
+                    """,
+                    "c",
+                    List.of(
+                            quiz("为什么很多 C++ 库对外只暴露纯 C 接口（`extern \"C\"`）？",
+                                    List.of("因为 C 更快", "C 的 ABI 简单且稳定，而 C++ 的名字修饰与对象布局随编译器/版本变化", "因为 C++ 不支持模块", "只是历史习惯"), 1,
+                                    "C++ 的 ABI 不标准化：不同编译器（甚至不同版本）的名字修饰、异常模型、STL 实现都可能不兼容。"
+                                            + "用 C 接口做边界，能让下游不管用什么编译器都能链接。"),
+                            quiz("发布版（-O2）还需要 `-g` 调试符号吗？",
+                                    List.of("不需要，会变慢", "需要 —— 符号不影响运行性能，但没有它线上崩溃只能看到地址", "只在开发环境需要", "取决于编译器"), 1,
+                                    "`-g` 只是往二进制里附加调试信息，**不改变生成的机器码**，因此不影响性能。"
+                                            + "省掉它换来的是「线上 core dump 完全看不懂」——得不偿失。"))));
+
+    // --------------------------------------------------------------------------------
+    // Java · 精通（JVM 调优、并发进阶与框架原理）
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> JAVA_EXPERT_LESSONS = List.of(
+            lesson("java-09", "JVM 调优：GC 选型与线上诊断", 25,
+                    """
+                    调优的前提是**先有数据**。没有监控和日志就调 JVM，等于蒙。
+
+                    **① 常用诊断工具**（JDK 自带，不用装）：
+
+                    | 工具 | 看什么 |
+                    |---|---|
+                    | `jps -l` | 有哪些 Java 进程 |
+                    | `jstack <pid>` | 线程栈，排查死锁/卡住 |
+                    | `jmap -heap <pid>` | 堆各区占用 |
+                    | `jstat -gcutil <pid> 1000` | 实时 GC 频率与耗时（每秒打一行） |
+                    | `jcmd <pid> GC.heap_info` | 堆信息（比 jmap 更轻） |
+
+                    ⚠️ **别在线上随便用 `jmap -dump`** —— 它会 STW（暂停应用），
+                    大堆可能要停几秒到几十秒。要 dump 用 `-XX:+HeapDumpOnOutOfMemoryError` 让它在 OOM 时自己生成。
+
+                    **② 先看指标，再选 GC**：
+
+                    - 关注 **GC 频率**、**单次停顿**、**Full GC 次数**
+                    - 停顿敏感（接口服务）→ G1 或 ZGC；吞吐优先（批处理）→ Parallel
+                    - ⚠️ **JDK 9+ 默认就是 G1**，多数场景不用手动选
+
+                    **③ 最有效的三个参数**（比调 GC 参数更值得先做）：
+
+                    ```
+                    -Xms4g -Xmx4g          堆初始=最大（避免运行时反复扩缩容）
+                    -XX:+HeapDumpOnOutOfMemoryError
+                    -XX:HeapDumpPath=/var/log/app/
+                    ```
+
+                    ⚠️ 三条纪律：
+
+                    1. **`-Xms` 与 `-Xmx` 设成一样** —— 否则堆扩容会引起停顿
+                    2. 容器里跑要开 `-XX:+UseContainerSupport`（JDK 8u191+ 默认开），
+                       否则 JVM 看不见容器内存上限，会按宿主机来算 —— 直接 OOMKilled
+                    3. **别调一堆参数**。每次只改一个、改完观察，否则出问题不知道该回退哪个
+
+                    应用场景：服务变慢/频繁 Full GC/内存持续上涨时，
+                    先把数据拿出来，再决定是改代码、改参数还是加机器。
+                    """,
+                    """
+                    import java.lang.management.*;
+
+                    public class Main {
+                      public static void main(String[] args) {
+                        MemoryMXBean mem = ManagementFactory.getMemoryMXBean();
+                        MemoryUsage heap = mem.getHeapMemoryUsage();
+                        System.out.println("堆上限(MB)  = " + heap.getMax() / 1024 / 1024);
+                        System.out.println("堆已用(MB)  = " + heap.getUsed() / 1024 / 1024);
+
+                        // GC 统计：真实诊断看 jstat -gcutil，这里演示怎么取
+                        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+                          System.out.printf("%-22s 次数=%-6d 累计耗时=%dms%n",
+                              gc.getName(), gc.getCollectionCount(), gc.getCollectionTime());
+                        }
+
+                        Runtime rt = Runtime.getRuntime();
+                        System.out.println("可用处理器 = " + rt.availableProcessors());
+                        System.out.println("提示：线上先看 jstat -gcutil <pid> 1000，再动参数");
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("为什么建议把 `-Xms` 和 `-Xmx` 设成相同值？",
+                                    List.of("省内存", "避免运行期堆反复扩缩容引起的额外停顿", "否则不能启动", "为了 GC 更快"), 1,
+                                    "堆在使用中动态扩缩容本身是有代价的（要申请/归还内存，可能触发停顿）。"
+                                            + "固定住大小能让运行更平稳，也是生产环境的常规做法。"),
+                            quiz("在 Docker 容器里跑 Java，为什么必须让 JVM 知道容器内存上限？",
+                                    List.of("为了省内存", "否则 JVM 按宿主机内存推算堆大小，很容易超出容器限制被 OOMKilled", "为了安全", "容器里不能跑 Java"), 1,
+                                    "JVM 早期版本只看宿主机内存，会按「物理内存的 1/4」设堆 —— 在容器里这意味着远超限制，"
+                                            + "于是进程被内核杀掉。JDK 8u191+ 默认开启容器感知，老版本要显式加 `UseContainerSupport`。"))),
+
+            lesson("java-10", "并发进阶：并发容器与 CompletableFuture", 25,
+                    """
+                    上一节会用了，这一节讲「怎么把并发写得不别扭」。
+
+                    **① 用并发容器，不要用同步包装**。
+
+                    ```java
+                    Map<String, Integer> m = new ConcurrentHashMap<>();   // 好
+                    Map<String, Integer> bad = Collections.synchronizedMap(new HashMap<>());  // 差
+                    ```
+
+                    `ConcurrentHashMap` 用分段/CAS 降低锁竞争，而 `synchronizedMap` 是**一把大锁**全包住。
+                    它的复合操作也是原子的：`computeIfAbsent` / `merge` / `putIfAbsent`
+                    —— 这正是「先查再写」这类非原子操作的正确写法。
+
+                    **② `CompletableFuture` 编排异步流程**。相比 `Future.get()` 的阻塞式等待，
+                    它能把多个异步任务串起来：
+
+                    ```java
+                    CompletableFuture<User> user = fetchUser(id);
+                    CompletableFuture<List<Order>> orders = fetchOrders(id);
+
+                    // 两个并行，都完成后合并
+                    CompletableFuture<String> result = user.thenCombine(orders, (u, os) ->
+                        u.getName() + " 有 " + os.size() + " 个订单");
+
+                    result.thenAccept(System.out::println);
+                    ```
+
+                    常用组合器：
+
+                    | 方法 | 语义 |
+                    |---|---|
+                    | `thenApply` | 转换结果 |
+                    | `thenCompose` | 串下一个异步（避免嵌套 `Future<Future<T>>`） |
+                    | `thenCombine` | 两个独立异步合并 |
+                    | `allOf` / `anyOf` | 全部完成 / 任一完成 |
+
+                    ⚠️ **必须指定线程池**：默认用 `ForkJoinPool.commonPool()`，
+                    它的大小固定、且被全应用共享 —— 多个模块互相抢会让吞吐骤降。
+                    每个业务用自己命名的池，排查线程问题时才看得懂。
+
+                    应用场景：**接口聚合**（一个接口并发调 3 个下游再合并）是它最典型的落地场景，
+                    能显著降低接口 RT。
+                    """,
+                    """
+                    import java.util.*;
+                    import java.util.concurrent.*;
+
+                    public class Main {
+                      static final ExecutorService POOL = Executors.newFixedThreadPool(4);
+
+                      static CompletableFuture<String> fetchUser(long id) {
+                        return CompletableFuture.supplyAsync(() -> "用户" + id, POOL);
+                      }
+
+                      static CompletableFuture<List<String>> fetchOrders(long id) {
+                        return CompletableFuture.supplyAsync(
+                            () -> Arrays.asList("订单A", "订单B"), POOL);
+                      }
+
+                      public static void main(String[] args) throws Exception {
+                        long t0 = System.currentTimeMillis();
+
+                        // 两个下游并发，然后合并 —— 总耗时可近似取较慢者
+                        CompletableFuture<String> merged = fetchUser(1)
+                            .thenCombine(fetchOrders(1),
+                                (u, os) -> u + " 有 " + os.size() + " 个订单");
+
+                        System.out.println(merged.get(3, TimeUnit.SECONDS));
+                        System.out.println("耗时(ms) = " + (System.currentTimeMillis() - t0));
+
+                        // 复合操作用 computeIfAbsent 才是原子的
+                        Map<String, Integer> CHM = new ConcurrentHashMap<>();
+                        CHM.computeIfAbsent("a", k -> 1);
+                        System.out.println("并发容器: " + CHM);
+
+                        POOL.shutdown();
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("`CompletableFuture` 不传线程池时用的是哪个？",
+                                    List.of("新建一个线程", "`ForkJoinPool.commonPool()` —— 全应用共享，容易被互相抢", "无限线程池", "调用线程自己"), 1,
+                                    "commonPool 的大小与 CPU 相关，且**全进程共享**：某个模块跑了长时间任务，"
+                                            + "就会拖慢所有用它的人。生产代码应显式传业务自有的、有界且有名字的线程池。"),
+                            quiz("`ConcurrentHashMap` 相比 `Collections.synchronizedMap` 的主要优势？",
+                                    List.of("功能更多", "用更细粒度的同步/CAS 降低锁竞争，并发吞吐高得多", "能存 null 键", "可以排序"), 1,
+                                    "`synchronizedMap` 所有方法都套同一把锁，读写互相阻塞；"
+                                            + "`ConcurrentHashMap` 把并发度做上去，并额外提供原子复合操作（`computeIfAbsent` 等）。"))),
+
+            lesson("java-11", "框架原理：IoC、AOP 与代理", 20,
+                    """
+                    会用 Spring 之后，理解它的两个核心机制，你就能看懂大多数「黑魔法」。
+
+                    **① IoC / DI**：对象的创建与依赖装配交给容器，你只声明「我需要什么」。
+
+                    容器启动时做三件事：
+                    1. 扫描 → 找出所有被 `@Component` 家族标注的类
+                    2. 实例化 → 按依赖顺序创建对象（构造器注入让这个顺序很自然）
+                    3. 注入 → 把依赖塞进去
+
+                    ⚠️ 这就是**循环依赖**（A 依赖 B、B 依赖 A）为什么是问题的根源 ——
+                    构造器注入下它直接启动失败（这是好事：暴露问题），
+                    字段注入下 Spring 用三级缓存强行解开，但那是**掩盖**而不是解决。
+
+                    **② AOP**：把「横切逻辑」（事务、日志、权限、缓存）从业务代码里抽出来，
+                    通过**代理**在目标方法前后织入。
+
+                    ```java
+                    @Transactional                 // 本质是 AOP：方法前后开/提交事务
+                    public void transfer(long from, long to, int amount) { ... }
+                    ```
+
+                    ⚠️ 三个「AOP 失效」的经典场景（面试与线上都高频）：
+
+                    1. **同类内部调用不生效**：`this.other()` 走的是原对象而非代理，
+                       注解被绕过 —— 解法是注入自己 / `AopContext.currentProxy()`
+                    2. **`private` / `final` 方法**不能被代理（CGLIB 靠继承）
+                    3. **代理方式**：JDK 动态代理要求实现接口，CGLIB 靠子类继承；
+                       Spring Boot 2.x 起默认 CGLIB
+
+                    **③ 看懂「注解为什么能生效」**：注解本身只是元数据，**必须有处理器**才有行为。
+                    `@Transactional` 之所以有用，是因为 Spring 为它注册了一个拦截器。
+                    所以「我加了注解但没效果」时，先问：**有没有对应的处理器在起作用？**
+
+                    应用场景：排查「事务没回滚」「缓存没生效」「切面没进」这类问题，
+                    根因几乎都在代理机制上。
+                    """,
+                    """
+                    import java.lang.annotation.*;
+                    import java.lang.reflect.*;
+
+                    public class Main {
+                      // 自定义注解：本身只是元数据，必须有人处理它
+                      @Retention(RetentionPolicy.RUNTIME)
+                      @Target(ElementType.METHOD)
+                      @interface Timed { }
+
+                      static class Service {
+                        @Timed
+                        public String work(String name) { return "处理 " + name; }
+                      }
+
+                      public static void main(String[] args) throws Exception {
+                        Service svc = new Service();
+                        Method m = Service.class.getMethod("work", String.class);
+
+                        // 模拟 AOP：读注解 → 在方法前后织入逻辑
+                        if (m.isAnnotationPresent(Timed.class)) {
+                          long t0 = System.currentTimeMillis();
+                          Object r = m.invoke(svc, "订单");
+                          System.out.println(r + " | 耗时 " + (System.currentTimeMillis() - t0) + "ms");
+                        } else {
+                          System.out.println(m.invoke(svc, "订单"));
+                        }
+
+                        System.out.println("要点：注解只是标记，真正干活的是处理器（这里是这段反射代码）");
+                      }
+                    }
+                    """,
+                    "java",
+                    List.of(
+                            quiz("同一个类里 `this.method()` 调用另一个带 `@Transactional` 的方法，事务会生效吗？",
+                                    List.of("会", "不会 —— 内部调用走的是原对象，没经过代理", "取决于方法可见性", "只在 Spring Boot 里生效"), 1,
+                                    "事务/缓存/日志这些能力都是**代理**在方法入口织入的。"
+                                            + "`this.other()` 直接从对象自身调用，绕过了代理 —— 这是最经典的 AOP 失效场景。"),
+                            quiz("「我加了注解但完全没效果」，第一步该怀疑什么？",
+                                    List.of("注解写错了", "有没有对应的处理器（切面/拦截器）在为它工作", "Java 版本不对", "需要重启"), 1,
+                                    "注解是**声明**，不是**行为**。没有处理器时它只是一段无用的元数据。"
+                                            + "排查顺序：处理器注册了吗 → 代理走了吗 → 匹配条件（切点）对上了吗。"))));
+
+    // --------------------------------------------------------------------------------
+    // Go · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> GO_ADV_LESSONS = List.of(
+            lesson("go-04", "接口与组合：Go 的「继承」方式", 20,
+                    """
+                    Go **没有继承**，代码复用靠**组合**：
+
+                    ```go
+                    type Logger struct{ prefix string }
+
+                    func (l Logger) Log(msg string) { fmt.Println(l.prefix, msg) }
+
+                    // 嵌入（embedding）：Logger 的方法被提升到 Server 上
+                    type Server struct {
+                      Logger            // 匿名字段 = 嵌入
+                      addr string
+                    }
+                    ```
+
+                    嵌入之后 `s.Log("hi")` 能直接调 —— 看起来像继承，但本质是**委托**：
+                    `s.Logger.Log("hi")` 的语法糖。
+
+                    ⚠️ 三个关键差异：
+
+                    1. **没有方法重写（override）的语义**：你只是在 `Server` 上定义一个同名方法，
+                       它**遮蔽**（shadow）了提升上来的那个，不是多态重写
+                    2. **嵌入的是行为，不是类型层级**：`Server` 并不是 `Logger` 的「子类」
+                    3. **接口是隐式实现的** —— 前面讲过，这让「组合多个接口」变得很自然
+
+                    Go 的设计哲学是：**用小的接口 + 组合，代替大的继承树**。
+                    标准库里的 `io.Reader`、`io.Writer` 都只有 1 个方法，
+                    于是任何实现了 `Read` 的类型都能当 Reader 用 —— 这是它可组合性的来源。
+
+                    ⚠️ 一个实战建议：**接口定义在使用方**（调用者声明「我需要什么能力」），
+                    而不是实现方。这样依赖方向是「实现 → 接口 ← 使用」，天然解耦。
+
+                    应用场景：中间件（嵌入 http.Handler）、装饰器（嵌入后增强方法）、
+                    以及任何「想复用一段行为但不想建继承树」的地方。
+                    """,
+                    """
+                    package main
+
+                    import "fmt"
+
+                    type Logger struct{ Prefix string }
+
+                    func (l Logger) Log(msg string) { fmt.Println(l.Prefix, msg) }
+
+                    // 嵌入：Logger 的方法被提升
+                    type Server struct {
+                    	Logger
+                    	Addr string
+                    }
+
+                    // 遮蔽：Server 自己的 Log 会盖住提升上来的那个
+                    func (s Server) Log(msg string) {
+                    	fmt.Println("[server]", msg)   // 可加自己的逻辑
+                    	s.Logger.Log(msg)               // 再委托给被嵌入的类型
+                    }
+
+                    type Reader interface{ Read() string }
+
+                    type File struct{ Name string }
+
+                    func (f File) Read() string { return "读取 " + f.Name }
+
+                    func main() {
+                    	s := Server{Logger: Logger{Prefix: "INFO"}, Addr: ":8080"}
+                    	s.Log("启动")                 // 走 Server 自己的
+                    	s.Logger.Log("直连被嵌入类型")  // 显式指定
+
+                    	// 隐式接口：只要有 Read 方法就满足
+                    	var r Reader = File{Name: "a.txt"}
+                    	fmt.Println(r.Read())
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("Go 的「嵌入」（anonymous field）本质上是什么？",
+                                    List.of("继承", "组合 + 方法委托（语法糖，被提升的方法实际转发给内嵌对象）", "多态重写", "宏展开"), 1,
+                                    "嵌入让外层类型「借用」内层的方法，但两者没有类型层级关系。"
+                                            + "这也是为什么 Go 说「组合优于继承」—— 它从语言层面只给了组合这一条路。"),
+                            quiz("Go 里接口最好定义在「使用方」还是「实现方」？",
+                                    List.of("实现方，方便复用", "使用方 —— 这样接口描述的是「我需要什么能力」，依赖方向更清晰", "无所谓", "必须在同一个包"), 1,
+                                    "这是 Go 与 Java 的一个显著差异：Java 通常实现方声明接口（class implements X），"
+                                            + "而 Go 推荐调用者按自己的需要声明小接口 —— 实现方甚至不需要知道这个接口存在。"))),
+
+            lesson("go-05", "context：超时、取消与请求作用域", 20,
+                    """
+                    `context` 是 Go 服务端代码的必备件 —— 它解决「**一个请求要做一堆事，怎么统一取消**」。
+
+                    ```go
+                    func handler(ctx context.Context) error {
+                      ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+                      defer cancel()                        // ⚠️ 必须调，否则泄漏
+
+                      return doWork(ctx)
+                    }
+                    ```
+
+                    三种构造：
+
+                    | 函数 | 用途 |
+                    |---|---|
+                    | `WithCancel` | 手动取消 |
+                    | `WithTimeout` | 超时自动取消 |
+                    | `WithValue` | 传请求级的值（如 traceID） |
+
+                    ⚠️ 五条纪律（都是踩出来的）：
+
+                    1. **`cancel()` 一定要 `defer` 调用**，即使看起来「反正会超时」——
+                       不调会让子 context 一直挂在父节点上，直到父级结束才释放（内存泄漏）
+                    2. **`ctx` 作为函数的第一个参数传递**，不要塞进 struct 字段
+                    3. **`WithValue` 只放「请求级元数据」**（traceID、用户身份），
+                       绝不放业务参数或可选配置 —— 那会让依赖变成隐式的
+                    4. **超时要能一路传下去**：下游调用（HTTP/DB/Redis）都要接收并使用 ctx，
+                       否则取消只停在上层，下层还在跑
+                    5. `context.Background()` 只用在**最外层**（main / 请求入口），
+                       内部一律用传进来的 ctx
+
+                    ⚠️ 取消是**协作式**的：`ctx.Done()` 只是通知，你的代码必须主动检查
+                    （或在阻塞 API 里把 ctx 传下去），不会自动终止 goroutine。
+
+                    应用场景：接口聚合（给每个下游设超时）、定时任务（可取消）、
+                    优雅关闭（服务停止时取消所有在途请求）。
+                    """,
+                    """
+                    package main
+
+                    import (
+                    	"context"
+                    	"fmt"
+                    	"time"
+                    )
+
+                    func slowWork(ctx context.Context) (string, error) {
+                    	select {
+                    	case <-time.After(300 * time.Millisecond):
+                    		return "完成", nil
+                    	case <-ctx.Done():                    // 协作式取消：必须自己监听
+                    		return "", ctx.Err()
+                    	}
+                    }
+
+                    func main() {
+                    	// 超时 100ms，任务需要 300ms → 会被取消
+                    	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+                    	defer cancel()                        // 必须调
+
+                    	r, err := slowWork(ctx)
+                    	fmt.Println("结果:", r, "错误:", err)
+
+                    	// 给足时间则成功
+                    	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+                    	defer cancel2()
+                    	r2, err2 := slowWork(ctx2)
+                    	fmt.Println("结果:", r2, "错误:", err2)
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("为什么 `context.WithTimeout` 返回的 `cancel` 一定要调用（通常 defer）？",
+                                    List.of("为了打印日志", "不调用会让子 context 一直挂在父节点上无法释放，造成泄漏", "否则超时不生效", "只是规范要求"), 1,
+                                    "即使超时后 context 已「失效」，它仍然挂在父节点上占资源，直到父级结束才会被回收。"
+                                            + "`defer cancel()` 是标准写法，go vet 也会提示漏掉的情况。"),
+                            quiz("`ctx.Done()` 触发后，正在跑的 goroutine 会自动停止吗？",
+                                    List.of("会", "不会 —— 取消是协作式的，代码必须自己监听 Done 或把 ctx 传进阻塞调用", "会自动 panic", "取决于是否用 channel"), 1,
+                                    "Go 不会强杀 goroutine。取消只是「发出信号」，"
+                                            + "业务代码要在 `select { case <-ctx.Done(): ... }` 或把 ctx 传给下游 API 时才能响应。"))),
+
+            lesson("go-06", "并发模式与测试：worker pool、sync 与 go test", 25,
+                    """
+                    把前面学的拼成两个可复用的模式，再加上测试。
+
+                    **① Worker Pool（工作池）**：限定并发数，防止一次性起十万个 goroutine 打爆下游。
+
+                    ```go
+                    jobs := make(chan int, 100)
+                    var wg sync.WaitGroup
+                    for w := 0; w < 5; w++ {                 // 固定 5 个 worker
+                      wg.Add(1)
+                      go func() {
+                        defer wg.Done()
+                        for j := range jobs { process(j) }  // range 直到 channel 关闭
+                      }()
+                    }
+                    for i := 0; i < 100; i++ { jobs <- i }
+                    close(jobs)                               // 关闭后 worker 自然退出
+                    wg.Wait()
+                    ```
+
+                    ⚠️ 关键点：**只有生产者关闭 jobs**，消费者用 `range` 读完自动结束 ——
+                    这是「优雅收尾」的标准形态。
+
+                    **② `sync` 工具箱**：
+
+                    | 工具 | 用途 |
+                    |---|---|
+                    | `sync.WaitGroup` | 等一组 goroutine 完成 |
+                    | `sync.Mutex` / `RWMutex` | 保护共享状态（读多写少用 RWMutex） |
+                    | `sync.Once` | 只执行一次（单例、懒初始化） |
+                    | `sync/atomic` | 无锁的计数器等简单操作 |
+
+                    ⚠️ **`-race` 检测器**：`go test -race` / `go run -race` 能在运行时抓出数据竞争 ——
+                    Go 的并发 bug 极难靠读代码发现，这个开关是必用的。
+
+                    **③ 测试**：`go test` 是内置的，不用装框架。
+
+                    ```go
+                    func Add(a, b int) int { return a + b }
+
+                    func TestAdd(t *testing.T) {
+                      if got := Add(1, 2); got != 3 {
+                        t.Errorf("Add(1,2) = %d, 期望 3", got)
+                      }
+                    }
+                    ```
+
+                    ⚠️ 三个习惯：**表驱动测试**（`[]struct{name, in, want}` 一条条跑）、
+                    `t.Run` 子测试（失败时能定位到具体用例）、
+                    压测与基准用 `func BenchmarkXxx(b *testing.B)`。
+
+                    应用场景：批量调用下游、爬虫、数据管道 —— worker pool + context 超时 + `-race` 检查，
+                    这三件套覆盖了大多数 Go 并发场景。
+                    """,
+                    """
+                    package main
+
+                    import (
+                    	"fmt"
+                    	"sync"
+                    	"sync/atomic"
+                    )
+
+                    func main() {
+                    	jobs := make(chan int, 20)
+                    	var wg sync.WaitGroup
+                    	var done int64
+
+                    	// 固定 3 个 worker，避免无限制起 goroutine
+                    	for w := 0; w < 3; w++ {
+                    		wg.Add(1)
+                    		go func() {
+                    			defer wg.Done()
+                    			for j := range jobs {          // 关闭后自动结束
+                    				atomic.AddInt64(&done, int64(j))
+                    			}
+                    		}()
+                    	}
+
+                    	for i := 1; i <= 10; i++ {
+                    		jobs <- i
+                    	}
+                    	close(jobs)                            // 只有生产者关闭
+                    	wg.Wait()
+
+                    	fmt.Println("累加结果（应为 55）:", atomic.LoadInt64(&done))
+
+                    	// sync.Once：只执行一次
+                    	var once sync.Once
+                    	for i := 0; i < 3; i++ {
+                    		once.Do(func() { fmt.Println("只打印一次") })
+                    	}
+                    }
+                    """,
+                    "go",
+                    List.of(
+                            quiz("worker pool 里为什么是「生产者关闭 jobs」，而不是 worker 关闭？",
+                                    List.of("因为生产者权限更高", "worker 有多个，谁关都会导致别人再关闭时 panic；且只有生产者知道「不再有新任务」", "因为语法要求", "都可以"), 1,
+                                    "关闭 channel 的语义是「我不会再发了」。多个消费者都去关就会重复关闭（panic）；"
+                                            + "而消费者用 `range` 读到关闭即可自然退出，不需要关。"),
+                            quiz("Go 里检测数据竞争（data race）应该用什么？",
+                                    List.of("go vet", "`go test -race` / `go run -race`（竞态检测器）", "golint", "pprof"), 1,
+                                    "并发 bug 靠读代码几乎看不出来。`-race` 在运行时插桩记录访问，"
+                                            + "能直接报出「哪两处访问、在哪个 goroutine、调用栈在哪」—— 是 Go 并发调试的必备开关。"))));
+
+    // --------------------------------------------------------------------------------
+    // Rust · 进阶
+    // --------------------------------------------------------------------------------
+
+    private static final List<Map<String, Object>> RUST_ADV_LESSONS = List.of(
+            lesson("rust-04", "trait 与泛型约束：Rust 的抽象方式", 20,
+                    """
+                    前面用到的 `Copy`、`Send` 都是 **trait** —— 它是 Rust 表达「共同行为」的方式，
+                    相当于其它语言的接口，但更灵活。
+
+                    ```rust
+                    trait Summary {
+                        fn summary(&self) -> String;
+                        // 可以给默认实现，实现者不必重写
+                        fn short(&self) -> String { "…".to_string() }
+                    }
+
+                    struct Post { title: String, body: String }
+
+                    impl Summary for Post {
+                        fn summary(&self) -> String {
+                            format!("{}: {} 字", self.title, self.body.len())
+                        }
+                    }
+                    ```
+
+                    **泛型 + trait 约束**让函数适配多种类型：
+
+                    ```rust
+                    // 读作：对任意实现了 Summary 的类型 T 都可以调用
+                    fn print_summary<T: Summary>(item: &T) { println!("{}", item.summary()) }
+
+                    // 语法糖写法（impl Trait）
+                    fn print_summary2(item: &impl Summary) { println!("{}", item.summary()) }
+                    ```
+
+                    ⚠️ 三个关键概念：
+
+                    1. **静态分发（泛型）vs 动态分发（`dyn Trait`）**：
+                       泛型在编译期为每个类型生成一份代码（快、体积大）；
+                       `dyn Trait` 走虚表（运行期查找，灵活但有开销），用于「同一集合里放不同类型」
+                    2. **孤儿规则（orphan rule）**：不能给「外部类型」实现「外部 trait」——
+                       这避免了两个库互相冲突的实现
+                    3. **关联类型 vs 泛型参数**：迭代器的 `Item` 用关联类型，因为「一个类型只有一个元素类型」
+
+                    应用场景：写库/抽象层时用 trait 约束表达契约；
+                    业务里最常见的其实是**使用**它们（`#[derive(Debug, Clone)]` 就是自动实现 trait）。
+                    """,
+                    """
+                    trait Summary {
+                        fn summary(&self) -> String;
+                        fn short(&self) -> String { "…".to_string() }   // 默认实现
+                    }
+
+                    struct Post { title: String, body: String }
+
+                    impl Summary for Post {
+                        fn summary(&self) -> String {
+                            format!("{}: {} 字", self.title, self.body.len())
+                        }
+                    }
+
+                    // 泛型 + trait 约束
+                    fn print_summary<T: Summary>(item: &T) {
+                        println!("{} | {}", item.summary(), item.short());
+                    }
+
+                    // 动态分发：同一个集合里放不同的实现
+                    fn print_all(items: &[Box<dyn Summary>]) {
+                        for it in items { println!("{}", it.summary()); }
+                    }
+
+                    fn main() {
+                        let p = Post { title: "标题".into(), body: "正文内容".into() };
+                        print_summary(&p);   // 静态分发
+
+                        let mixed: Vec<Box<dyn Summary>> = vec![Box::new(p)];
+                        print_all(&mixed);   // 动态分发
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("`fn f<T: Summary>(x: &T)` 与 `fn f(x: &dyn Summary)` 的主要差别是？",
+                                    List.of("没有差别", "泛型是编译期静态分发（为每个类型生成代码），dyn 是运行期走虚表的动态分发", "dyn 更快", "泛型不能有多个类型"), 1,
+                                    "静态分发没有运行期查找开销、还能内联，代价是代码体积变大；"
+                                            + "动态分发适合「类型在运行时才确定」，但要在虚表里查一次。"),
+                            quiz("为什么 Rust 不允许你给外部类型实现外部 trait（孤儿规则）？",
+                                    List.of("性能考虑", "避免不同库为实现冲突而互相破坏 —— 保证实现的唯一性", "语法限制", "为了支持泛型"), 1,
+                                    "如果 A 库和 B 库都能给「别人的类型 + 别人的 trait」写实现，两者一旦同时被引入就会冲突，"
+                                            + "而且是不可修复的冲突。孤儿规则从根上避免了这件事。"))),
+
+            lesson("rust-05", "错误处理：Result、? 与错误链", 20,
+                    """
+                    Rust **没有异常**。可恢复的错误用 `Result<T, E>` 表示，不可恢复的用 `panic!`。
+
+                    ```rust
+                    fn div(a: f64, b: f64) -> Result<f64, String> {
+                        if b == 0.0 { return Err("除数不能为 0".to_string()) }
+                        Ok(a / b)
+                    }
+                    ```
+
+                    **`?` 运算符**是让错误处理不啰嗦的关键 —— 出错就提前返回：
+
+                    ```rust
+                    fn load(path: &str) -> Result<String, std::io::Error> {
+                        let text = std::fs::read_to_string(path)?;   // 出错直接 return Err
+                        Ok(text.trim().to_string())
+                    }
+                    ```
+
+                    ⚠️ 与 `unwrap()` 的区别：`unwrap()` 出错会 **panic**（程序崩溃），
+                    只适合「我确定这里不会错」的场景（原型、测试）；生产代码用 `?` 或 `match`。
+
+                    **组合器**让结果链式处理，避免层层 `match`：
+
+                    ```rust
+                    let n: i32 = "42".parse().unwrap_or(0);          // 失败给默认值
+                    let v = "42".parse::<i32>().map(|x| x * 2);       // 成功时转换
+                    ```
+
+                    ⚠️ **生产级程序要能表达「错误有不同类型」**。常见做法：
+                    - 用 `Box<dyn Error>` 作为函数返回类型（简单、但有动态分发开销）
+                    - 用 `thiserror` 定义自己的错误枚举（库的标准做法）
+                    - 用 `anyhow` 简化应用层的错误传播（带上下文）
+
+                    ⚠️ 一个必须建立的习惯：**`panic!` 不是错误处理**，它是「程序逻辑不该到这」的断言。
+                    服务端要尽量用 `Result` 把错误传上去，让上层决定是重试、降级还是返回 500。
+
+                    应用场景：文件/网络/解析 —— 所有可能失败的地方都返回 `Result`，
+                    编译器会强制调用方处理（这也是 Rust 服务稳定性高的原因之一）。
+                    """,
+                    """
+                    use std::num::ParseIntError;
+
+                    // ? 运算符：出错自动提前返回
+                    fn parse_pair(s: &str) -> Result<(i32, i32), ParseIntError> {
+                        let mut it = s.split(',');
+                        let a = it.next().unwrap_or("").trim().parse::<i32>()?;
+                        let b = it.next().unwrap_or("").trim().parse::<i32>()?;
+                        Ok((a, b))
+                    }
+
+                    fn main() {
+                        match parse_pair("1,2") {
+                            Ok((a, b)) => println!("解析成功: {} {}", a, b),
+                            Err(e) => println!("解析失败: {}", e),
+                        }
+
+                        // 组合器：失败时给默认值，不 panic
+                        let n: i32 = "abc".parse().unwrap_or(0);
+                        println!("unwrap_or 兜底: {}", n);
+
+                        // map：成功时转换
+                        let doubled = "21".parse::<i32>().map(|x| x * 2).unwrap_or(-1);
+                        println!("map 转换: {}", doubled);
+
+                        println!("注意：生产代码避免 unwrap()，它会 panic");
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("`?` 运算符在函数里遇到 `Err` 时会做什么？",
+                                    List.of("panic", "立即从当前函数返回该错误（要求函数返回类型能容纳它）", "忽略错误", "重试"), 1,
+                                    "`?` 是「出错就提前 return Err(...)」的语法糖。"
+                                            + "所以它只能用在返回 `Result`/`Option` 的函数里 —— 否则编译报错。"),
+                            quiz("生产代码里为什么应尽量避免 `unwrap()`？",
+                                    List.of("性能差", "它在出错时直接 panic、进程崩溃；应该用 `?`/match/组合器把错误交给上层", "语法已废弃", "会内存泄漏"), 1,
+                                    "`unwrap()` 等于「我保证这里不会错」—— 一旦错了就是崩溃。"
+                                            + "在库和服务里，错误应当向上传递，由调用方决定可恢复的策略。"))),
+
+            lesson("rust-06", "并发与工程：Send/Sync 与 cargo 工作区", 25,
+                    """
+                    最后一步：把 Rust 的并发安全与工程组织讲清楚。
+
+                    **① `Send` / `Sync` 是「并发安全带」**。它们是编译器自动推导的标记 trait：
+
+                    - `Send`：类型的所有权**可以跨线程转移**
+                    - `Sync`：类型的引用**可以被多线程共享**（`&T` 是 Send）
+
+                    ⚠️ 关键点：**你几乎不需要手动实现它们**。编译器会检查：
+                    如果类型含 `Rc`（引用计数不是原子的），它就不是 `Send` ——
+                    **代码根本无法编译到多线程里**。这就是「Rust 的并发 bugs 在编译期就没了」的原理。
+
+                    ```rust
+                    use std::thread;
+                    use std::sync::{Arc, Mutex};
+
+                    let counter = Arc::new(Mutex::new(0));   // Arc：多线程安全的共享所有权
+                    let c = Arc::clone(&counter);
+                    thread::spawn(move || { *c.lock().unwrap() += 1 }).join().unwrap();
+                    ```
+
+                    对照一下：`Rc` 单线程用（便宜），`Arc` 多线程用（原子计数，略贵）；
+                    `Mutex` 在 Rust 里还**顺带保证了「锁住才能访问」**（不像别的语言谁都能读）。
+
+                    **② `cargo` 工作区**：一个仓库多个 crate。
+
+                    ```toml
+                    # Cargo.toml（根）
+                    [workspace]
+                    members = ["api", "core", "cli"]
+                    ```
+
+                    好处：共享依赖版本、统一构建、crate 之间用 `path` 互相依赖，
+                    同时保留模块边界（`core` 不能反向依赖 `api`）。
+
+                    **③ 工程习惯**：`cargo fmt`（格式化）、`cargo clippy`（静态检查，
+                    能挑出大量坏味道）、`cargo test`、`cargo build --release`。
+
+                    应用场景：Rust 常用于「性能 + 安全」都要的后端组件（代理、网关、
+                    WASM 模块）。它最大的价值是：**并发与内存的正确性由编译器保证**，
+                    代价是写的时候要多想一步。
+                    """,
+                    """
+                    use std::sync::{Arc, Mutex};
+                    use std::thread;
+
+                    fn main() {
+                        // Arc：多线程共享所有权；Mutex：互斥访问
+                        let counter = Arc::new(Mutex::new(0));
+                        let mut handles = vec![];
+
+                        for _ in 0..4 {
+                            let c = Arc::clone(&counter);
+                            handles.push(thread::spawn(move || {
+                                let mut n = c.lock().unwrap();   // 锁住才能改
+                                *n += 1;
+                            }));
+                        }
+                        for h in handles { h.join().unwrap(); }
+
+                        println!("计数 = {}", *counter.lock().unwrap());
+
+                        // 反例（编译不过）：Rc 不是 Send，无法跨线程
+                        // use std::rc::Rc;
+                        // let rc = Rc::new(1);
+                        // thread::spawn(move || println!("{}", rc));   // 编译错误
+
+                        println!("提示：cargo fmt / clippy / test 是日常三件套");
+                    }
+                    """,
+                    "rust",
+                    List.of(
+                            quiz("Rust 编译器如何保证「不会把非线程安全的类型送到别的线程」？",
+                                    List.of("运行时检查", "通过 Send / Sync 这两个标记 trait 在**编译期**判定，不满足就直接编译失败", "靠开发者自觉", "靠 GC"), 1,
+                                    "编译器会自动推导类型是否 Send/Sync。比如含 `Rc` 的类型不是 Send，"
+                                            + "于是跨线程使用它的代码**编译不过** —— 并发的这类错误在写的时候就被拦住了。"),
+                            quiz("`Rc` 与 `Arc` 的区别是？",
+                                    List.of("没有区别", "`Rc` 是单线程引用计数（便宜），`Arc` 用原子计数（多线程安全、略贵）", "Arc 不能共享", "Rc 更快但会内存泄漏"), 1,
+                                    "`Rc` 用普通整数做计数，多线程下会有数据竞争，所以不是 `Send`；"
+                                            + "`Arc` 用原子操作计数，可以在线程间共享，代价是每次克隆/析构都有原子操作开销。"))));
+
     public static final List<Map<String, Object>> BASE_TRACKS = List.of(
             track("javascript", "JavaScript", "🟨",
                     "从变量、函数到数组处理，再走到异步、原型与 DOM —— 浏览器里可以直接跑，改完立刻看结果。",
@@ -4554,35 +6630,40 @@ public final class LearningSeed {
                     List.of(
                             stage("js-basic", "入门", "读懂并写出日常的函数与数组处理代码", JS_LESSONS),
                             stage("js-adv", "进阶", "掌握对象解构、异步编程与 this / 原型的真实行为", JS_ADV_LESSONS),
-                            stage("js-pro", "实战", "把数据变成界面：DOM、事件委托与模块化请求", JS_PRO_LESSONS))),
+                            stage("js-pro", "实战", "把数据变成界面：DOM、事件委托与模块化请求", JS_PRO_LESSONS),
+                            stage("js-expert", "精通", "底层机制与性能：事件循环、内存泄漏、渲染优化", JS_EXPERT_LESSONS))),
             track("python", "Python", "🐍",
                     "强类型动态语言，语法干净、生态庞大。教程里的每段代码都能在浏览器里真跑（Pyodide）。",
                     "pyodide",
                     List.of(
                             stage("py-basic", "入门", "掌握变量、列表推导式与函数参数这两个最常用的语言特性", PY_LESSONS),
                             stage("py-adv", "进阶", "用字典集合做数据组织，用类与异常写出可维护的代码", PY_ADV_LESSONS),
-                            stage("py-pro", "实战", "标准库三件套与数据处理流程，跑通一个真实的清洗脚本", PY_PRO_LESSONS))),
+                            stage("py-pro", "实战", "标准库三件套与数据处理流程，跑通一个真实的清洗脚本", PY_PRO_LESSONS),
+                            stage("py-expert", "精通", "并发模型选型、装饰器与上下文管理器、性能定位", PY_EXPERT_LESSONS))),
             track("sql", "SQL", "🗄️",
                     "关系数据库查询语言。用 sql.js 在浏览器里建临时库，每条语句都能真跑真看结果。",
                     "sqljs",
                     List.of(
                             stage("sql-basic", "入门", "能独立写出联表、分组、排序的查询，并知道常见陷阱", SQL_LESSONS),
                             stage("sql-adv", "进阶", "用 CTE 与窗口函数表达复杂逻辑，理解索引为什么影响性能", SQL_ADV_LESSONS),
-                            stage("sql-pro", "实战", "分页、去重、留存与事务 —— 业务查询与并发写的高频场景", SQL_PRO_LESSONS))),
+                            stage("sql-pro", "实战", "分页、去重、留存与事务 —— 业务查询与并发写的高频场景", SQL_PRO_LESSONS),
+                            stage("sql-expert", "精通", "慢查询治理、大数据量策略与读写分离下的一致性", SQL_EXPERT_LESSONS))),
             track("typescript", "TypeScript", "🔷",
                     "在 JS 之上加静态类型：类型只在编译期存在、运行时全被擦除。浏览器里可直接转译运行（只去类型、不做类型检查）。",
                     "worker",
                     List.of(
                             stage("ts-basic", "入门", "理解类型标注、判别联合与泛型分别在解决什么问题", TS_LESSONS),
                             stage("ts-adv", "进阶", "用工具类型与类型守卫把「运行时数据」收窄成确定的类型", TS_ADV_LESSONS),
-                            stage("ts-pro", "实战", "封装类型安全的请求层，并把 tsconfig 的严格档打开", TS_PRO_LESSONS))),
+                            stage("ts-pro", "实战", "封装类型安全的请求层，并把 tsconfig 的严格档打开", TS_PRO_LESSONS),
+                            stage("ts-expert", "精通", "工程化与类型边界：声明文件、类型体操的分寸、渐进迁移", TS_EXPERT_LESSONS))),
             track("lua", "Lua", "🌙",
                     "极简的嵌入式脚本语言：只有一种数据结构（table），索引从 1 开始。运行方案体积在这几门里最小（Fengari 约 300KB）。",
                     "fengari",
                     List.of(
                             stage("lua-basic", "入门", "掌握 table 的引用语义，以及用 metatable 搭出面向对象", LUA_LESSONS),
                             stage("lua-adv", "进阶", "迭代器与协程：把遍历、错误处理与「可暂停的流程」讲清楚", LUA_ADV_LESSONS),
-                            stage("lua-pro", "实战", "用模块组织代码，用元表做出只读配置与默认值", LUA_PRO_LESSONS))),
+                            stage("lua-pro", "实战", "用模块组织代码，用元表做出只读配置与默认值", LUA_PRO_LESSONS),
+                            stage("lua-expert", "精通", "GC 与弱表、性能与 LuaJIT、嵌入式沙箱与热更新", LUA_EXPERT_LESSONS))),
             // 下面几门 runner 不是 ready：能跑但要权衡（体积/外部依赖），或只能走后端沙箱 —— 内容照写，页面上如实标注
             track("c", "C / C++", "⚙️",
                     "指针、内存与 C++ 的 RAII。内容已写全；运行需要把 Clang 编译成 WASM，首屏要下几十兆 —— 适合做成「点了才下载」的可选能力。",
@@ -4590,22 +6671,28 @@ public final class LearningSeed {
                     List.of(
                             stage("c-basic", "入门", "理解指针与内存，以及 RAII 为什么让 C++ 少犯内存错", CPP_LESSONS),
                             stage("c-adv", "进阶", "结构体布局、编译链接与 STL —— 把 C/C++ 的工程面补齐", CPP_ADV_LESSONS),
-                            stage("c-pro", "实战", "内存 bug 排查与性能：用工具定位，而不是凭直觉", CPP_PRO_LESSONS))),
+                            stage("c-pro", "实战", "内存 bug 排查与性能：用工具定位，而不是凭直觉", CPP_PRO_LESSONS),
+                            stage("c-expert", "精通", "未定义行为、并发与内存模型、ABI 与构建系统", CPP_EXPERT_LESSONS))),
             track("java", "Java", "☕",
                     "类型系统、集合框架与面向对象。内容已写全；浏览器里只有 CheerpJ（社区版不许自托管、且只到 Java 8），要学现代 Java 得走后端沙箱。",
                     "cheerpj",
                     List.of(
                             stage("java-basic", "入门", "掌握包装类型陷阱、集合选型与异常分类", JAVA_LESSONS),
                             stage("java-adv", "进阶", "泛型擦除、线程池与 IO —— 服务端开发绕不开的三块", JAVA_ADV_LESSONS),
-                            stage("java-pro", "实战", "写一个 Spring Boot 接口，并看懂 JVM 内存与 GC 的线上问题", JAVA_PRO_LESSONS))),
+                            stage("java-pro", "实战", "写一个 Spring Boot 接口，并看懂 JVM 内存与 GC 的线上问题", JAVA_PRO_LESSONS),
+                            stage("java-expert", "精通", "JVM 调优与诊断、并发进阶、IoC/AOP 的原理与失效场景", JAVA_EXPERT_LESSONS))),
             track("go", "Go", "🐹",
                     "内容已写全，但编译链太重、浏览器里没有实用方案：官方 playground 也是把源码发到后端编译。要真跑需接后端沙箱。",
                     "server",
-                    List.of(stage("go-basic", "入门", "多返回值与 error、goroutine / channel、结构体与隐式接口", GO_LESSONS))),
+                    List.of(
+                            stage("go-basic", "入门", "多返回值与 error、goroutine / channel、结构体与隐式接口", GO_LESSONS),
+                            stage("go-adv", "进阶", "组合优于继承、context 超时取消、worker pool 与 go test", GO_ADV_LESSONS))),
             track("rust", "Rust", "🦀",
                     "内容已写全，同样需要后端 rustc。浏览器内只能跑预编译好的 WASM 产物，不能现场编译源码。",
                     "server",
-                    List.of(stage("rust-basic", "入门", "所有权与借用、结构体与枚举 —— 先从「编译期内存安全」这条主线入手", RUST_LESSONS))))
+                    List.of(
+                            stage("rust-basic", "入门", "所有权与借用、结构体与枚举 —— 先从「编译期内存安全」这条主线入手", RUST_LESSONS),
+                            stage("rust-adv", "进阶", "trait 抽象、Result 错误处理、Send/Sync 与 cargo 工作区", RUST_ADV_LESSONS))))
     ;
 
     // ==================================================================================
