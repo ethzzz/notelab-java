@@ -6,9 +6,14 @@ import com.notelab.common.JsonUtil;
 import com.notelab.model.LearningSeed;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -76,8 +81,44 @@ public class LearningContentController {
      * 这是「编辑即公开」的取舍，符合本模块「后台知识库」的定位。
      */
     @GetMapping("/public")
-    public ResponseEntity<Map<String, Object>> publicGet() {
-        return ResponseEntity.ok(learningOf(UiConfigService.getConfig()));
+    public ResponseEntity<Map<String, Object>> publicGet(
+            @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch) {
+        Map<String, Object> body = learningOf(UiConfigService.getConfig());
+        String etag = etagOf(body);
+        HttpHeaders headers = new HttpHeaders();
+        headers.setETag(etag);
+        // ⚠️ no-cache（**不是 no-store**）：允许浏览器存一份，但每次使用前必须带
+        //    If-None-Match 回源确认 —— 内容没变就是 304（无响应体），变了立刻拿到新的。
+        //    于是「B 端改完 C 端立刻生效」与「不重复下载 170KB」两者兼得。
+        //    用 no-store 会退回「每次全量下载」，用 max-age 会让编辑延迟可见，都不取。
+        headers.setCacheControl(CacheControl.noCache());
+        if (etag.equals(ifNoneMatch)) {
+            return new ResponseEntity<>(headers, HttpStatus.NOT_MODIFIED);
+        }
+        return new ResponseEntity<>(body, headers, HttpStatus.OK);
+    }
+
+    /**
+     * 由响应体内容算一个强 ETag。
+     *
+     * <p>为什么不用 {@code ShallowEtagHeaderFilter}：那个过滤器会把响应体整份缓存在内存里
+     * 再算摘要，注册时容易顺手套到整个 {@code /api/**} 上 —— 而本站有 SSE（长连接、不能缓冲）。
+     * 这里只给这一个只读端点自己算，边界清楚。
+     *
+     * <p>用 SHA-256 而不是 {@code hashCode()}：后者碰撞太容易，一旦撞上就会把一个**已更新**的
+     * 内容误判成「没变」，用户看到的永远是旧课程。摘要取前 16 个十六进制字符足够区分。
+     */
+    private static String etagOf(Map<String, Object> body) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(JsonUtil.write(body).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder("\"");
+            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", digest[i]));
+            return sb.append('"').toString();
+        } catch (Exception e) {
+            // 摘要算法不可用属于环境异常；退化成「每次都回全量」，功能不受影响，只是少了优化
+            return "\"no-etag\"";
+        }
     }
 
     @PostMapping
