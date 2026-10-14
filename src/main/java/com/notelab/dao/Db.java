@@ -132,6 +132,11 @@ public final class Db {
             if (a == null) ps.setNull(i + 1, java.sql.Types.NULL);
             else if (a instanceof Long l) ps.setLong(i + 1, l);
             else if (a instanceof Integer n) ps.setInt(i + 1, n);
+            // ⚠️ byte[] 必须走 setBytes。落到下面那行的 setString(a.toString()) 会把它存成
+            //    字符串 "[B@1a2b3c" —— 一个「上传 70 字节的 PNG、取回来 11 字节、文件头是 5b 42 40」
+            //    的静默损坏，而且 size_bytes 列还是对的（那是插入前算的 length），
+            //    只有把字节真正读出来对比才发现。2026-10-14 练习实践插图（practice_image.data）踩到。
+            else if (a instanceof byte[] b) ps.setBytes(i + 1, b);
             else ps.setString(i + 1, a.toString());
         }
     }
