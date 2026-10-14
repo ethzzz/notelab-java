@@ -4,20 +4,17 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
+import com.notelab.common.YamlText;
 import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
+import com.notelab.service.BlogRepoService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -50,16 +47,11 @@ public class BlogContentController {
     private static final DateTimeFormatter FMTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx");
 
-    private static String blogRepoUrl() {
-        return AppConfig.get("BLOG_REPO_URL", "git@github.com:ethzzz/blog.git");
-    }
-
-    private static String blogLocal() {
-        return AppConfig.get("BLOG_REPO_LOCAL", "/root/blog-src");
-    }
+    /** 文章目录（仓内相对路径）。clone / pull / commit / push 统一走 {@link BlogRepoService}，别在本类里重写一套 */
+    private static final String POSTS_DIR = "src/content/posts";
 
     private static Path postsDir() {
-        return Paths.get(blogLocal(), "src/content/posts");
+        return BlogRepoService.resolve(POSTS_DIR);
     }
 
     // ===================== AI 起草 =====================
@@ -131,17 +123,9 @@ public class BlogContentController {
     public ResponseEntity<Map<String, Object>> list(HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
         List<Map<String, Object>> items = new ArrayList<>();
-        Path dir = postsDir();
-        if (Files.isDirectory(dir)) {
-            try (var s = Files.list(dir)) {
-                s.filter(p -> p.getFileName().toString().endsWith(".md"))
-                        .sorted((a, b) -> a.getFileName().toString().compareTo(b.getFileName().toString()))
-                        .limit(200)
-                        .forEach(p -> items.add(Map.of(
-                                "slug", p.getFileName().toString().replaceAll("\\.md$", ""))));
-            } catch (Exception ignore) {
-                // 列不出也不阻塞
-            }
+        for (String name : BlogRepoService.listNames(POSTS_DIR)) {
+            if (name.endsWith(".md")) items.add(Map.of("slug", name.replaceAll("\\.md$", "")));
+            if (items.size() >= 200) break;
         }
         return ResponseEntity.ok(Map.of("ok", true, "items", items));
     }
@@ -178,51 +162,31 @@ public class BlogContentController {
         if (slug.isEmpty()) slug = slugify(title);
         if (slug.isEmpty()) slug = "post";
 
-        ensureClone();
+        BlogRepoService.ensure();
 
-        Path file = postsDir().resolve(slug + ".md");
+        String fileName = slug + ".md";
         int i = 1;
-        while (Files.exists(file)) {
-            file = postsDir().resolve(slug + "-" + i + ".md");
+        while (BlogRepoService.exists(POSTS_DIR + "/" + fileName)) {
+            fileName = slug + "-" + i + ".md";
             i++;
         }
 
         String fmText = buildFrontmatter(title, category, description, tagsJoined, draft);
-        Files.writeString(file, fmText + body + "\n", StandardCharsets.UTF_8);
+        String rel = POSTS_DIR + "/" + fileName;
+        BlogRepoService.writeText(rel, fmText + body + "\n");
 
-        String commit = gitCommitAndPush(file.getFileName().toString(), title);
+        String commit = BlogRepoService.commitPush(
+                "blog: add " + (title.length() > 40 ? title.substring(0, 40) : title), List.of(rel));
         return Map.of(
                 "ok", true,
-                "slug", file.getFileName().toString().replaceAll("\\.md$", ""),
-                "path", "src/content/posts/" + file.getFileName(),
+                "slug", fileName.replaceAll("\\.md$", ""),
+                "path", rel,
                 "commit", commit,
                 "draft", draft);
     }
 
-    /** 确保本地 clone 存在并与远端同步（ff-only，避免非快进 push 被拒） */
-    private void ensureClone() throws Exception {
-        Path local = Paths.get(blogLocal());
-        if (!Files.isDirectory(local.resolve(".git"))) {
-            run(List.of("git", "clone", blogRepoUrl(), blogLocal()));
-        } else {
-            run(List.of("git", "-C", blogLocal(), "pull", "--ff-only"));
-        }
-        Files.createDirectories(postsDir());
-    }
-
-    /** 提交并推送；无变更返回 "no-change" */
-    private String gitCommitAndPush(String fileName, String title) throws Exception {
-        run(List.of("git", "-C", blogLocal(), "add", "src/content/posts/" + fileName));
-        String msg = "blog: add " + (title.length() > 40 ? title.substring(0, 40) : title);
-        int code = run(List.of("git", "-C", blogLocal(), "commit", "-m", msg), false);
-        if (code != 0) return "no-change";
-        run(List.of("git", "-C", blogLocal(), "push"));
-        try {
-            return runCapture(List.of("git", "-C", blogLocal(), "rev-parse", "--short", "HEAD")).trim();
-        } catch (Exception e) {
-            return "pushed";
-        }
-    }
+    // clone / pull / commit / push 已收敛到 {@link BlogRepoService}（练习实践发布共用同一套）。
+    // 之前这里各写一份，两处对「clone 放哪、push 被拒怎么办」的处理并不一致 —— 这类差异只在生产暴露。
 
     // ===================== 文本/工具 =====================
 
@@ -232,17 +196,17 @@ public class BlogContentController {
                 .map(String::trim).filter(t -> !t.isEmpty()).collect(Collectors.toList());
         StringBuilder sb = new StringBuilder();
         sb.append("---\n");
-        sb.append("title: ").append(yamlQuote(title)).append("\n");
+        sb.append("title: ").append(YamlText.quote(title)).append("\n");
         sb.append("published: ").append(OffsetDateTime.now().format(FMTER)).append("\n");
-        sb.append("description: ").append(yamlQuote(description)).append("\n");
+        sb.append("description: ").append(YamlText.quote(description)).append("\n");
         if (tags.isEmpty()) {
             sb.append("tags: []\n");
         } else {
             sb.append("tags: [")
-                    .append(tags.stream().map(this::yamlQuote).collect(Collectors.joining(", ")))
+                    .append(tags.stream().map(YamlText::quote).collect(Collectors.joining(", ")))
                     .append("]\n");
         }
-        sb.append("category: ").append(yamlQuote(category.isEmpty() ? "未分类" : category)).append("\n");
+        sb.append("category: ").append(YamlText.quote(category.isEmpty() ? "未分类" : category)).append("\n");
         sb.append("draft: ").append(draft ? "true" : "false").append("\n");
         sb.append("---\n");
         return sb.toString();
@@ -277,11 +241,7 @@ public class BlogContentController {
         return fm;
     }
 
-    /** 单引号包裹标量；内部单引号翻倍（YAML 安全）；去换行 */
-    private String yamlQuote(String s) {
-        String t = s == null ? "" : s.replace("\r", "").replace("\n", " ").trim();
-        return "'" + t.replace("'", "''") + "'";
-    }
+    // 单引号 YAML 标量已收敛到 common/YamlText.quote（练习实践发布共用同一口径）
 
     private String unquote(String v) {
         if (v == null) return "";
@@ -330,42 +290,7 @@ public class BlogContentController {
     }
 
     // ===================== 进程执行 =====================
-
-    private int run(List<String> cmd) throws Exception {
-        return run(cmd, true);
-    }
-
-    private int run(List<String> cmd, boolean fail) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out;
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-            out = br.lines().collect(Collectors.joining("\n"));
-        }
-        int code = p.waitFor();
-        if (code != 0 && fail) {
-            throw new RuntimeException("命令失败(" + code + "): " + String.join(" ", cmd) + "\n" + out);
-        }
-        return code;
-    }
-
-    private String runCapture(List<String> cmd) throws Exception {
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out;
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-            out = br.lines().collect(Collectors.joining("\n"));
-        }
-        int code = p.waitFor();
-        if (code != 0) {
-            throw new RuntimeException("命令失败(" + code + "): " + String.join(" ", cmd) + "\n" + out);
-        }
-        return out;
-    }
+    // 已移除：run / runCapture 收敛到 BlogRepoService.run（那里补了超时与非交互 SSH 环境变量）
 
     /** frontmatter 解析结果 */
     private static final class Frontmatter {

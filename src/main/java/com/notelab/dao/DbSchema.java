@@ -425,6 +425,44 @@ final class DbSchema {
                 created_by BIGINT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- 练习实践 · 发布到博客所需的字段（2026-10-14）----
+        // 对齐博客仓 src/content/solutions 的 frontmatter（见 astro-blog-fuwari/docs/solutions-convention.md）：
+        // module/chapter/order_no/slug_name 四项拼出**文件名与 URL**，缺一项就归到聚合页的「独立分组」。
+        // ⚠️ module 与已有的 type **不是一个东西**：type 是语言码（js/ts/java），
+        //    module 是学习路线模块前缀（algo/typescript/js/react/…）；同一门语言可能横跨多个模块。
+        // ⚠️ 列名用 order_no 而不是 order —— order 是 SQL 保留字，写进 INSERT 就得处处加反引号。
+        if (!hasColumn("practice_record", "module")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN module VARCHAR(32) NOT NULL DEFAULT ''");
+        }
+        if (!hasColumn("practice_record", "chapter")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN chapter VARCHAR(8) NOT NULL DEFAULT ''");
+        }
+        if (!hasColumn("practice_record", "order_no")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN order_no INT NOT NULL DEFAULT 0");
+        }
+        if (!hasColumn("practice_record", "slug_name")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN slug_name VARCHAR(120) NOT NULL DEFAULT ''");
+        }
+        if (!hasColumn("practice_record", "difficulty")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN difficulty VARCHAR(8) NOT NULL DEFAULT '中等'");
+        }
+        if (!hasColumn("practice_record", "tags")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN tags VARCHAR(255) NOT NULL DEFAULT ''");
+        }
+        if (!hasColumn("practice_record", "description")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN description VARCHAR(500) NOT NULL DEFAULT ''");
+        }
+        // 发布态：发布过什么、什么时候发的、对应哪次 commit。
+        // 没有这三列就无法回答「这条改完再点发布，是覆盖原来的还是又发一篇」——重复发布正是要防的事。
+        if (!hasColumn("practice_record", "published_at")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN published_at DATETIME NULL");
+        }
+        if (!hasColumn("practice_record", "published_slug")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN published_slug VARCHAR(200) NOT NULL DEFAULT ''");
+        }
+        if (!hasColumn("practice_record", "published_commit")) {
+            Db.exec("ALTER TABLE practice_record ADD COLUMN published_commit VARCHAR(64) NOT NULL DEFAULT ''");
+        }
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");
