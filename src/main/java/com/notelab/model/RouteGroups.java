@@ -51,6 +51,8 @@ public final class RouteGroups {
             Map.entry("/stress-test", List.of("admin/stress-test")),
             Map.entry("/trpg/gen", List.of("trpg")),
             Map.entry("/practice/dev-summary", List.of("dev-notes")),
+            // 练习实践：记录 CRUD 与插图上传都在 /api/practice（同一模块键）
+            Map.entry("/practice", List.of("practice")),
             Map.entry("/learning", List.of("learning")),
             Map.entry("/analytics", List.of("analytics")),
             Map.entry("/perm", List.of("perm")),

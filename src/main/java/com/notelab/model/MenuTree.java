@@ -68,6 +68,11 @@ public final class MenuTree {
             // 内容存 ui_config.dev_notes（见 DevNoteController），不是 C 端消费的配置，编辑即生效、无发布快照。
             group("g_practice", "项目实践", "🧪", List.of(
                     menu("dev-summary", "项目开发总结", "📓", "/practice/dev-summary", true))),
+            // 练习实践：记录做完每道练习题后的解答（Markdown 正文 + 可传插图）。
+            // 与「项目开发总结」的区别：那边是按项目沉淀**技术难点**、整份文档一次提交；
+            // 这边是**一条记录一道题**，独立增删改、带分页筛选，所以走真正的表（practice_record）。
+            // 接口在受限前缀 /api/practice（仅超管）；路由必须同步登记在 PageRoutes.PAGE_ROUTES 与 RouteGroups。
+            menu("practice", "练习实践", "🏋️", "/practice", true),
             // 编程学习：语言 → 阶段 → 课时 → 随堂测试，每节课有讲解 + 可运行示例 + 选择题。
             // 内容存 ui_config.learning（见 LearningContentController），后台知识库、编辑即生效、无发布快照。
             // 每个语言带 runner 标签说明「能不能在浏览器里真跑、走什么方案」（能力表只读，见 LearningSeed.RUNNERS）。

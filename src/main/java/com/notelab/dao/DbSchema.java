@@ -391,6 +391,40 @@ final class DbSchema {
                 UNIQUE KEY uk_user_game (user_id, game_code),
                 KEY idx_game (game_code)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- 练习实践（2026-10-14，只增不改）：记录每条练习题的解答（Markdown 正文） ----
+        // 为什么不进 ui_config：这是**运行数据**（随记录条数无限增长），且「删一条」不该重写整份配置 ——
+        // 与 lowcode_records 同一个判据（见 LowCodeController 类注释的「两套存储，别混」）。
+        // type 存的是语言码（js/ts/java/…），多选筛选直接走 IN + idx_practice_type。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS practice_record (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                title VARCHAR(200) NOT NULL,
+                type VARCHAR(32) NOT NULL DEFAULT '',
+                content LONGTEXT,
+                created_by BIGINT NULL,
+                created_by_name VARCHAR(64) NOT NULL DEFAULT '',
+                updated_by BIGINT NULL,
+                updated_by_name VARCHAR(64) NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_practice_type (type),
+                KEY idx_practice_updated (updated_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // ---- 练习实践 · 编辑器插图（2026-10-14，只增不改）----
+        // 图为什么不放文件系统：放盘要额外改 nginx location + 部署脚本保证目录存在 + 备份时单独处理，
+        // 三处都会忘；落库则 mysqldump（cron 0 3 那条）天然一起备份，也不需要动公网入口。
+        // 正文里只留短 URL（/api/practice/images/{id}），避免把 base64 塞进 Markdown ——
+        // textarea 里一个几十万字符的 data URL 会让编辑器直接卡住。
+        // ⚠️ 只增不删：删记录**不**级联删图（同一张图可能被多条记录引用），孤儿图暂不回收。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS practice_image (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                mime VARCHAR(64) NOT NULL DEFAULT 'image/png',
+                size_bytes INT NOT NULL DEFAULT 0,
+                data MEDIUMBLOB NOT NULL,
+                created_by BIGINT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");

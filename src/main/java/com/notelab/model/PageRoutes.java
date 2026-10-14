@@ -56,6 +56,10 @@ public final class PageRoutes {
             new String[]{"/loot-editor/balance", "摸金·全局参数"},
             // 项目实践 → 项目开发总结（与 MenuTree.g_practice 一一对应；漏这里叶子会被 RBAC 过滤）
             new String[]{"/practice/dev-summary", "项目实践·开发总结"},
+            // 练习实践（与 MenuTree 的 practice 一一对应；漏这里叶子会被 RBAC 过滤）。
+            // ⚠️ 二级页面走 /practice?id=<记录id>&mode=view|edit —— 守卫的 pages.includes(pathname) 是
+            //    **精确匹配**，子路由 /practice/xxx 不在表里会被判无权限（协作画布 / 编程学习踩过同一个坑）。
+            new String[]{"/practice", "练习实践"},
             // 编程学习（与 MenuTree.g_learn 一一对应；漏这里 → 叶子被 RBAC 过滤看不到）。
             // 详情页用 /learning?track=<code> 单页承载 —— 守卫的 pages.includes(pathname) 是**精确匹配**，
             // 子路由 /learning/xxx 不在表里会被判无权限（协作画布踩过同一个坑）。
