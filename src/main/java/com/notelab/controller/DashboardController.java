@@ -40,8 +40,12 @@ import java.util.TreeMap;
 @RequestMapping("/api/dashboard")
 public class DashboardController {
 
-    /** 内容产出趋势窗口（天） */
-    private static final int TREND_DAYS = 14;
+    /**
+     * 趋势窗口（天）。取 30 而非 14：这个站的内容是**低频产出**（笔记 / 文档按周计），
+     * 14 天窗口经常一条新增都没有 —— 图上什么都看不见，等于没这个区块。
+     * 30 天既能反映真实节奏，又与 {@code /api/analytics} 的默认窗口对齐。
+     */
+    private static final int TREND_DAYS = 30;
     /** 登录审计窗口（天） */
     private static final int LOGIN_TREND_DAYS = 7;
     /** C 端埋点 app 码（活跃趋势只看 C 端 —— B 端后台自用的埋点混进来会把曲线拖平） */
