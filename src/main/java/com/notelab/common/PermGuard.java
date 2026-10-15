@@ -98,7 +98,8 @@ public final class PermGuard {
     public static final Set<String> SESSION_ENDPOINTS = Set.of(
             "/api/login", "/api/logout", "/api/me", "/api/register",
             "/api/auth/verify", "/api/menu",
-            "/api/health/llm"   // 大模型可用性：任何登录用户都要能查，否则前端无法提示"已降级为本地判分"
+            "/api/health/llm",  // 大模型可用性：任何登录用户都要能查，否则前端无法提示"已降级为本地判分"
+            "/api/dashboard"    // 仪表盘聚合（对应 /dashboard 落地页）：基础壳数据，按权限码发放会让新角色打开一片空白
     );
 
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
