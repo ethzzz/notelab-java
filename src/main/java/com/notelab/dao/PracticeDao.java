@@ -137,6 +137,49 @@ public final class PracticeDao {
         return r == null ? 0 : num(r.get("c"));
     }
 
+    // ==================== 公开侧（匿名只读，只认已发布的）====================
+
+    /**
+     * 已发布的全部条目（**不含正文**），按模块 → 篇章 → 题号排序。
+     *
+     * <p>⚠️ 判据是 {@code published_slug <> ''} 而不是某个 boolean 列：
+     * slug 既是「发布过」的标记，也是对外 URL 的一段 —— 两件事用同一份数据就不可能不一致。
+     */
+    public static List<Map<String, Object>> listPublished() {
+        List<Map<String, Object>> rows = Db.queryAll(
+                "SELECT " + COLS_LIST + " FROM practice_record WHERE published_slug <> '' "
+                        + "ORDER BY module, chapter, order_no, id");
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) out.add(rowOf(r, false));
+        return out;
+    }
+
+    /** 按对外 slug 取一条（**含正文**）。不存在返回 null。 */
+    public static Map<String, Object> getByPublishedSlug(String slug) {
+        if (slug == null || slug.isBlank()) return null;
+        Map<String, Object> r = Db.queryOne(
+                "SELECT " + COLS_ALL + " FROM practice_record WHERE published_slug=?", slug);
+        return r == null ? null : rowOf(r, true);
+    }
+
+    /**
+     * 同模块 + 同篇章的已发布条目（按题号排）—— 详情页的「上一篇 / 下一篇」用。
+     *
+     * <p>为什么不按 relatedPost 分组：记录里**没有**这个字段（它是发布时由 module + 篇章号
+     * 推导出来的，见 PracticeController）。同一对 (module, chapter) 恰好等价于同一篇原文，
+     * 所以这里直接按这两列分组，不必再把它落库成第三份数据。
+     */
+    public static List<Map<String, Object>> listPublishedChapter(String module, String chapter) {
+        if (module == null || module.isBlank() || chapter == null || chapter.isBlank()) return List.of();
+        List<Map<String, Object>> rows = Db.queryAll(
+                "SELECT " + COLS_LIST + " FROM practice_record "
+                        + "WHERE published_slug <> '' AND module=? AND chapter=? ORDER BY order_no, id",
+                module, chapter);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) out.add(rowOf(r, false));
+        return out;
+    }
+
     // ==================== 内部 ====================
 
     /** 列表列（不含正文） */

@@ -26,16 +26,35 @@ public final class PracticeImageDao {
 
     /** 单张图（含字节）。不存在返回 null —— Controller 据此回 404。 */
     public static Map<String, Object> getImage(long id) {
-        Map<String, Object> r = Db.queryOne(
-                "SELECT id, mime, size_bytes, data FROM practice_image WHERE id=?", id);
-        if (r == null) return null;
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", num(r.get("id")));
-        m.put("mime", str(r.get("mime")));
-        m.put("size_bytes", num(r.get("size_bytes")));
-        Object d = r.get("data");
-        m.put("data", d instanceof byte[] b ? b : new byte[0]);
-        return m;
+        return mapOf(Db.queryOne("SELECT " + COLS + " FROM practice_image WHERE id=?", id));
+    }
+
+    /**
+     * 按**公开名**取图（匿名接口用）。不存在返回 null。
+     *
+     * <p>⚠️ 公开侧一律走这个方法，不要用 {@link #getImage(long)}：id 是自增的，
+     * 顺着枚举就能把**未发布**草稿里的图也拉走。public_name 只有发布动作才会写。
+     */
+    public static Map<String, Object> getByPublicName(String name) {
+        if (name == null || name.isBlank()) return null;
+        return mapOf(Db.queryOne("SELECT " + COLS + " FROM practice_image WHERE public_name=?", name));
+    }
+
+    /**
+     * 发布时给插图打公开名（形如 {@code algo-01-ex01-two-sum-ii-1.png}）。
+     *
+     * <p>这个名字是「这张图允许匿名访问」的唯一凭据。改 slug 重新发布会写下新名字，
+     * **旧名字刻意不清**（老链接不失效，代价是一点存储）。
+     */
+    public static int setPublicName(long id, String name) {
+        return Db.execCount("UPDATE practice_image SET public_name=? WHERE id=?",
+                name == null ? "" : name, id);
+    }
+
+    /** 该插图当前的公开名（空串 = 从未发布过） */
+    public static String publicNameOf(long id) {
+        Map<String, Object> r = Db.queryOne("SELECT public_name FROM practice_image WHERE id=?", id);
+        return r == null ? "" : str(r.get("public_name"));
     }
 
     public static int deleteImage(long id) {
@@ -55,6 +74,19 @@ public final class PracticeImageDao {
         out.put("count", r == null ? 0L : num(r.get("c")));
         out.put("bytes", r == null ? 0L : num(r.get("b")));
         return out;
+    }
+
+    private static final String COLS = "id, mime, size_bytes, data";
+
+    private static Map<String, Object> mapOf(Map<String, Object> r) {
+        if (r == null) return null;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", num(r.get("id")));
+        m.put("mime", str(r.get("mime")));
+        m.put("size_bytes", num(r.get("size_bytes")));
+        Object d = r.get("data");
+        m.put("data", d instanceof byte[] b ? b : new byte[0]);
+        return m;
     }
 
     private static long num(Object o) {

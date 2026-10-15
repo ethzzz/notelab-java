@@ -3,7 +3,6 @@ package com.notelab.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
-import com.notelab.common.YamlText;
 import com.notelab.dao.PracticeDao;
 import com.notelab.dao.PracticeImageDao;
 import com.notelab.service.BlogRepoService;
@@ -15,7 +14,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -42,22 +40,23 @@ import java.util.regex.Pattern;
  * {@code PUT /records/{id}} 的 {@code kind} 参数：{@code meta} 只改元数据（标题/类型/发布字段），
  * {@code content} 只改正文。分开的意义是**防覆盖**：改个标题不该把下面正在写的正文一起提交。
  *
- * <h3>发布链路（2026-10-14 打通）</h3>
- * 练习实践 → 博客的 {@code src/content/solutions/}（**不是 posts**）。这个集合在博客侧已经存在
- * （列表页 / 详情页 / 导航入口 / schema 都齐），B 端只差一个写入入口。三步：
+ * <h3>发布链路（2026-10-15 起：接口驱动，不再写博客仓）</h3>
+ * 最早的做法是「发布时把解答写成博客仓的 md 文件 → commit + push → 触发 GitHub Actions 构建」。
+ * 那条路有两个代价：发布要等 3–5 分钟才生效，而且把「写一篇文章」变成了「一次 git 提交」。
+ * 现在改成：**发布 = 一次入库操作**，博客的 solutions 页面在服务端实时拉接口渲染。三步：
  * <ol>
- *   <li>{@code GET /records/{id}/publish-preview} —— 干跑一遍，把「将生成什么」摊给用户看：
- *       文件名（= URL）、frontmatter、relatedPost 推导结果、要带走几张图、以及所有阻塞项/警告。
- *       前端据此渲染二次确认弹窗。</li>
- *   <li>{@code POST /records/{id}/publish} —— 真写：导出插图 → 改写正文链接 → 写 md →
- *       commit + push（push 到 main 会触发博客的 GitHub Actions 构建部署）。</li>
- *   <li>回写发布态（{@code published_slug}/{@code published_at}/{@code published_commit}），
- *       让「这条发过没、发的是哪一版」在列表上看得见，也避免重复发布变成重复文件。</li>
+ *   <li>{@code GET /records/{id}/publish-preview} —— 干跑：将发布成什么 slug、归到哪篇原文、
+ *       要带几张图、以及全部阻塞项/警告。前端据此渲染二次确认弹窗。</li>
+ *   <li>{@code POST /records/{id}/publish} —— 真发：给插图写公开名 + 标记发布态。**秒级生效**。</li>
+ *   <li>{@code GET /public/**} —— 匿名只读出口（清单 / 单篇 / 插图），博客侧消费。</li>
  * </ol>
  *
- * <p>⚠️ <b>插图必须导出</b>：正文里存的是 {@code /api/practice/images/{id}}，那是 B 端受权限保护的接口，
- * 博客访问者是匿名 —— 照搬链接过去就是一片破图。所以要把字节写进博客仓的 {@code public/}
- * 并把链接改写成 {@code /blog/images/solutions/...}（{@code /blog} 前缀是博客的全站内链约定，漏了 404）。
+ * <p>⚠️ <b>插图不再导出文件</b>：正文里存的是 {@code /api/practice/images/{id}}，那是 B 端受权限保护的
+ * 接口，博客读者是匿名 —— 照搬过去就是一片破图。所以出口处会把它改写成
+ * {@code /api/practice/public/images/<公开名>}。公开名只有发布动作才会写，匿名侧因此拉不到任何草稿图。
+ *
+ * <p>⚠️ 博客仓只剩**只读**用途：拿它的 {@code src/content/posts/} 目录把 module + 篇章号推导成
+ * relatedPost（见 {@link #findRelatedPost}）。
  *
  * <p>LLM 依赖：无。本 Controller 全程确定性计算。
  */
@@ -107,10 +106,13 @@ public class PracticeController {
     /** 博客 solutions schema 的 difficulty 枚举：**只能是这三个中文词**，写别的值会让博客构建报 schema 错 */
     static final List<String> DIFFICULTIES = List.of("简单", "中等", "困难");
 
-    static final String SOLUTIONS_DIR = "src/content/solutions";
+    /**
+     * 博客仓的文章目录 —— **只读**。
+     *
+     * <p>2026-10-15 起发布链路不再往博客仓写任何东西（解答改由公开接口供给、博客侧运行时读取），
+     * 这个目录剩下的唯一用途是：把 module + 篇章号推导成 relatedPost（找 {@code <module>-roadmap-<NN>-*}）。
+     */
     static final String POSTS_DIR = "src/content/posts";
-    /** 插图导出位置（博客 public 根下）。访问路径是 base + 这个路径，见 {@link #imageUrlOf} */
-    static final String SOLUTION_IMAGES_DIR = "public/images/solutions";
 
     /** 正文里插图链接的形状（编辑器上传时写进去的） */
     static final Pattern IMG_RE = Pattern.compile("/api/practice/images/(\\d+)");
@@ -119,6 +121,15 @@ public class PracticeController {
     static final Pattern SLUG_NAME_RE = Pattern.compile("^[a-z0-9][a-z0-9-]{1,99}$");
     /** 篇章号：1–2 位数字（博客里对应 algo-roadmap-<NN>-*） */
     static final Pattern CHAPTER_RE = Pattern.compile("^\\d{1,2}$");
+
+    /**
+     * 公开图片名的形状：{@code <slug>-<n>.<ext>}。
+     *
+     * <p>⚠️ 这个正则不只是「格式检查」，它是公开图片接口的**防穿越闸门**：
+     * 路径参数一旦能出现 {@code ..} 或 {@code /}，就等于开了一个任意文件读取口。
+     */
+    static final Pattern IMAGE_NAME_RE =
+            Pattern.compile("^[a-z0-9][a-z0-9-]{0,180}\\.(png|jpg|jpeg|webp|gif)$");
 
     // ==================================================================================
     // 类型字典（懒 seed 初值）
@@ -404,6 +415,138 @@ public class PracticeController {
     }
 
     // ==================================================================================
+    // 公开只读（匿名）：博客侧运行时拉取
+    // ==================================================================================
+    //
+    // 2026-10-15 起，练习解答不再由「发布时写进博客仓的 md 文件 + 重新构建」供给，
+    // 而是走这三个匿名接口 —— 博客的 solutions 页面在服务端实时拉取、实时渲染。
+    // 于是「B 端点发布」到「读者看到」之间不再有 git 提交、不再有 CI 构建。
+    //
+    // ⚠️ 公开的边界是**已发布**：三个接口都只认 published_slug / public_name，
+    //    草稿（未发布的记录、没打过公开名的图）永远不出现。
+
+    /**
+     * 已发布的解答清单（匿名可读，**不含正文**）。
+     *
+     * <p>为什么可以公开：发布这个动作本身就是在决定「让别人看到」，所以这里不泄露任何东西。
+     * 反过来说，判据必须严格是「发布过」—— 见 {@link PracticeDao#listPublished()}。
+     */
+    @GetMapping("/public/solutions")
+    public ResponseEntity<Map<String, Object>> publicSolutions() {
+        List<Map<String, Object>> recs;
+        try {
+            recs = PracticeDao.listPublished();
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "查询失败：" + e));
+        }
+        // relatedPost 由 module + 篇章号推导，而推导要扫一遍博客仓的文章目录 ——
+        // 同 (module, chapter) 的条目共用一次结果，避免每条记录都扫一遍盘。
+        Map<String, String> relCache = new LinkedHashMap<>();
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Map<String, Object> r : recs) {
+            String key = str(r.get("module")) + "/" + str(r.get("chapter"));
+            String rel = relCache.computeIfAbsent(key,
+                    k -> findRelatedPost(str(r.get("module")), str(r.get("chapter"))));
+            items.add(publicListItem(r, rel));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", items);
+        body.put("total", items.size());
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 单篇解答（匿名可读，**含正文**）。
+     *
+     * <p>正文里的插图链接在这里被改写成公开地址（{@link #rewriteImagesForPublic}）——
+     * 库里存的仍是原始正文，改写只发生在出口。
+     */
+    @GetMapping("/public/solutions/{slug}")
+    public ResponseEntity<Map<String, Object>> publicSolution(@PathVariable String slug) {
+        Map<String, Object> rec;
+        try {
+            rec = PracticeDao.getByPublishedSlug(slug);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "查询失败：" + e));
+        }
+        if (rec == null) return ResponseEntity.status(404).body(Map.of("error", "解答不存在"));
+
+        String module = str(rec.get("module"));
+        String chapter = str(rec.get("chapter"));
+        Map<String, Object> body = publicListItem(rec, findRelatedPost(module, chapter));
+        body.put("content", rewriteImagesForPublic(str(rec.get("content"))));
+
+        // 上一篇 / 下一篇：同模块同篇章内按题号相邻（详情页底部的两张大卡片用）
+        List<Map<String, Object>> siblings = PracticeDao.listPublishedChapter(module, chapter);
+        int idx = -1;
+        for (int i = 0; i < siblings.size(); i++) {
+            if (slug.equals(str(siblings.get(i).get("published_slug")))) { idx = i; break; }
+        }
+        String rel = str(body.get("relatedPost"));
+        body.put("prev", idx > 0 ? publicListItem(siblings.get(idx - 1), rel) : null);
+        body.put("next", idx >= 0 && idx < siblings.size() - 1 ? publicListItem(siblings.get(idx + 1), rel) : null);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 插图直出（匿名可读）。
+     *
+     * <p>⚠️ 只按 {@code public_name} 查，**不接受 id**：id 是自增的，顺着枚举就能把未发布草稿里的图
+     * 整批拉走。public_name 只有发布动作才会写。
+     *
+     * <p>缓存策略与 B 端的 {@code /images/{id}} 相反：这边用 {@code public}（图片不可变，
+     * 且本来就是公开内容，让 CDN/代理一起缓存是最划算的）。
+     */
+    @GetMapping("/public/images/{name}")
+    public ResponseEntity<byte[]> publicImage(@PathVariable String name) {
+        if (name == null || !IMAGE_NAME_RE.matcher(name).matches()) {
+            return ResponseEntity.status(404).build();
+        }
+        Map<String, Object> r;
+        try {
+            r = PracticeImageDao.getByPublicName(name);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).build();
+        }
+        if (r == null) return ResponseEntity.status(404).build();
+        byte[] data = (byte[]) r.get("data");
+        MediaType mt;
+        try {
+            mt = MediaType.parseMediaType(String.valueOf(r.get("mime")));
+        } catch (Exception e) {
+            mt = MediaType.APPLICATION_OCTET_STREAM;
+        }
+        return ResponseEntity.ok()
+                .contentType(mt)
+                .cacheControl(CacheControl.maxAge(365, TimeUnit.DAYS).cachePublic().immutable())
+                .body(data);
+    }
+
+    /** 对外投影：字段名与语义固定下来（博客侧按这套字段渲染，改这里等于改契约） */
+    private static Map<String, Object> publicListItem(Map<String, Object> rec, String relatedPost) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("slug", str(rec.get("published_slug")));
+        m.put("title", str(rec.get("title")));
+        m.put("module", str(rec.get("module")));
+        m.put("chapter", str(rec.get("chapter")));
+        m.put("order", num(rec.get("order_no")));
+        m.put("difficulty", str(rec.get("difficulty")));
+        m.put("tags", splitCsv(str(rec.get("tags"))));
+        m.put("description", str(rec.get("description")));
+        m.put("relatedPost", relatedPost == null ? "" : relatedPost);
+        // 只给日期：对外不需要精确到秒，也少暴露一点编辑节奏
+        m.put("published", dateOf(rec.get("published_at")));
+        m.put("updated", dateOf(rec.get("updated_at")));
+        return m;
+    }
+
+    /** "2026-10-15 12:00:00.0" → "2026-10-15"（取不到就原样返回，不抛） */
+    private static String dateOf(Object o) {
+        String s = str(o);
+        return s.length() >= 10 ? s.substring(0, 10) : s;
+    }
+
+    // ==================================================================================
     // 发布到博客：预检
     // ==================================================================================
 
@@ -444,13 +587,14 @@ public class PracticeController {
     // ==================================================================================
 
     /**
-     * 发布一条记录到博客的 {@code src/content/solutions/}。
+     * 发布一条记录（= 让它对博客公开）。
      *
-     * <p>顺序刻意是「先校验（不写任何东西）→ 再写文件 → 最后才 commit/push」：
-     * 校验不过时博客仓一个字节都不会被碰，用户看到的只有 400 与原因。
+     * <p>2026-10-15 起这里**不再碰博客仓**：只做两件事 —— 给用到的插图打上公开名、
+     * 把记录标成已发布。博客的解答页改成运行时读 {@code /api/practice/public/**}，
+     * 所以发布是**即时生效**的（没有 commit、不等构建、也不会再有 scp 卡住那种故障面）。
      *
-     * <p>⚠️ push 的对象是博客的 main 分支，会触发 GitHub Actions 构建部署（约 3–5 分钟生效）。
-     * 本接口返回成功**不等于**线上已可见，响应里带 note 说明这一点。
+     * <p>顺序刻意是「先校验（不写任何东西）→ 再落库」：校验不过时一行数据都不会被改，
+     * 用户看到的只有 400 与原因。
      */
     @PostMapping("/records/{id}/publish")
     public ResponseEntity<Map<String, Object>> publish(@PathVariable long id, HttpServletRequest request) {
@@ -474,66 +618,29 @@ public class PracticeController {
         String oldSlug = str(rec.get("published_slug"));
         boolean update = !oldSlug.isEmpty() && oldSlug.equals(plan.slug);
 
-        List<String> paths = new ArrayList<>();
-        int imageCount = 0;
-        // id → 导出去的新 URL。⚠️ 不能用「前 N 张」来推断哪些导出了：中间某张被删会让后面全部错位，
-        // 结果是正文里引用了一个根本没写出去的图片路径。
-        Map<Long, String> exportedMap = new LinkedHashMap<>();
         try {
-            BlogRepoService.ensure();
-
-            // 1) 导出插图：把库里的字节写进博客 public/，正文里的链接改指向它
+            // 给插图打公开名 —— 公开接口只认这个名字，没打过的图匿名永远拉不到
+            int imageCount = 0;
             for (Map<String, Object> img : plan.images) {
                 long imgId = ((Number) img.get("id")).longValue();
-                Map<String, Object> row = PracticeImageDao.getImage(imgId);
-                if (row == null) continue;   // 预检到写入之间被删了：跳过，正文链接保持原样（已是 warning）
-                BlogRepoService.writeBinary((String) img.get("target"), (byte[]) row.get("data"));
-                paths.add((String) img.get("target"));
-                exportedMap.put(imgId, (String) img.get("url"));
+                PracticeImageDao.setPublicName(imgId, (String) img.get("publicName"));
                 imageCount++;
             }
-
-            // 2) 改写正文里的插图链接（只改本轮真的导出成功的那些）
-            String body = rewriteImages(plan.body, exportedMap);
-
-            // 3) 写解答文件（含 frontmatter）
-            String rel = SOLUTIONS_DIR + "/" + plan.slug + ".md";
-            BlogRepoService.writeText(rel, plan.frontmatter() + body + "\n");
-            paths.add(rel);
-
-            // 4) 改过名字（module/篇章号/题号/短名变了）→ 清掉上一版的旧文件，
-            //    否则博客的聚合页会同时列出新旧两篇，而旧的永远不会再被更新。
-            if (!oldSlug.isEmpty() && !oldSlug.equals(plan.slug)) {
-                String oldRel = SOLUTIONS_DIR + "/" + oldSlug + ".md";
-                if (BlogRepoService.exists(oldRel)) {
-                    BlogRepoService.deleteIfExists(oldRel);
-                    paths.add(oldRel);
-                }
-            }
-
-            // 5) 提交并推送 —— 只 add 本次涉及的文件（博客仓可能有别人未提交的进行中改动）
-            String commit = BlogRepoService.commitPush(
-                    "solutions: " + (update ? "update " : "add ") + plan.slug, paths);
-
-            // 6) 回写发布态
-            PracticeDao.markPublished(id, plan.slug, commit);
+            // 发布态落在记录上；改过 slug 时旧 slug 被直接覆盖（旧链接失效，但对外只有这一个地址）
+            PracticeDao.markPublished(id, plan.slug, "");
 
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("ok", true);
             out.put("slug", plan.slug);
             out.put("url", blogUrlOf(plan.slug));
-            out.put("path", rel);
-            out.put("commit", commit);
             out.put("images", imageCount);
             out.put("relatedPost", plan.relatedPost);
             out.put("warnings", plan.warnings);
             out.put("updated", update);
-            out.put("note", "已推送。博客由 GitHub Actions 构建部署，约 3–5 分钟后线上可见。");
+            out.put("note", "已发布。博客页面直接读数据库，刷新即见（不需要重新构建）。");
             return ResponseEntity.ok(out);
         } catch (Exception e) {
-            return ResponseEntity.status(500).body(Map.of(
-                    "error", "发布失败：" + e.getMessage(),
-                    "hint", "文件可能已写到博客仓但未推送，重试一次即可（内容相同会走 no-change）。"));
+            return ResponseEntity.status(500).body(Map.of("error", "发布失败：" + e.getMessage()));
         }
     }
 
@@ -548,14 +655,13 @@ public class PracticeController {
      * 发布却报错」或更糟的「预检说会生成 A、实际写出来是 B」。
      */
     private record Plan(String slug, String module, String chapter, int orderNo, String difficulty,
-                        String relatedPost, String body, String frontmatter,
+                        String relatedPost, String body,
                         List<String> blockers, List<String> warnings,
                         List<Map<String, Object>> images) {
 
         Map<String, Object> toBody() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("slug", slug);
-            m.put("target", SOLUTIONS_DIR + "/" + slug + ".md");
             m.put("url", blogUrlOf(slug));
             m.put("module", module);
             m.put("chapter", chapter);
@@ -563,7 +669,6 @@ public class PracticeController {
             m.put("difficulty", difficulty);
             m.put("relatedPost", relatedPost);
             m.put("relatedPostFound", !relatedPost.isEmpty());
-            m.put("frontmatter", frontmatter);
             m.put("images", images);
             m.put("blockers", blockers);
             m.put("warnings", warnings);
@@ -631,70 +736,46 @@ public class PracticeController {
             }
             n++;
             String ext = extOf(str(row.get("mime")));
+            // 公开名 = 对外文件名。它既是 URL 的一段，也是「这张图允许匿名访问」的凭据
+            String publicName = slug + "-" + n + "." + ext;
             Map<String, Object> one = new LinkedHashMap<>();
             one.put("id", imgId);
-            one.put("target", SOLUTION_IMAGES_DIR + "/" + slug + "-" + n + "." + ext);
-            one.put("url", imageUrlOf(slug, n, ext));
+            one.put("publicName", publicName);
+            one.put("url", publicImageUrl(publicName));
             images.add(one);
         }
 
-        String fm = buildSolutionFrontmatter(title, description, module, relatedPost,
-                orderNo, difficulty, str(rec.get("tags")));
-        return new Plan(slug, module, chapter, orderNo, difficulty, relatedPost, body, fm,
+        return new Plan(slug, module, chapter, orderNo, difficulty, relatedPost, body,
                 blockers, warnings, images);
     }
 
     /**
-     * 生成 solutions 的 frontmatter。
+     * 公开侧正文改写：把 {@code /api/practice/images/{id}} 换成 {@code /api/practice/public/images/<公开名>}。
      *
-     * <p>字段与顺序对齐博客 {@code src/content/config.ts} 的 solutions schema；
-     * {@code published} 用**发布当天**而不是记录的创建日 —— 它表达的是「哪天公开的」。
-     */
-    private static String buildSolutionFrontmatter(String title, String description, String module,
-                                                   String relatedPost, int orderNo, String difficulty,
-                                                   String tagsJoined) {
-        List<String> tags = splitCsv(tagsJoined);
-        StringBuilder sb = new StringBuilder();
-        sb.append("---\n");
-        sb.append("title: ").append(YamlText.quote(title)).append("\n");
-        sb.append("published: ").append(LocalDate.now()).append("\n");
-        // description 留空会让 SEO/卡片回退成 title，所以这里补上 title 而不是留空
-        sb.append("description: ").append(YamlText.quote(description.isEmpty() ? title : description)).append("\n");
-        sb.append("module: ").append(YamlText.quote(module)).append("\n");
-        sb.append("relatedPost: ").append(YamlText.quote(relatedPost)).append("\n");
-        sb.append("order: ").append(orderNo).append("\n");
-        sb.append("difficulty: ").append(YamlText.quote(difficulty)).append("\n");
-        if (tags.isEmpty()) {
-            sb.append("tags: []\n");
-        } else {
-            sb.append("tags: [")
-                    .append(tags.stream().map(YamlText::quote).collect(java.util.stream.Collectors.joining(", ")))
-                    .append("]\n");
-        }
-        sb.append("draft: false\n");
-        sb.append("lang: 'zh-CN'\n");
-        sb.append("---\n");
-        return sb.toString();
-    }
-
-    /**
-     * 把正文里的 {@code /api/practice/images/{id}} 换成博客上的静态地址。
+     * <p>为什么在**读取时**改写、而不是发布时写回库：库里那份要保持「原始正文」（编辑器里看到的
+     * 就是它），改写只是对外呈现的一层投影。写回库会让「换一次图片出口」变成一次全表重写。
      *
-     * <p>⚠️ 只替换**确实导出成功**的那些（map 里没有的保持原样）：预检到写入之间图片可能被删，
-     * 那种情况保留原链接比换成一个指向 404 的新链接更诚实。
+     * <p>⚠️ 没有公开名（未发布过的图）保持原样：那种链接对匿名读者是 401，比换成一个能被枚举猜到的
+     * 地址更诚实，也堵住了「顺着 id 把草稿里的图拉走」这条路。
      */
-    private static String rewriteImages(String body, Map<Long, String> exported) {
+    private static String rewriteImagesForPublic(String body) {
         Matcher m = IMG_RE.matcher(body);
         StringBuilder sb = new StringBuilder();
         while (m.find()) {
-            String url = exported.get(Long.parseLong(m.group(1)));
-            m.appendReplacement(sb, Matcher.quoteReplacement(url == null ? m.group(0) : url));
+            String name = PracticeImageDao.publicNameOf(Long.parseLong(m.group(1)));
+            String url = name.isEmpty() ? m.group(0) : publicImageUrl(name);
+            m.appendReplacement(sb, Matcher.quoteReplacement(url));
         }
         m.appendTail(sb);
         return sb.toString();
     }
 
-    /** 在博客仓的文章目录里找该模块该篇章的路线文章，返回 slug（去 .md）；找不到返回空串 */
+    /**
+     * 在博客仓的文章目录里找该模块该篇章的路线文章，返回 slug（去 .md）；找不到返回空串。
+     *
+     * <p>⚠️ 只**读**这个 clone（发布链路已不再往里写）—— 它现在的角色是「线路文章清单」的权威副本，
+     * 用来把 module + 篇章号推导成 relatedPost。
+     */
     private static String findRelatedPost(String module, String chapter2) {
         String prefix = module + "-roadmap-" + chapter2 + "-";
         for (String name : BlogRepoService.listNames(POSTS_DIR)) {
@@ -793,9 +874,14 @@ public class PracticeController {
         return out;
     }
 
-    /** 插图在博客上的访问路径：站点 base 是 /blog，public/ 下的文件按同名路径对外 */
-    private static String imageUrlOf(String slug, int n, String ext) {
-        return "/blog/images/solutions/" + slug + "-" + n + "." + ext;
+    /**
+     * 插图的公开访问路径（写进正文里的就是它）。
+     *
+     * <p>2026-10-15 起图片由 Java 直出，不再导出到博客的 public/ —— 所以这里的前缀是
+     * {@code /api/practice/public/images/}，与博客同源（都是 haolo.cloud），页面里直接引用即可。
+     */
+    private static String publicImageUrl(String publicName) {
+        return "/api/practice/public/images/" + publicName;
     }
 
     /** 解答在博客上的访问路径（文件名即路径段） */
@@ -803,7 +889,7 @@ public class PracticeController {
         return "/blog/solutions/" + slug + "/";
     }
 
-    /** 图片 mime → 文件扩展名（博客 public 下要带扩展名，浏览器才认） */
+    /** 图片 mime → 文件扩展名（公开名要带扩展名，浏览器/nginx 才认） */
     private static String extOf(String mime) {
         return switch (mime == null ? "" : mime) {
             case "image/jpeg" -> "jpg";

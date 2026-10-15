@@ -463,6 +463,19 @@ final class DbSchema {
         if (!hasColumn("practice_record", "published_commit")) {
             Db.exec("ALTER TABLE practice_record ADD COLUMN published_commit VARCHAR(64) NOT NULL DEFAULT ''");
         }
+        // ---- 练习实践 · 插图的「公开名」（2026-10-15）----
+        // 改接口驱动后，插图不再导出到博客 public/，而是由 Java 直出。直出就需要一个**公开可枚举的键**：
+        // 用自增 id 当键会让任何人顺着 /public/images/1,2,3… 把**未发布**记录的图也拉走
+        // （图存的是库里的成品，未发布的草稿也在同一张表）。
+        // 所以只有**发布动作**才会给它写上 public_name（形如 <slug>-1.png），
+        // 公开接口只按 public_name 查 —— 没发布过的图 public_name 是空串，永远查不到。
+        // ⚠️ 只增不删：改 slug 重新发布时旧名会留下来（旧链接不失效），这是刻意的。
+        if (!hasColumn("practice_image", "public_name")) {
+            Db.exec("ALTER TABLE practice_image ADD COLUMN public_name VARCHAR(200) NOT NULL DEFAULT ''");
+        }
+        if (!hasIndex("practice_image", "idx_pub_name")) {
+            Db.exec("ALTER TABLE practice_image ADD KEY idx_pub_name (public_name)");
+        }
         // ---- B/C 拆分阶段2：TRPG 数据归属补列（只增不改；MySQL 无 ADD COLUMN IF NOT EXISTS，先查 information_schema 再 ALTER，重启幂等） ----
         if (!hasColumn("trpg_playthroughs", "scope")) {
             Db.exec("ALTER TABLE trpg_playthroughs ADD COLUMN scope CHAR(1) NOT NULL DEFAULT 'b'");
