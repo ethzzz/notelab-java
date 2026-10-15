@@ -63,8 +63,32 @@ public final class PermGuard {
             "/api/ui-config",   // 界面配置（对应 /ui 页面，可改全站菜单名/图标/背景）
             "/api/admin",       // 运维/开发类管理接口（含接口压测 /api/admin/stress-test），仅 super_admin
             "/api/analytics",   // 数据看板查询（PRD-P0 §6.3）：只有超管能看全站经营数据
-            "/api/practice"     // 练习实践（个人练习记录 + 插图）：需求明确「先只开放给超管」
+            "/api/practice",    // 博客文章生成（原练习实践）：解答直接对外发布，内容即公开
+            "/api/blog"         // 博客管理（文章起草 / 文章记录）：会写博客仓库、触发 AI 起草、看全站内容数据
     );
+
+    /**
+     * 仅超管的**页面**路由。
+     *
+     * <p>为什么需要单独一份：{@link #RESTRICTED_PREFIXES} 判的是 api 路径（都是 {@code /api/} 开头
+     * 或等值匹配），页面路径命不中它 —— 于是页面这一侧只剩「默认不发给普通角色」这一道，
+     * 而默认权限那段只在「该角色一条权限都没有」时才写，**对已经配置过的角色完全不生效**。
+     * 结果是：历史授权留在库里、普通角色照样看得到入口（2026-10-15 加博客管理时实测到这一点）。
+     *
+     * <p>标上 super_only 之后就会走和 api 完全相同的那条链路：
+     * 启动回填 {@code perm_routes.super_only} → 从所有角色收回历史授予 → 权限树里显示 🔒
+     * → {@code setRoleRoutes} 拒绝授予。权威仍是这份常量，改这里重启即生效。
+     */
+    public static final List<String> SUPER_ONLY_PAGES = List.of(
+            "/practice",        // 博客文章生成（原练习实践）：一条记录直接对外发布
+            "/blog-gen",        // 文章起草：写博客仓库 + 触发 AI 起草
+            "/blog-articles"    // 文章记录：全站文章的浏览数与改动记录，属经营数据
+    );
+
+    /** 该页面路径是否仅超管可用 */
+    public static boolean isSuperAdminOnlyPage(String pagePath) {
+        return pagePath != null && SUPER_ONLY_PAGES.contains(pagePath);
+    }
 
     /**
      * 公开端点前缀：**不参与任何权限校验** —— 匿名、任何 B 端角色、任何 C 端用户组都能访问。
@@ -79,7 +103,8 @@ public final class PermGuard {
     public static final List<String> PUBLIC_PREFIXES = List.of(
             "/api/lowcode/public",      // 表单对外发布：取定义 / 匿名提交（自带 IP 节流 + 字段校验）
             "/api/learning/public",     // 编程学习：C 端 /learn 未登录可看（只读，无写风险，故不需节流）
-            "/api/practice/public"      // 练习实践：博客解答页运行时拉取（只读，且只出已发布内容）
+            "/api/practice/public",     // 练习实践：博客解答页运行时拉取（只读，且只出已发布内容）
+            "/api/blog/public"          // 博客文章浏览数：读者浏览器匿名上报 + 批量读取（自带白名单 + 节流）
     );
 
     /** 该 api 路径是否是公开端点（精确等于该前缀，或位于其下） */

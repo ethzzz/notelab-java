@@ -96,6 +96,19 @@ public final class PracticeDao {
                 nn(slug), nn(commit), id);
     }
 
+    /**
+     * 下线：清掉发布态（{@code published_slug} 清空 → 公开接口立刻查不到 → 博客页面 404）。
+     *
+     * <p>⚠️ 只清发布态，**不删记录、不删插图**：记录还在后台，重新发布就能回去（同一条记录、同一个地址）。
+     * 插图的 {@code public_name} 也**刻意保留** —— 撤了之后若又发布回去，图片的对外地址会变，
+     * 外链与 CDN 缓存全部失效；而下线后正文本身已经不可见，那几张图只是「知道直链才拿得到」。
+     */
+    public static int markUnpublished(long id) {
+        return Db.execCount(
+                "UPDATE practice_record SET published_slug='', published_at=NULL, published_commit='' WHERE id=?",
+                id);
+    }
+
     /** 按 id 删除。返回删除行数（0 = 已不存在，属正常，不该报 404） */
     public static int deleteRecord(long id) {
         return Db.execCount("DELETE FROM practice_record WHERE id=?", id);

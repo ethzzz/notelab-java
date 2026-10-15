@@ -644,6 +644,34 @@ public class PracticeController {
         }
     }
 
+    /**
+     * 下线一篇已发布的解答（= 让博客上的读者看不到它）。
+     *
+     * <p>为什么要单独一个动作：发布之前是**单向**的 —— 发错了、或者这篇还不该公开，只能去数据库改。
+     * 下线的语义是「撤下，但记录还在」：后台照样能看到、能编辑，重新发布就回到同一个地址。
+     *
+     * <p>⚠️ 只清发布态，不删记录也不删插图（理由见 {@code PracticeDao.markUnpublished}）。
+     * 所以下线的效果是**公开接口查不到** → 博客的解答页 404，而不是把内容删掉。
+     */
+    @PostMapping("/records/{id}/unpublish")
+    public ResponseEntity<Map<String, Object>> unpublish(@PathVariable long id, HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> rec = PracticeDao.getRecord(id);
+        if (rec == null) return ResponseEntity.status(404).body(Map.of("error", "记录不存在"));
+        String slug = str(rec.get("published_slug"));
+        if (slug.isEmpty()) {
+            // 已经下线了也当成功处理会更"顺"，但那样用户分不清「我点了没生效」还是「本来就没发」，
+            // 所以这里明确告诉他当前状态。
+            return ResponseEntity.status(400).body(Map.of("error", "这条还没有发布，无需下线"));
+        }
+        PracticeDao.markUnpublished(id);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("slug", slug);
+        out.put("note", "已下线。" + blogUrlOf(slug) + " 现在返回 404；重新发布即可恢复，地址不变。");
+        return ResponseEntity.ok(out);
+    }
+
     // ==================================================================================
     // 发布：计划构建（预检与发布共用，保证「看到的」与「发出的」是同一份）
     // ==================================================================================

@@ -90,7 +90,11 @@ public final class PermService {
         // 1) 页面路由（B 端）
         Set<String> pagePaths = new LinkedHashSet<>();
         for (String[] p : PageRoutes.PAGE_ROUTES) {
-            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1], false, PermSide.B);
+            // ⚠️ super_only 也覆盖页面：RESTRICTED_PREFIXES 判的是 api 路径，页面命不中它，
+            //    而「默认不发给普通角色」只在该角色一条权限都没有时才生效 —— 对已配置过的角色
+            //    等于没写。标成 super_only 后第 2c 步会从所有角色收回（与 api 同一条链路）。
+            PermDao.upsertRoute("page:" + p[0], p[0], "", "page", p[1],
+                    PermGuard.isSuperAdminOnlyPage(p[0]), PermSide.B);
             pagePaths.add(p[0]);
         }
         // 1b) 两份常量一致性：MenuTree.MENUS 的叶子 path 与 PageRoutes.PAGE_ROUTES 必须一一对应。
@@ -188,13 +192,14 @@ public final class PermService {
             }
         }
         // 3) 普通角色默认权限（仅首次为空时写入，不覆盖已有配置）：全部功能页，不含 ui/perm 管理页
-        //    /stress-test（接口压测）、/ops（运维看板）、/practice（练习实践）也排除：
-        //    都是超管专属工具，普通角色默认不该看到入口（接口侧另有 /api/practice 受限前缀兜底）。
+        //    /stress-test（接口压测）、/ops（运维看板）也排除：超管专属工具，普通角色默认不该看到入口。
+        //    ⚠️ 那两个是「默认不给但可授予」，所以走显式名单；博客管理那三个页面是**永不授予**，
+        //       判据用 PermGuard.SUPER_ONLY_PAGES（第 2c 步还会从已有角色里收回，见那里）。
         if (PermDao.roleRouteCodes(ROLE_USER).isEmpty()) {
             List<String> defaults = new ArrayList<>();
             for (String[] p : PageRoutes.PAGE_ROUTES) {
                 if (!p[0].equals("/ui") && !p[0].equals("/perm") && !p[0].equals("/stress-test")
-                        && !p[0].equals("/ops") && !p[0].equals("/practice"))
+                        && !p[0].equals("/ops") && !PermGuard.isSuperAdminOnlyPage(p[0]))
                     defaults.add("page:" + p[0]);
             }
             PermDao.setRoleRoutes(ROLE_USER, defaults);

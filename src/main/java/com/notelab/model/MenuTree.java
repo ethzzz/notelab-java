@@ -68,11 +68,6 @@ public final class MenuTree {
             // 内容存 ui_config.dev_notes（见 DevNoteController），不是 C 端消费的配置，编辑即生效、无发布快照。
             group("g_practice", "项目实践", "🧪", List.of(
                     menu("dev-summary", "项目开发总结", "📓", "/practice/dev-summary", true))),
-            // 练习实践：记录做完每道练习题后的解答（Markdown 正文 + 可传插图）。
-            // 与「项目开发总结」的区别：那边是按项目沉淀**技术难点**、整份文档一次提交；
-            // 这边是**一条记录一道题**，独立增删改、带分页筛选，所以走真正的表（practice_record）。
-            // 接口在受限前缀 /api/practice（仅超管）；路由必须同步登记在 PageRoutes.PAGE_ROUTES 与 RouteGroups。
-            menu("practice", "练习实践", "🏋️", "/practice", true),
             // 编程学习：语言 → 阶段 → 课时 → 随堂测试，每节课有讲解 + 可运行示例 + 选择题。
             // 内容存 ui_config.learning（见 LearningContentController），后台知识库、编辑即生效、无发布快照。
             // 每个语言带 runner 标签说明「能不能在浏览器里真跑、走什么方案」（能力表只读，见 LearningSeed.RUNNERS）。
@@ -94,9 +89,16 @@ public final class MenuTree {
                     // 接口在受限前缀 /api/admin/ops/login-audit，同样仅超管；路由与 PageRoutes 一一对应。
                     menu("login-audit", "登录审计", "🛡️", "/login-audit", true))),
             // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
-            // 文章生成子页把手动输入 / AI 起草的文章提交到博客仓库（见 BlogContentController）。
             group("g_blog", "博客管理", "📖", List.of(
-                    menu("blog-gen", "文章生成", "✍️", "/blog-gen", true))));
+                    // 文章起草：手动输入 / AI 起草**路线文章**（posts）后提交到博客仓库（BlogContentController）。
+                    // 从「文章生成」改名过来 —— 原来与下面的「博客文章生成」太像，而两者产物完全不同。
+                    menu("blog-gen", "文章起草", "✍️", "/blog-gen", true),
+                    // 博客文章生成（原「练习实践」）：一条记录一道题，Markdown 正文 + 可传插图，
+                    // 发布即出现在博客的解答页（2026-10-15 起接口驱动，见 PracticeController）。
+                    // ⚠️ 页面与接口都只给超管：PermGuard.SUPER_ONLY_PAGES + RESTRICTED_PREFIXES。
+                    menu("blog-article-gen", "博客文章生成", "🏋️", "/practice", true),
+                    // 文章记录：每篇博客文章的浏览数与改动记录（浏览数由博客侧上报，见 BlogStatController）。
+                    menu("blog-articles", "文章记录", "📊", "/blog-articles", true))));
 
     private static Map<String, Object> menu(String key, String name, String icon, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();

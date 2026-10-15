@@ -537,6 +537,44 @@ final class DbSchema {
                 KEY idx_arch_vio_run (run_id),
                 KEY idx_arch_vio_rule (rule_id, level)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+
+        // ---- 博客文章统计（2026-10-15）----
+        // 为什么要两张表：浏览数按访客去重，而「谁看过」没法压进一个计数里 ——
+        // 得把 (slug, visitor_id) 记下来：在表里就是老访客、不在就是新访客。
+        // ⚠️ 去重表随「文章数 × 访客数」增长（202 篇 × N 人），这是去重口径的固有代价；
+        //    现在是几十 KB 的量级，不值得为它提前上布隆过滤器。
+        // ⚠️ visitor_id 是**前端 localStorage 里的随机串**，不是身份标识、不关联任何账号 ——
+        //    它只用来「同一个人别重复计数」。用户清掉存储就再算一个新访客：宁可多算，不误判同一人。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS blog_article_stat (
+                slug VARCHAR(200) PRIMARY KEY,
+                views BIGINT NOT NULL DEFAULT 0,
+                last_view_at DATETIME NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS blog_article_visitor (
+                slug VARCHAR(200) NOT NULL,
+                visitor_id VARCHAR(64) NOT NULL,
+                first_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (slug, visitor_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // 文章的改动记录（admin「文章记录」页展示）。
+        // ⚠️ 只记**经过后台系统**的改动：博客仓里的 md 同样可以直接编辑/提交（现在就是这么维护的），
+        //    那些不会进这张表。这是「后台记录」这个口径的必然结果，页面上要写明 ——
+        //    想要全覆盖得改读 git log。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS blog_article_log (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                slug VARCHAR(200) NOT NULL,
+                action VARCHAR(16) NOT NULL,
+                title VARCHAR(200) NOT NULL DEFAULT '',
+                detail VARCHAR(500) NOT NULL DEFAULT '',
+                created_by BIGINT NULL,
+                created_by_name VARCHAR(64) NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_blog_log_slug (slug, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /** 列存在守护（information_schema）：存在返回 true */

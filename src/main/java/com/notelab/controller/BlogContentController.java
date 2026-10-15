@@ -5,6 +5,7 @@ import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.common.YamlText;
+import com.notelab.dao.BlogStatDao;
 import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
 import com.notelab.service.BlogRepoService;
@@ -14,10 +15,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -110,6 +114,18 @@ public class BlogContentController {
         }
         try {
             Map<String, Object> r = writeArticle(node);
+            // 记一条后台改动（admin「文章记录」页展示）。
+            // ⚠️ 只记**经过这个接口**的写入：博客仓的 md 同样可以直接编辑、提交（日常就是这么维护的），
+            //    那些改动不会出现在这张表里。口径是「后台记录」，不是「仓库全历史」——
+            //    要全覆盖得改读 git log，那是另一个取舍（见 BlogStatDao 的注释）。
+            Map<String, Object> me = AuthUtil.user(request);
+            if (me != null) {
+                BlogStatDao.log(String.valueOf(r.get("slug")), "create",
+                        String.valueOf(r.getOrDefault("title", "")),
+                        Boolean.TRUE.equals(r.get("draft"))
+                                ? "经「文章起草」写入（草稿）" : "经「文章起草」写入（已发布）",
+                        AuthUtil.userId(me), String.valueOf(me.get("username")));
+            }
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             log.error("写入博客失败", e);
@@ -130,7 +146,109 @@ public class BlogContentController {
         return ResponseEntity.ok(Map.of("ok", true, "items", items));
     }
 
+    // ===================== 文章记录（admin「文章记录」页） =====================
+
+    /**
+     * 博客文章清单 + 统计：每篇的标题 / 分类 / 发布日 / 草稿态 + 浏览数 + 最后一次后台改动。
+     *
+     * <p>数据来自两处：**文章本身**（博客仓的 md，见 {@link #scanArticles()}）与
+     * **统计**（blog_article_stat 的浏览数、blog_article_log 的改动记录）。
+     * 之所以在 Java 侧拼而不是让前端分别取：前端要按浏览数排序/筛选，拿两份数据自己 join 会很难受。
+     */
+    @GetMapping("/articles")
+    public ResponseEntity<Map<String, Object>> articles(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        List<Map<String, Object>> arts = scanArticles();
+        List<String> slugs = arts.stream().map(a -> String.valueOf(a.get("slug"))).toList();
+        // 浏览数与最后改动都是**一次查完**再在内存里拼：逐篇查 = 202 次往返
+        Map<String, Long> views = BlogStatDao.viewsOf(slugs);
+        Map<String, Map<String, Object>> lastLogs = BlogStatDao.lastLogs();
+
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (Map<String, Object> a : arts) {
+            String slug = String.valueOf(a.get("slug"));
+            Map<String, Object> one = new LinkedHashMap<>(a);
+            one.put("views", views.getOrDefault(slug, 0L));
+            one.put("lastChange", lastLogs.get(slug));
+            items.add(one);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("total", items.size());
+        out.put("items", items);
+        return ResponseEntity.ok(out);
+    }
+
+    /** 单篇详情：文章元信息 + 浏览数 + 后台改动记录 */
+    @GetMapping("/articles/{slug}")
+    public ResponseEntity<Map<String, Object>> article(@PathVariable String slug, HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> found = null;
+        for (Map<String, Object> a : scanArticles()) {
+            if (slug.equals(a.get("slug"))) { found = a; break; }
+        }
+        if (found == null) return ResponseEntity.status(404).body(Map.of("error", "没有这篇文章"));
+        Map<String, Object> out = new LinkedHashMap<>(found);
+        out.put("views", BlogStatDao.viewsOf(slug));
+        out.put("logs", BlogStatDao.logsOf(slug, 50));
+        return ResponseEntity.ok(out);
+    }
+
     // ===================== 实现 =====================
+
+    /** 文章清单缓存：202 篇 md 全读一遍是毫秒级，但没必要每个请求都做 */
+    private static final long ART_CACHE_MS = 5 * 60_000L;
+    private static volatile List<Map<String, Object>> artCache = List.of();
+    private static volatile long artCacheAt = 0;
+
+    /**
+     * 扫博客仓的 posts 目录，解析每篇的 slug 与 frontmatter。
+     *
+     * <p>⚠️ 缓存 5 分钟：这是**统计视图**，不是内容编辑器 —— 刚在仓库里改完标题要等一会儿才反映出来。
+     * 读失败时沿用旧缓存（清空等于列表突然变空，比陈旧更难排查）。
+     */
+    private static List<Map<String, Object>> scanArticles() {
+        long now = System.currentTimeMillis();
+        if (now - artCacheAt <= ART_CACHE_MS && !artCache.isEmpty()) return artCache;
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String name : BlogRepoService.listNames(POSTS_DIR)) {
+            if (!name.endsWith(".md")) continue;
+            Map<String, Object> one = new LinkedHashMap<>();
+            String slug = name.substring(0, name.length() - 3);
+            one.put("slug", slug);
+            one.put("title", "");
+            one.put("category", "");
+            one.put("published", "");
+            one.put("draft", false);
+            try {
+                String text = Files.readString(
+                        BlogRepoService.resolve(POSTS_DIR + "/" + name), StandardCharsets.UTF_8);
+                Frontmatter fm = parseFrontmatter(text);
+                one.put("title", fm.title);
+                one.put("category", fm.category);
+                one.put("draft", fm.draft);
+                // published 不在 Frontmatter 的字段里（写作时用不到），列表页要显示，单独抠一行
+                java.util.regex.Matcher m =
+                        java.util.regex.Pattern.compile("^published:\\s*(.+)$",
+                                java.util.regex.Pattern.MULTILINE).matcher(text);
+                if (m.find()) one.put("published", m.group(1).trim().replaceAll("^['\"]|['\"]$", ""));
+            } catch (Exception e) {
+                log.warn("读取文章 {} 的 frontmatter 失败：{}", name, e.toString());
+            }
+            out.add(one);
+        }
+        // 默认按发布日期倒序（最近写的在前），日期相同按 slug —— 顺序稳定，翻页不会乱跳
+        out.sort((a, b) -> {
+            int c = String.valueOf(b.get("published")).compareTo(String.valueOf(a.get("published")));
+            return c != 0 ? c : String.valueOf(a.get("slug")).compareTo(String.valueOf(b.get("slug")));
+        });
+        if (!out.isEmpty()) {
+            artCache = List.copyOf(out);
+            artCacheAt = now;
+        }
+        return artCache.isEmpty() ? out : artCache;
+    }
 
     private Map<String, Object> writeArticle(JsonNode node) throws Exception {
         String rawMd = JsonSanitizer.str(node, "raw_markdown");
@@ -180,6 +298,7 @@ public class BlogContentController {
         return Map.of(
                 "ok", true,
                 "slug", fileName.replaceAll("\\.md$", ""),
+                "title", title,
                 "path", rel,
                 "commit", commit,
                 "draft", draft);
@@ -213,7 +332,7 @@ public class BlogContentController {
     }
 
     /** 解析 --- 包裹的 frontmatter；解析不出则整段当作正文 */
-    private Frontmatter parseFrontmatter(String md) {
+    private static Frontmatter parseFrontmatter(String md) {
         Frontmatter fm = new Frontmatter();
         if (md.startsWith("---")) {
             int end = md.indexOf("\n---", 3);
@@ -243,7 +362,7 @@ public class BlogContentController {
 
     // 单引号 YAML 标量已收敛到 common/YamlText.quote（练习实践发布共用同一口径）
 
-    private String unquote(String v) {
+    private static String unquote(String v) {
         if (v == null) return "";
         return v.strip().replaceAll("^['\"]|['\"]$", "");
     }
