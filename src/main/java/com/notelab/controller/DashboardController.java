@@ -91,13 +91,13 @@ public class DashboardController {
         out.add(card("notes", "笔记", DashboardDao.count("notes"), "篇", "/notes"));
         out.add(card("documents", "文档", DashboardDao.count("documents"), "篇", "/docs"));
         out.add(card("canvas", "协作画布", DashboardDao.count("canvas_doc"), "个", "/canvas"));
-        out.add(card("practice", "练习记录", DashboardDao.count("practice_record"), "条", "/practice/dev-summary"));
+        out.add(card("practice", "练习记录", DashboardDao.count("practice_record"), "条", "/practice"));
         out.add(card("lowcode", "低代码提交", DashboardDao.count("lowcode_records"), "条", "/lowcode"));
 
         // 配图单独一张：张数之外还要看**占用**（图片存库，体积涨了在列表上完全看不出来）
         Map<String, Object> imgs = PracticeImageDao.summary();
         Map<String, Object> imgCard = card("practiceImages", "练习配图",
-                lng(imgs.get("count")), "张", "/practice/dev-summary");
+                lng(imgs.get("count")), "张", "/practice");
         imgCard.put("hint", humanBytes(lng(imgs.get("bytes"))) + " 已占用");
         out.add(imgCard);
         return out;
