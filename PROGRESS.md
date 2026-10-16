@@ -782,3 +782,53 @@ P1（生命周期接口）、P2（部署闭环）、P3a（预览链路）的能�
 - 界面未做自动化交互测试（除上述截图脚本）；P3b 之后仍是「发布 → 等约 1 分钟 → 上线」，
   进度看 `/blog-deploy`。
 
+## 2026-10-16 · 澄清「文章起草 vs 博客文章生成」并统一预览口径
+
+### 背景（用户提问驱动）
+用户问「文章起草和博客文章生成的功能是不是重复了」。核对结论：**产物不重复**，但**命名与位置**确实让人误解，
+而且预览口径不一致又加重了这种观感：
+
+| | 文章起草（`/blog-gen`） | 练习解答（原「博客文章生成」，`/practice`） |
+|---|---|---|
+| 产物 | posts：路线文章 / 笔记（202 篇） | solutions：练习题解 |
+| 真相源 | 博客仓 `src/content/posts/*.md`（**git**） | MySQL `practice_record`（**数据库**） |
+| 发布方式 | commit+push → 服务器构建（实测 66–70 秒） | 打公开名 + 标发布态，**运行时读接口，秒级**；2026-10-15 起不写仓库 |
+| 线上地址 | `/blog/posts/<slug>/` | `/blog/solutions/<slug>/` |
+| 内容流 | 进首页 / 归档 / RSS / 搜索 | **不进**（那几个页面只 `getCollection("posts")`） |
+| 一条记录 | 一篇文章 | 一道题（module / 篇章号 / 题号 / 难度 / relatedPost + 插图） |
+
+**不改**的是「真合并」：两者真相源与发布时延不同，硬合并等于推翻其中一条的发布模型。
+
+### 改动（Java `c05a639`；博客仓 `e8c57ff`；notelab-b `bb40201`）
+1. **改名 + 独立成组**：菜单「博客文章生成」→ **「练习解答」**，从「博客管理」挪出、独立成顶层分组
+   `g_solutions`（叶子「解答记录」）；`PageRoutes` 标签由「博客·**博客**文章生成」改为「练习解答·解答记录」
+   （顺带修掉那个"博客"重复两遍的写法）；`ApiModules` → 「练习解答接口」；`PermGuard` 注释同步；
+   B 端两处页面标题与文件头注释同步。
+   ⚠️ **只改显示名与菜单归属**：菜单 key 与页面 path（`/practice`）都没动，所以权限码 `page:/practice`
+   不变 —— 历史角色授权与 `/practice?id=N` 二级页书签都不受影响。
+2. **预览口径对齐**：`BlogPreviewService` 增加 `kind`（post/solution）与 `difficulty`/`relatedPost`，
+   新增 `putSolution(...)`；`PracticeController` 新增 `POST /records/{id}/blog-preview` ——
+   走**同一个 `buildPlan`** 拿 difficulty / relatedPost / 正文再存预览，所以预览的就是发布计划
+   （不让浏览器自己拼一份，避免「预览一个样、发布另一个样」）。
+   博客仓新增 `/blog/solutions/preview/<token>/`（复用 `runtime-markdown` 与解答页布局：难度徽章 /
+   返回原题 / 字数行）；两条预览路由各认自己的 `kind`，跨类型 404。
+   ⚠️ nginx 不必改：`^~ /blog/solutions` 已经覆盖这个子路径。
+
+### 验收（真打生产）
+- `.sync/verify-blog-solutions-preview.js` **22 条全绿**：菜单里出现「练习解答」分组且
+  `/practice` 挂在它下面、「博客管理」里已无 `/practice`（仍保留 `/blog-deploy`）、`pages` 仍有 `/practice`；
+  未登录 401；`POST blog-preview` 返回 `/blog/solutions/preview/<32hex>/`；预览页 200 且含难度徽章 /
+  返回原题 / runtime-markdown 渲染 / noindex；**解答 token 走文章预览路由 → 404**。
+- 浏览器级 `.sync/shot-practice-preview.js`：点「博客预览」后 iframe 指向
+  `/blog/solutions/preview/<token>/`，弹窗里是真实解答页（截图
+  `.agent/tmp/shots/20261016-shot-practice-preview.png`）；侧边栏分组实读为
+  `… | 📖博客管理 | 🏋️练习解答`。
+  ⚠️ 该脚本第一版用 `innerText` 判侧边栏文本，连「博客管理」都判成 false —— 换成 `textContent` 才对
+  （`innerText` 受可见性/滚动容器影响，别用它做这类断言）。
+- 本地 `npx tsc --noEmit` exit 0；`notelab-b` 构建通过。
+
+### 边界
+- 解答的预览读的是**库里已保存**的内容（与文章预览提交编辑器当前内容不同）：有未保存改动时页面会提示。
+- 预览里的插图走 B 端受登录保护的 `/api/practice/images/{id}` —— iframe 与后台同源会带上会话，
+  所以未发布的图也能显示；公开解答页走的是另一条匿名出口。
+
