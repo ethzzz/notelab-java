@@ -81,15 +81,17 @@ public final class BlogDeployService {
     }
 
     /**
-     * 搜索索引重建脚本路径。
+     * 衍生索引重建脚本路径（站内搜索 + sitemap）。
      *
      * <p>为什么要有这一类任务：解答页是**运行时渲染**（prerender=false），构建产物 `dist/client` 里没有它们，
-     * 而 pagefind 只索引构建产物 → 题解搜不到（2026-10-16 实测确认）。所以发布/下线一篇解答之后，
-     * 单独跑一次「抓 SSR HTML → 重建索引 → 原子换入」，既让题解可搜，又不牺牲秒级发布。
-     * ⚠️ 每次构建都会重置索引（`npm run build` 里含 pagefind），所以 `deploy-ssr.sh` 末尾也会补跑这一步。
+     * 而 pagefind 只索引构建产物（题解搜不到）、`@astrojs/sitemap` 只枚举预渲染路由（单篇题解进不了 sitemap）。
+     * 所以发布/下线一篇解答之后，单独跑一次这个脚本：抓 SSR HTML → 重建搜索索引 → 原子换入，
+     * 并把解答 URL 幂等注入 sitemap —— 既让题解可搜/可被爬，又不牺牲秒级发布。
+     * ⚠️ 每次构建都会重置这两份衍生索引（`npm run build` 里含 pagefind 与 sitemap 集成），
+     * 所以 `deploy-ssr.sh` 末尾也会补跑这一步。
      */
     public static String reindexScript() {
-        return AppConfig.get("BLOG_REINDEX_SCRIPT", "/root/blog-src/ops/reindex-search.sh");
+        return AppConfig.get("BLOG_REINDEX_SCRIPT", "/root/blog-src/ops/refresh-indexes.sh");
     }
 
     /** 「发布后自动部署」开关（`BLOG_AUTO_DEPLOY=0` 关掉；关掉后只能手动点部署） */

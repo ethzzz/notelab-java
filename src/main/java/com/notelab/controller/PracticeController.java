@@ -677,7 +677,7 @@ public class PracticeController {
             out.put("relatedPost", plan.relatedPost);
             out.put("warnings", plan.warnings);
             out.put("updated", update);
-            out.put("note", "已发布。博客页面直接读数据库，刷新即见（不需要重新构建）；站内搜索索引已排队重建。");
+            out.put("note", "已发布。博客页面直接读数据库，刷新即见（不需要重新构建）；站内搜索索引与 sitemap 已排队重建。");
             out.put("search", queueReindex(user, blogUrlOf(plan.slug)));
             return ResponseEntity.ok(out);
         } catch (Exception e) {
@@ -716,11 +716,12 @@ public class PracticeController {
     }
 
     /**
-     * 站内搜索索引重建入队（best-effort）。
+     * 衍生索引重建入队（best-effort）：站内搜索（pagefind）+ sitemap。
      *
      * <p>为什么发布/下线解答要单独跑一次：解答页是**运行时渲染**（prerender=false），构建产物
-     * `dist/client` 里没有它们，而 pagefind 只索引构建产物 —— 不补这一步，题解就搜不到。
-     * 页面本身仍是即时生效的（读者刷新就见），这一步只解决「能不能被搜到」。
+     * `dist/client` 里没有它们 —— pagefind 只索引构建产物（题解搜不到），`@astrojs/sitemap`
+     * 只枚举预渲染路由（单篇题解进不了 sitemap）。不补这一步，题解既搜不到、也难被发现。
+     * 页面本身仍是即时生效的（读者刷新就见），这一步只解决「能不能被搜到/被爬到」。
      *
      * <p>⚠️ 失败**不能**让「已经发布成功」变成 500：内容已经在库里、页面上已经能看了，
      * 索引没建成只是搜不到，属于可重试的次要后果（状态见 /blog-deploy 的历史）。
