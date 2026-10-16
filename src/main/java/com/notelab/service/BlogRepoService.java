@@ -14,6 +14,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 /**
@@ -139,6 +140,22 @@ public final class BlogRepoService {
     /** 删除仓内文件（存在才删）。用于「改了 slug 重新发布时清掉旧的解答文件」 */
     public static void deleteIfExists(String relative) throws IOException {
         Files.deleteIfExists(resolve(relative));
+    }
+
+    /**
+     * 在仓库锁里跑一段操作，返回值照传。
+     *
+     * <p>⚠️ **构建也必须走这把锁**（部署脚本会 `git pull` 并读整个工作区）。
+     * 2026-10-16 实测踩到：构建刚起来时脚本在 pull，恰好撞上一次文章写入（java 在同一份 clone 上
+     * commit/push）→ 脚本报 `fatal: Cannot fast-forward to multiple branches`、退出 128，
+     * 整次部署失败，而写入本身是成功的 —— 这种「一半成功」最难排查。
+     *
+     * <p>语义上互斥也是对的：构建读到的是一个快照，边写边构建等于发布一个不对应任何提交的站点。
+     */
+    public static <T> T exclusive(Supplier<T> action) {
+        synchronized (LOCK) {
+            return action.get();
+        }
     }
 
     /**

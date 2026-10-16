@@ -137,20 +137,15 @@ public final class BlogDeployService {
     private static void run(long jobId, String verifyPath) {
         long t0 = System.currentTimeMillis();
         BlogDeployDao.markRunning(jobId);
-        int exit = -1;
-        String out;
-        try {
-            Result r = exec(List.of("nice", "-n", "19", "bash", script()), timeoutSec());
-            exit = r.code();
-            out = r.out();
-        } catch (Exception e) {
-            out = "执行失败（没能跑起来）：" + e;
-            log.warn("博客部署 job={} 执行失败", jobId, e);
-        }
+        // ⚠️ 整段脚本跑在**仓库锁**里：脚本要 git pull + 读整个工作区，与 java 的提交并发会互相踩
+        // （2026-10-16 实测：撞出 fatal: Cannot fast-forward to multiple branches，部署白失败一次）。
+        Result r = BlogRepoService.exclusive(BlogDeployService::runScript);
+        int exit = r.code();
+        String out = r.out();
 
         String path = verifyPath == null || verifyPath.isBlank() ? "/blog/" : verifyPath;
         Probe pr = new Probe(null, "");
-        if (exit == 0) pr = probe(path);
+        if (exit == 0) pr = probe(path);   // 探活不碰仓库，放在锁外
 
         Integer code = pr.code();
         boolean ok = exit == 0 && (code == null || code == 200);
@@ -164,6 +159,19 @@ public final class BlogDeployService {
         String status = ok ? BlogDeployDao.SUCCESS : BlogDeployDao.FAILED;
         BlogDeployDao.finish(jobId, status, exit, code, ms, tail(out + note));
         log.info("博客部署 job={} 结束：{}（exit={} probe={} {}ms）{}", jobId, status, exit, code, ms, pr.note());
+    }
+
+    /**
+     * 跑部署脚本。异常不抛出去而是折算成 {@code code = -2}（"没跑起来"）——
+     * 这样失败原因照样落进日志尾部，调用方的收尾逻辑只有一条路径。
+     */
+    private static Result runScript() {
+        try {
+            return exec(List.of("nice", "-n", "19", "bash", script()), timeoutSec());
+        } catch (Exception e) {
+            log.warn("博客部署脚本没能跑起来：{}", e.toString());
+            return new Result(-2, "执行失败（没能跑起来）：" + e);
+        }
     }
 
     /**

@@ -54,8 +54,10 @@ import java.util.NoSuchElementException;
  *   <li>{@code GET /deploy/latest}、{@code /deploy/{id}}、{@code GET /deploy} —— 部署状态 / 历史</li>
  * </ul>
  *
- * <p>写入类动作成功后会**自动排一次部署**（{@link BlogDeployService}，`BLOG_AUTO_DEPLOY=0` 可关），
- * 因为博客是静态站：commit 推上去了但没构建，读者什么都看不到。
+ * <p>**会影响线上的**写入动作（发布 / 更新已发布文章 / 上下线）成功后会**自动排一次部署**
+ * （{@link BlogDeployService}，`BLOG_AUTO_DEPLOY=0` 可关）：博客是静态站，commit 推上去了但没构建，
+ * 读者什么都看不到。草稿的保存与草稿的删除**不构建** —— 读者本来就看不到它们。
+ * ⚠️ 构建进行中（约 1 分钟）写入会被 409 挡住：构建要读整个工作区，与提交并发会互相踩。
  *
  * <p>仓库写入本身（clone / pull / commit / push）在 {@link BlogRepoService}。
  * push 到 main 会触发博客的 GitHub Actions（实测它的上传步骤要 11–25 分钟）；
@@ -173,6 +175,7 @@ public class BlogContentController {
         if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
         if (!node.has("draft")) return ResponseEntity.status(400).body(Map.of("error", "缺少 draft 字段"));
         boolean draft = node.get("draft").asBoolean();
+        if (BlogDeployDao.countActive() > 0) return busyDeploy();
         try {
             String title = titleOf(slug);
             Map<String, Object> r = BlogArticleService.setDraft(slug, draft);
@@ -189,11 +192,13 @@ public class BlogContentController {
     @DeleteMapping("/articles/{slug}")
     public ResponseEntity<Map<String, Object>> remove(@PathVariable String slug, HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        if (BlogDeployDao.countActive() > 0) return busyDeploy();
         try {
             String title = titleOf(slug);
             Map<String, Object> r = BlogArticleService.delete(slug);
             logAction(request, slug, "delete", title, "经「文章起草」删除（原为草稿）");
-            maybeDeployInto(request, r, "", "publish");
+            // 删除的只可能是草稿（非草稿走不到这里），草稿删掉不影响线上 → 不构建
+            r.put("deploy", Map.of("ok", true, "skipped", true, "reason", "删的是草稿，线上本来就没有它"));
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             return fail(e, "删除失败");
@@ -361,6 +366,7 @@ public class BlogContentController {
      */
     private static ResponseEntity<Map<String, Object>> write(HttpServletRequest request, JsonNode node,
                                                              boolean update) {
+        if (BlogDeployDao.countActive() > 0) return busyDeploy();
         try {
             BlogArticleService.Plan plan = BlogArticleService.plan(node);
             if (!plan.ready()) {
@@ -375,11 +381,33 @@ public class BlogContentController {
                 detail.append("；slug 由 ").append(plan.oldSlug()).append(" 改为 ").append(plan.slug());
             }
             logAction(request, plan.slug(), update ? "update" : "create", plan.title(), detail.toString());
-            maybeDeployInto(request, r, plan.draft() ? "" : "/blog/posts/" + plan.slug() + "/", "publish");
+            if (plan.draft()) {
+                // 草稿不上线：构建一次要 1 分多钟、还会占住机器，没必要为「读者看不到的变化」付这个代价
+                r.put("deploy", Map.of("ok", true, "skipped", true, "reason", "草稿不上线，无需构建（发布时会自动构建）"));
+            } else {
+                maybeDeployInto(request, r, "/blog/posts/" + plan.slug() + "/", "publish");
+            }
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             return fail(e, update ? "更新文章失败" : "写入文章失败");
         }
+    }
+
+    /**
+     * 正在部署时**拒绝写入**（409 + 明确文案）。
+     *
+     * <p>为什么要拒：部署脚本会 `git pull` 并读整个工作区，而 java 的写入在同一份 clone 上
+     * commit/push —— 两者并发会互相踩。2026-10-16 实测到一次：构建报
+     * {@code fatal: Cannot fast-forward to multiple branches} 退出 128，部署白失败，
+     * 而那次写入本身是成功的（「一半成功」最难排查）。
+     *
+     * <p>为什么是快速失败而不是挂在那等锁：请求挂在锁上要等一分钟，前端只能转圈；
+     * 409 能把「为什么现在不能改」说清楚（P3 的编辑器据此提示）。
+     */
+    private static ResponseEntity<Map<String, Object>> busyDeploy() {
+        return ResponseEntity.status(409).body(Map.of(
+                "error", "正在部署（约 1 分钟），等它结束再改文章",
+                "deploying", true));
     }
 
     /**
