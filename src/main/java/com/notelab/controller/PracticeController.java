@@ -5,6 +5,7 @@ import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.PracticeDao;
 import com.notelab.dao.PracticeImageDao;
+import com.notelab.service.BlogDeployService;
 import com.notelab.service.BlogPreviewService;
 import com.notelab.service.BlogRepoService;
 import com.notelab.service.UiConfigService;
@@ -676,7 +677,8 @@ public class PracticeController {
             out.put("relatedPost", plan.relatedPost);
             out.put("warnings", plan.warnings);
             out.put("updated", update);
-            out.put("note", "已发布。博客页面直接读数据库，刷新即见（不需要重新构建）。");
+            out.put("note", "已发布。博客页面直接读数据库，刷新即见（不需要重新构建）；站内搜索索引已排队重建。");
+            out.put("search", queueReindex(user, blogUrlOf(plan.slug)));
             return ResponseEntity.ok(out);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(Map.of("error", "发布失败：" + e.getMessage()));
@@ -708,7 +710,27 @@ public class PracticeController {
         out.put("ok", true);
         out.put("slug", slug);
         out.put("note", "已下线。" + blogUrlOf(slug) + " 现在返回 404；重新发布即可恢复，地址不变。");
+        // 搜索索引也要把它去掉：重建读的是**当前已发布清单**，所以下线之后跑一次就自动不含它
+        out.put("search", queueReindex(AuthUtil.user(request), ""));
         return ResponseEntity.ok(out);
+    }
+
+    /**
+     * 站内搜索索引重建入队（best-effort）。
+     *
+     * <p>为什么发布/下线解答要单独跑一次：解答页是**运行时渲染**（prerender=false），构建产物
+     * `dist/client` 里没有它们，而 pagefind 只索引构建产物 —— 不补这一步，题解就搜不到。
+     * 页面本身仍是即时生效的（读者刷新就见），这一步只解决「能不能被搜到」。
+     *
+     * <p>⚠️ 失败**不能**让「已经发布成功」变成 500：内容已经在库里、页面上已经能看了，
+     * 索引没建成只是搜不到，属于可重试的次要后果（状态见 /blog-deploy 的历史）。
+     */
+    private static Map<String, Object> queueReindex(Map<String, Object> user, String verifyPath) {
+        try {
+            return BlogDeployService.triggerReindex(AuthUtil.userId(user), String.valueOf(user.get("username")), verifyPath);
+        } catch (Exception e) {
+            return Map.of("ok", false, "reason", "索引重建入队失败：" + e.getMessage());
+        }
     }
 
     // ==================================================================================

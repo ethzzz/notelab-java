@@ -599,6 +599,12 @@ final class DbSchema {
                 finished_at DATETIME NULL,
                 KEY idx_blog_deploy_status (status, id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // 任务类型（2026-10-16 加）：deploy = 构建发布；reindex = 只重建站内搜索索引
+        // （题解是运行时渲染，构建产物里没有它们，得单独抓 SSR HTML 再喂 pagefind）。
+        // 分开记的理由见 BlogDeployDao.countActiveDeploys：「部署期间不许改文章」不该被索引任务挡住。
+        if (!hasColumn("blog_deploy_job", "job_kind")) {
+            Db.exec("ALTER TABLE blog_deploy_job ADD COLUMN job_kind VARCHAR(16) NOT NULL DEFAULT 'deploy'");
+        }
     }
 
     /** 列存在守护（information_schema）：存在返回 true */

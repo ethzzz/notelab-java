@@ -76,8 +76,20 @@ public final class BlogDeployService {
     private BlogDeployService() {}
 
     /** 部署脚本路径（默认博客仓自带的那个；换位置只改配置，不改代码） */
-    public static String script() {
+    public static String deployScript() {
         return AppConfig.get("BLOG_DEPLOY_SCRIPT", "/root/blog-src/ops/deploy-ssr.sh");
+    }
+
+    /**
+     * 搜索索引重建脚本路径。
+     *
+     * <p>为什么要有这一类任务：解答页是**运行时渲染**（prerender=false），构建产物 `dist/client` 里没有它们，
+     * 而 pagefind 只索引构建产物 → 题解搜不到（2026-10-16 实测确认）。所以发布/下线一篇解答之后，
+     * 单独跑一次「抓 SSR HTML → 重建索引 → 原子换入」，既让题解可搜，又不牺牲秒级发布。
+     * ⚠️ 每次构建都会重置索引（`npm run build` 里含 pagefind），所以 `deploy-ssr.sh` 末尾也会补跑这一步。
+     */
+    public static String reindexScript() {
+        return AppConfig.get("BLOG_REINDEX_SCRIPT", "/root/blog-src/ops/reindex-search.sh");
     }
 
     /** 「发布后自动部署」开关（`BLOG_AUTO_DEPLOY=0` 关掉；关掉后只能手动点部署） */
@@ -106,15 +118,15 @@ public final class BlogDeployService {
      * @return {@code {ok:true, jobId, status, commit, script}}；被拒时 {@code {ok:false, reason}}
      */
     public static Map<String, Object> trigger(Long userId, String userName, String kind, String verifyPath) {
-        int active = BlogDeployDao.countActive();
+        int active = BlogDeployDao.countActiveDeploys();
         if (active > 0 || POOL.getActiveCount() > 0 || !POOL.getQueue().isEmpty()) {
             return Map.of("ok", false, "reason", "已经有一个部署在跑（或排队中），等它结束再试",
                     "active", active);
         }
         String head = BlogRepoService.headCommit();
-        long id = BlogDeployDao.create(userId, userName, kind, head, verifyPath);
+        long id = BlogDeployDao.create(userId, userName, kind, "deploy", head, verifyPath);
         try {
-            POOL.execute(() -> run(id, verifyPath));
+            POOL.execute(() -> runDeploy(id, verifyPath));
         } catch (RejectedExecutionException e) {
             BlogDeployDao.finish(id, BlogDeployDao.FAILED, null, null, 0L, "入队被拒：部署队列已满");
             return Map.of("ok", false, "reason", "部署队列已满，稍后再试");
@@ -126,7 +138,39 @@ public final class BlogDeployService {
         out.put("status", BlogDeployDao.QUEUED);
         out.put("commit", head);
         out.put("verifyPath", verifyPath);
-        out.put("script", script());
+        out.put("script", deployScript());
+        return out;
+    }
+
+    /**
+     * 排一次「搜索索引重建」（解答发布/下线后由 PracticeController 调用）。
+     *
+     * <p>⚠️ 已有索引任务在跑/排队时**直接跳过**：那个任务在真正执行时才去取「当前已发布清单」，
+     * 所以它天然覆盖这期间的所有变化 —— 再排一次只是白跑（还会把队列占满）。
+     *
+     * <p>⚠️ 它**不占用「部署期间不许改文章」那条规则**（那条只算 deploy 类任务）：
+     * 索引重建只读产物、几秒钟结束，没有理由挡住编辑。
+     */
+    public static Map<String, Object> triggerReindex(Long userId, String userName, String verifyPath) {
+        int active = BlogDeployDao.countActiveReindex();
+        if (active > 0) {
+            return Map.of("ok", false, "skipped", true,
+                    "reason", "已有搜索索引任务在跑/排队（它会读到最新的已发布清单）");
+        }
+        long id = BlogDeployDao.create(userId, userName, "reindex", "reindex", "", verifyPath);
+        try {
+            POOL.execute(() -> runReindex(id, verifyPath));
+        } catch (RejectedExecutionException e) {
+            BlogDeployDao.finish(id, BlogDeployDao.FAILED, null, null, 0L, "入队被拒：队列已满");
+            return Map.of("ok", false, "reason", "队列已满，稍后再试");
+        }
+        log.info("搜索索引重建已入队：job={} verify={} by={}", id, verifyPath, userName);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("jobId", id);
+        out.put("status", BlogDeployDao.QUEUED);
+        out.put("verifyPath", verifyPath);
+        out.put("script", reindexScript());
         return out;
     }
 
@@ -134,12 +178,26 @@ public final class BlogDeployService {
     // 执行
     // ==================================================================================
 
-    private static void run(long jobId, String verifyPath) {
+    /** 部署：整段脚本跑在**仓库锁**里（脚本要 git pull + 读整个工作区，与 java 的提交并发会互相踩） */
+    private static void runDeploy(long jobId, String verifyPath) {
         long t0 = System.currentTimeMillis();
         BlogDeployDao.markRunning(jobId);
-        // ⚠️ 整段脚本跑在**仓库锁**里：脚本要 git pull + 读整个工作区，与 java 的提交并发会互相踩
-        // （2026-10-16 实测：撞出 fatal: Cannot fast-forward to multiple branches，部署白失败一次）。
-        Result r = BlogRepoService.exclusive(BlogDeployService::runScript);
+        // ⚠️ 2026-10-16 实测踩到：不互斥会撞出 fatal: Cannot fast-forward to multiple branches，部署白失败一次。
+        finish(jobId, t0, BlogRepoService.exclusive(() -> runScript(deployScript())), verifyPath);
+    }
+
+    /**
+     * 索引重建：只读构建产物与 SSR 页面，**不碰 git**，也就不需要仓库锁 ——
+     * 它与构建的互斥由脚本自己那把 flock 保证（见 reindex-search.sh 头注释）。
+     */
+    private static void runReindex(long jobId, String verifyPath) {
+        long t0 = System.currentTimeMillis();
+        BlogDeployDao.markRunning(jobId);
+        finish(jobId, t0, runScript(reindexScript()), verifyPath);
+    }
+
+    /** 收尾（两类任务共用）：探活 → 判定成功/失败 → 输出与耗时落库 */
+    private static void finish(long jobId, long t0, Result r, String verifyPath) {
         int exit = r.code();
         String out = r.out();
 
@@ -150,26 +208,25 @@ public final class BlogDeployService {
         Integer code = pr.code();
         boolean ok = exit == 0 && (code == null || code == 200);
         StringBuilder note = new StringBuilder();
-        if (exit != 0) note.append("\n[失败] 部署脚本退出码 ").append(exit).append("（见上方输出尾部）");
+        if (exit != 0) note.append("\n[失败] 脚本退出码 ").append(exit).append("（见上方输出尾部）");
         else if (code != null && code != 200) note.append("\n[失败] 脚本成功，但探活 ").append(path).append(" 得到 ").append(code);
         else note.append("\n[完成] 探活 ").append(path).append(" → ").append(code == null ? "未取到" : code);
         if (!pr.note().isEmpty()) note.append("\n[探活细节] ").append(pr.note());
 
-        long ms = System.currentTimeMillis() - t0;
         String status = ok ? BlogDeployDao.SUCCESS : BlogDeployDao.FAILED;
-        BlogDeployDao.finish(jobId, status, exit, code, ms, tail(out + note));
-        log.info("博客部署 job={} 结束：{}（exit={} probe={} {}ms）{}", jobId, status, exit, code, ms, pr.note());
+        BlogDeployDao.finish(jobId, status, exit, code, System.currentTimeMillis() - t0, tail(out + note));
+        log.info("博客任务 job={} 结束：{}（exit={} probe={}）{}", jobId, status, exit, code, pr.note());
     }
 
     /**
-     * 跑部署脚本。异常不抛出去而是折算成 {@code code = -2}（"没跑起来"）——
+     * 跑一个脚本。异常不抛出去而是折算成 {@code code = -2}（"没跑起来"）——
      * 这样失败原因照样落进日志尾部，调用方的收尾逻辑只有一条路径。
      */
-    private static Result runScript() {
+    private static Result runScript(String script) {
         try {
-            return exec(List.of("nice", "-n", "19", "bash", script()), timeoutSec());
+            return exec(List.of("nice", "-n", "19", "bash", script), timeoutSec());
         } catch (Exception e) {
-            log.warn("博客部署脚本没能跑起来：{}", e.toString());
+            log.warn("脚本没能跑起来（{}）：{}", script, e.toString());
             return new Result(-2, "执行失败（没能跑起来）：" + e);
         }
     }

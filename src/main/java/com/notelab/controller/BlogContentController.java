@@ -176,7 +176,7 @@ public class BlogContentController {
         if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
         if (!node.has("draft")) return ResponseEntity.status(400).body(Map.of("error", "缺少 draft 字段"));
         boolean draft = node.get("draft").asBoolean();
-        if (BlogDeployDao.countActive() > 0) return busyDeploy();
+        if (BlogDeployDao.countActiveDeploys() > 0) return busyDeploy();
         try {
             String title = titleOf(slug);
             Map<String, Object> r = BlogArticleService.setDraft(slug, draft);
@@ -193,7 +193,7 @@ public class BlogContentController {
     @DeleteMapping("/articles/{slug}")
     public ResponseEntity<Map<String, Object>> remove(@PathVariable String slug, HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        if (BlogDeployDao.countActive() > 0) return busyDeploy();
+        if (BlogDeployDao.countActiveDeploys() > 0) return busyDeploy();
         try {
             String title = titleOf(slug);
             Map<String, Object> r = BlogArticleService.delete(slug);
@@ -267,8 +267,10 @@ public class BlogContentController {
         out.put("ok", true);
         out.put("latest", BlogDeployDao.latest());
         out.put("active", BlogDeployDao.countActive());
+        out.put("activeDeploys", BlogDeployDao.countActiveDeploys());
         out.put("headCommit", BlogRepoService.headCommit());
-        out.put("script", BlogDeployService.script());
+        out.put("script", BlogDeployService.deployScript());
+        out.put("reindexScript", BlogDeployService.reindexScript());
         out.put("autoDeploy", BlogDeployService.autoEnabled());
         return out;
     }
@@ -402,7 +404,7 @@ public class BlogContentController {
      */
     private static ResponseEntity<Map<String, Object>> write(HttpServletRequest request, JsonNode node,
                                                              boolean update) {
-        if (BlogDeployDao.countActive() > 0) return busyDeploy();
+        if (BlogDeployDao.countActiveDeploys() > 0) return busyDeploy();
         try {
             BlogArticleService.Plan plan = BlogArticleService.plan(node);
             if (!plan.ready()) {
@@ -439,13 +441,15 @@ public class BlogContentController {
      *
      * <p>为什么是快速失败而不是挂在那等锁：请求挂在锁上要等一分钟，前端只能转圈；
      * 409 能把「为什么现在不能改」说清楚（P3 的编辑器据此提示）。
+     *
+     * <p>⚠️ 判据是 {@code countActiveDeploys()} 而不是「有任何任务在跑」：搜索索引重建
+     * （解答发布后触发）只读产物、几秒钟结束，不该把编辑挡住。
      */
     private static ResponseEntity<Map<String, Object>> busyDeploy() {
         return ResponseEntity.status(409).body(Map.of(
                 "error", "正在部署（约 1 分钟），等它结束再改文章",
                 "deploying", true));
     }
-
     /**
      * 发布类动作（写入 / 上下线 / 删除）之后的**自动部署**：把一次构建排进队列。
      *

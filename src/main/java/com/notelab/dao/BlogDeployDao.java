@@ -23,11 +23,12 @@ public final class BlogDeployDao {
     public static final String FAILED = "failed";
 
     /** 建一行 queued 任务，返回自增 id */
-    public static long create(Long userId, String userName, String kind, String commitHash, String verifyPath) {
+    public static long create(Long userId, String userName, String kind, String jobKind,
+                              String commitHash, String verifyPath) {
         return Db.execInsert("INSERT INTO blog_deploy_job "
-                        + "(trigger_by, trigger_by_name, trigger_kind, commit_hash, verify_path, status) "
-                        + "VALUES (?,?,?,?,?,?)",
-                userId, nz(userName), nz(kind), nz(commitHash), nz(verifyPath), QUEUED);
+                        + "(trigger_by, trigger_by_name, trigger_kind, job_kind, commit_hash, verify_path, status) "
+                        + "VALUES (?,?,?,?,?,?,?)",
+                userId, nz(userName), nz(kind), nz(jobKind), nz(commitHash), nz(verifyPath), QUEUED);
     }
 
     public static void markRunning(long id) {
@@ -55,10 +56,32 @@ public final class BlogDeployDao {
         return Db.queryAll("SELECT * FROM blog_deploy_job ORDER BY id DESC LIMIT ?", limit);
     }
 
-    /** 还在跑或排队中的任务数 —— 用来挡住并发部署（两条构建同时写 /var/www/blog 会互相覆盖） */
+    /** 还在跑或排队中的任务数（不分类型；状态页的「有活干」提示用） */
     public static int countActive() {
         Map<String, Object> r = Db.queryOne(
                 "SELECT COUNT(*) AS n FROM blog_deploy_job WHERE status IN (?,?)", QUEUED, RUNNING);
+        return r == null || !(r.get("n") instanceof Number n) ? 0 : n.intValue();
+    }
+
+    /**
+     * 还在跑的**部署**任务数（只算 {@code job_kind='deploy'}）。
+     *
+     * <p>为什么要把索引任务排除在外：「部署期间不许改文章」这条规则存在的理由是构建会重写整个
+     * 工作区产物；而搜索索引重建只读产物、几秒钟就结束，拿它去挡编辑没有道理。
+     */
+    public static int countActiveDeploys() {
+        return countActiveOf("deploy");
+    }
+
+    /** 还在跑/排队中的**索引**任务数（用来实现「已有一个在排队就别再排」——它跑的时候会读到最新清单） */
+    public static int countActiveReindex() {
+        return countActiveOf("reindex");
+    }
+
+    private static int countActiveOf(String jobKind) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM blog_deploy_job WHERE status IN (?,?) AND job_kind=?",
+                QUEUED, RUNNING, jobKind);
         return r == null || !(r.get("n") instanceof Number n) ? 0 : n.intValue();
     }
 
