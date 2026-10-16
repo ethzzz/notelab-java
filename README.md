@@ -21,6 +21,7 @@ NoteLab AI 试验后台的 **Java（Spring Boot）重写版**。目标：1:1 重
 | C 端身份体系（B/C 拆分阶段1） | /api/c/auth/*（login/me/logout/register）+ /api/c-admin/*（用户/用户组管理） | ✅ 已完成（c_users/c_user_groups 新表 + 4 段 c. token 与 B 端隔离 + 注册开关默认关闭） |
 | C 端游玩与内容发布（B/C 拆分阶段2） | /api/c/trpg/*（已发布剧本游玩）+ /api/c/config/background、/api/c/spire/content（匿名）+ B 端 publish/unpublish | ✅ 已完成（trpg_playthroughs.scope + trpg_scenarios.published 补列，存量默认 B 归属零迁移） |
 | 每日英语翻译练习 | C 端 /api/translate/*（today/submit/history）+ B 端 /api/admin/translate/*（句子组 CRUD/手动加句/批量导入/AI 生成/入队）+ 0 点定时激活 | ✅ 已完成（en_tr_groups/en_tr_sentences/en_tr_submissions 三张新表 + @EnableScheduling + 大模型判分/出题，同人同日同句 upsert 覆盖） |
+| 博客管理（文章生命周期） | /api/blog/*（generate/plan/content/list/articles/options + PUT 更新 / draft 上下线 / DELETE 仅草稿） | ✅ 已完成（P1，2026-10-16；机制收敛到 `service/BlogArticleService`，写入博客仓 `ethzzz/blog`） |
 
 ## 项目简介
 
@@ -247,3 +248,31 @@ mvn -DskipTests package && pm2 restart notelab-java
 判分实测（准确 100 分 / 时态错误 60 分带逐点标注）；同句提交 3 次仅 1 行且被覆盖（`created_at` 不变、`updated_at` 刷新）；
 非超管 B 端账号 403；`mvn -DskipTests package` ✅、`notelab-b`/`notelab-c` `npm run build` ✅、页面 curl 200 ✅。
 验收测试数据已清理归零（备份 `data/backup/en_tr_acceptance_data_*.sql`）。详见 PROGRESS.md 末节。
+
+## 博客管理（✅ 2026-10-16 补齐生命周期接口）
+
+B 端「博客管理」把文章写进博客仓 `ethzzz/blog` 的 `src/content/posts/`（服务器 clone `BLOG_REPO_LOCAL`，
+默认 `/root/blog-src`），写文件后 `git add/commit/push`；push 到 main 会触发博客的 GitHub Actions 构建。
+
+**机制全部在 `service/BlogArticleService`**（本仓唯一收敛点）：frontmatter 解析与**行内改写**、slug 规则与
+去重、校验、`plan()` 计划、读-改-写串行化、元信息 5 分钟缓存（写后失效）。
+Controller 只做「鉴权 / 解析 / 响应 / 记改动日志」。
+`clone / pull / commit / push` 一律走 `service/BlogRepoService`（带 LOCK、防路径穿越、非交互 SSH）。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/blog/generate` | 给提示词调 QwenClient 起草整篇 Markdown（含 frontmatter，不落盘） |
+| POST | `/api/blog/plan` | **干跑**：会写成什么（slug=URL、path、commitMessage、blockers、warnings）；阻塞项是正常结果，仍回 200 |
+| POST | `/api/blog/content` | 新建并写入（结构化字段，或 AI 草稿的 `raw_markdown`）；有 blocker → 400 且一行不写 |
+| PUT | `/api/blog/articles/{slug}` | 更新既有文章，可传 `newSlug` 改名（旧的 md 一并删除）。slug 以**路径**为准 |
+| POST | `/api/blog/articles/{slug}/draft` | `{draft:true}` 下线 / `false` 发布；只改 frontmatter 的 draft 那一行 |
+| DELETE | `/api/blog/articles/{slug}` | 删除，**仅限草稿**（已发布 → 409，先下线再删） |
+| GET | `/api/blog/list` | 全部 slug（按发布日倒序）。上限 5000（原 200，仓里已 202 篇，是静默截断） |
+| GET | `/api/blog/articles` | 清单 + 浏览数（按访客去重）+ 最后一次**后台**改动（一次查完再内存拼） |
+| GET | `/api/blog/articles/{slug}` | 单篇：元信息 + `body` + 原文 `markdown` + 浏览数 + 改动记录 |
+| GET | `/api/blog/options` | 分类 / 标签候选（取自仓内现有文章，避免手输把同一类内容写裂）+ 总数 / 草稿数 |
+
+⚠️ 三条语义：**更新是行内改写**（保留 `image`/`lang` 等本类不管理的键）、**`published` 默认不变**
+（改正文不该把文章顶回时间线，要改日期得显式传）、**显式指定的 slug 撞名即报错**（只有由标题推导的 slug
+才自动加 `-1`）。权限：`PermGuard` 把 `/api/blog` 与 `/blog-gen`、`/blog-articles` 都限定为仅超管。
+验收：`mvn package` ✅ + `.sync/verify-blog-admin-p1.js` 46 条断言全绿（详见 PROGRESS.md 末节）。

@@ -597,3 +597,50 @@ B 端「用户组 → 路由菜单」的绑定此前已通（角色组分配路�
 ### 边界
 `api:*` 权限码**只登记、不强制校验**——接口实际防护仍靠各 Controller 自己的登录/超管判断，勾掉某个 `api:*` 不会让接口拒绝访问。本次新接口自身做了 `isSuperAdmin` 校验，故不依赖该机制。
 
+## 2026-10-16 · 博客文章补齐生命周期接口（P1：机制收敛到 service + 编辑/上下线/删除/干跑）
+
+### 背景
+「博客管理」原来只能**新建**文章：存量 202 篇在后台打不开、改不了、下线不了；草稿在 prod 构建里被
+`data.draft !== true` 过滤，等于没有预览途径；`GET /api/blog/list` 还有 `items.size() >= 200` 的硬截断，
+而仓里已经 202 篇 —— 「最近文章」永远少两篇。更根上的问题是 frontmatter 解析、slug 规则、去重、建文件
+全塞在 controller 里，「预检会写成什么」与「真正写下去什么」没法共用一份实现
+（练习实践 `PracticeController.buildPlan` 已经吃过这个亏：**预检与真发必须共用同一个构建函数**）。
+
+### 改动（提交 `5f7a294`）
+- 新增 `service/BlogArticleService`：文章机制的唯一收敛点 —— frontmatter 解析与**行内改写**、slug 规则与
+  去重、校验（`plan()`）、`apply()` / `setDraft()` / `delete()`、读-改-写串行化（`WRITE_LOCK`：
+  `BlogRepoService` 的锁只保护单条 git 命令，保护不了「读文件 → 改 → 写回」整段）、
+  元信息 5 分钟缓存 + **写后失效**（不清缓存后台刚改完列表还是旧的）。
+- `controller/BlogContentController` 退化为纯 HTTP 层（鉴权 / 解析 / 响应 / 记改动日志），新增：
+  `POST /plan`（干跑）、`PUT /articles/{slug}`（更新，可改名）、`POST /articles/{slug}/draft`（上下线）、
+  `DELETE /articles/{slug}`（仅限草稿）、`GET /options`（分类 / 标签候选取自仓内现状）；
+  详情 `GET /articles/{slug}` 追加 `body` 与原文 `markdown`；`GET /list` 上限 200 → 5000。
+- 三条刻意的语义：① 更新走**行内改写**，保留 `image` / `lang` / `updated` 等本类不管理的键（重建 frontmatter
+  会把它们静默抹掉）；② `published` 更新时**默认保持原值**（改一次正文就把文章顶回时间线是不对的），
+  要改日期必须显式传；③ 新建时**显式指定的 slug 撞名 = 报错**，只有「slug 由标题推导出来」才自动加 `-1`
+  —— 静默换名会让人以为发成功了、其实 URL 不是他要的。
+
+### 验收（服务器实测 + 真打生产 HTTP）
+- `mvn -B -DskipTests -q package` 通过 → `pm2 restart notelab-java` → 探活 `/api/menu` = **401** ✅
+- `.sync/verify-blog-admin-p1.js`（会话由服务器侧 `gen-cookie.mjs 18` 签发；**46 条断言全绿**）：
+  - 干跑：缺标题 → `ready=false` + 「标题不能为空」；显式撞已存在 slug → 拒绝；更新不存在的文章 → 拒绝；
+    更新既有文章的干跑 `published` 与原文一致（2026-10-03 → 2026-10-03）。
+  - 读接口：`/list` 条目 **202 ≥ 202**（截断修复）；`/articles` total=202 且与 items 长度一致；
+    详情回 4271 字符原文 markdown、body 已剥 frontmatter、tags 解析成数组；
+    `/options` 分类候选 17 个 / 标签候选 40 个（前者含 `notelab`）。
+  - 权限：`/articles`、`/options`、`/plan`、`/content`、`DELETE` 未登录一律 **401**（不是 403/200）。
+  - 写入路径（探针 `zz-p1-probe-1792153271129`）：建草稿 → 更新（标题/正文/标签数组落盘、published 未被刷、
+    frontmatter 仍 `draft: true`）→ 发布 → **已发布直接删 = 409** → 下线 → 删除 → 再读 404；
+    `blog_article_log` 里 `create/update/publish/unpublish` 四种动作齐全。
+- 清理：探针文件已从博客仓删除（`c3bc9e6`，posts 复位 202 篇）；探针的 5 条改动记录已清理
+  （留底 `/root/scratch/20261016-tmp-blog_article_log-backup.sql`）。
+  ⚠️ 探针的 5 个 commit 留在博客仓**公开历史**里（与仓内既有 `solutions: add …-e2e-probe` 惯例一致，撤不掉）。
+- CI 队列无副作用：验收期间触发的运行里只有 `6d207c1`（工作流改动）在跑、`c3bc9e6`（删探针）在排队，
+  中间态被 GitHub 按 concurrency 规则自动取消 —— 探针没有可能真的上线。
+- 顺带修好：`.sync/gen-cookie.mjs` 的 env 候选路径过期（`/root/notelab-java/.env` → 2026-10-01 仓搬家后的
+  `/root/Notelab/notelab-java/.env`），此前一律输出 `NO_SECRET_KEY_FOUND`；`gen-cookie18.mjs` 收敛成它的别名。
+
+### 边界
+- 前端仍是老样子：`blog-gen` 只能新建、`blog-articles` 只读 —— 编辑 / 上下线 / 删除的 UI 是 **P3**。
+- 发布**还不是**「点一下就上线」：admin 侧要等后台触发的服务器本地构建（**P2**，实测构建 80 秒）。
+
