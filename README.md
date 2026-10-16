@@ -274,12 +274,30 @@ Controller 只做「鉴权 / 解析 / 响应 / 记改动日志」。
 | POST | `/api/blog/deploy` | **手动触发/重试部署**（后台跑服务器本地构建）。body 可选 `{slug}` → 探活该篇；已有任务在跑 → **429** |
 | GET | `/api/blog/deploy/{id}` | 某次部署的状态：`status`/`exit_code`/`probe_code`/`duration_ms`/`log_tail`/`commit_hash` |
 | GET | `/api/blog/deploy/latest`、`GET /api/blog/deploy` | 最近一次 + `active` + 仓里 `headCommit` + 配置；后者另带最近 20 条历史 |
+| POST | `/api/blog/preview` | 把**正在编辑的草稿**放进短时存储，返回可嵌 iframe 的预览地址（仅超管） |
+| GET | `/api/blog/preview/{token}` | **匿名**读那份草稿给博客 SSR 渲染（128 位随机 token + 30 分钟 TTL，见下） |
 
 ⚠️ 三条语义：**更新是行内改写**（保留 `image`/`lang` 等本类不管理的键）、**`published` 默认不变**
 （改正文不该把文章顶回时间线，要改日期得显式传）、**显式指定的 slug 撞名即报错**（只有由标题推导的 slug
 才自动加 `-1`）。权限：`PermGuard` 把 `/api/blog` 与 `/blog-gen`、`/blog-articles` 都限定为仅超管。
 验收：`mvn package` ✅ + `.sync/verify-blog-admin-p1.js` 46 条断言全绿、`.sync/verify-blog-deploy-p2.js`
-40 条断言全绿（详见 PROGRESS.md 末节）。
+40 条断言全绿、预览接口 18 条 + 预览页面 24 条（详见 PROGRESS.md 末节）。
+
+## 草稿预览：正文交给博客自己的渲染管线（✅ 2026-10-16，P3a）
+
+**为什么不在后台渲染**：线上正文是一条**构建期管线**（expressive-code 代码高亮 / KaTeX / admonition /
+标题锚点），后台用 marked 永远是另一套观感。所以正文由博客侧渲染（它已有
+`src/utils/runtime-markdown.ts` —— 把同一套插件在运行时原样再跑一遍），本仓只负责**那份还没落盘的草稿放哪**：
+
+- `BlogPreviewService`：内存短时存储，**128 位随机 token + 30 分钟 TTL + 条数上限 200**
+  （超出先清过期再清最旧）。刻意不复用 `BlogArticleService.plan()` —— 那是「要写进仓库」的计划，
+  会因为标题为空 / slug 撞名直接给 blocker，而预览恰恰要能看半成品。
+- ⚠️ `GET /api/blog/preview/{token}` 是**匿名**的，且 `PermGuard.PUBLIC_PREFIXES` 里加了它：
+  博客的 SSR 进程没有 B 端会话，授权手段只剩「拿着不可猜的 token」这一条。
+  谁拿到 URL 谁就能看，所以 token 只出现在后台界面里。
+- 博客侧路由是 `/blog/preview/<token>/`（`prerender=false`），需要 nginx 反代该前缀到 :3012
+  —— 由博客仓的 `ops/nginx-blog-ssr.sh` 负责（它同时保证 `/blog/solutions`）。
+- 内存存储随重启清空是刻意的：刷新一次编辑器就重新 POST 一份，代价只是重启后旧预览链接失效。
 
 ## 博客部署：后台触发的服务器本地构建（✅ 2026-10-16，P2）
 

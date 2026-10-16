@@ -693,6 +693,53 @@ B 端「用户组 → 路由菜单」的绑定此前已通（角色组分配路�
 - 部署进行中（约 1 分钟）后台**改不了文章**（409）—— 这是刻意互斥，不是 bug；P3 的界面会显示构建进度。
 - `blog_deploy_job` 里留下了本次验收的若干条记录（含 3 条失败：探活 null / probe 0 / exit 128）——
   那是真实的部署历史与排查线索，刻意保留，未清空。
-- CI 侧仍会部署 `/var/www/blog`（两条路并存）：CI 成功会覆盖本地构建的产物，CI 失败不影响线上；
-  真正的风险是"CI 用一个更旧的提交覆盖"，所以 admin 侧发布后若看到线上回退，重跑一次部署即可。
+- CI 那条路**当时**仍会把 runner 产物复制到服务器，风险是「用一个更旧的提交覆盖线上」——
+  当天晚些时候真的发生了（见下节），已改掉。
+
+## 2026-10-16 · 草稿预览（P3a：正文交给博客自己的渲染管线）
+
+### 背景与决策
+用户要求「预览界面要和线上博客文章页一致」。线上正文是一条**构建期管线**（expressive-code 代码高亮 /
+KaTeX / admonition 提示块 / 标题锚点 / 阅读时长），后台再怎么配都是另一套库 —— 所以预览必须由**博客侧**渲染。
+博客仓早有 `src/utils/runtime-markdown.ts`（把同一套插件在运行时原样再跑一遍，练习解答页在用），
+于是只差最后一环：那份**还没落盘的草稿**放哪。
+
+### 改动（提交 `49107b0`；博客仓 `6b8c33a`）
+- 新增 `service/BlogPreviewService`：内存短时存储（**128 位随机 token**、**30 分钟 TTL**、条数上限 200，
+  超出先清过期再清最旧）。刻意**不复用** `BlogArticleService.plan()` —— 那是「要写进仓库」的计划，
+  会因为标题为空 / slug 撞名直接 blocker，而预览恰恰要能看半成品。
+- 接口：`POST /api/blog/preview`（超管：存草稿，返回可嵌 iframe 的地址）+
+  `GET /api/blog/preview/{token}`（**匿名**：博客 SSR 去取）。`PermGuard.PUBLIC_PREFIXES` 加
+  `/api/blog/preview` —— 必须在注释里写明安全边界：SSR 没有 B 端会话，授权手段只剩不可猜的 token；
+  POST 那侧在 Controller 里自带登录判断。
+- 博客仓：`src/pages/preview/[token].astro`（`prerender=false`，取草稿 → `renderMarkdown` +
+  `expressiveCodeAssets` → 与 `src/pages/posts/[...slug].astro` 同一套布局：字数/阅读时长/朗读按钮/
+  标题/`PostMetadata`/正文/license；`noindex`）+ `src/utils/notelab-preview-api.ts`。
+  与线上**刻意不同**的四处（都写在文件头）：卡片外多一个「预览」徽标、无上下篇、无浏览数、无封面图。
+- `ops/nginx-blog-ssr.sh` 改成**逐个前缀**判断（原来一看 solutions 在就 exit 0，加第二个前缀永远不生效），
+  现在同时保证 `/blog/solutions` 与 `/blog/preview` 反代到本机 3012；验证段加了
+  「用不存在的 token 探预览路由」——⚠️ 注意：内容不存在时 Astro 会用**默认 404 页**盖掉页面自己渲染的
+  404 卡片（solutions 与 preview 都一样），所以判据只能是「404 + Astro 的 404 页特征」，
+  不能 grep 页面里的自定义文案。
+
+### 验收（真打生产）
+- `.sync/verify-blog-preview-api.js` **18 条全绿**：token 形状/URL/TTL、匿名读、404、AI 那条路
+  （从整篇 Markdown 的 frontmatter 取字段并剥掉 frontmatter）、半成品也能预览。
+- `.sync/verify-blog-preview-page.js` **24 条全绿**：预览页 200、含 `#post-container`/`card-base`/
+  `onload-animation`/noindex/预览徽标；正文由 expressive-code（样式内联）+ admonition + KaTeX +
+  标题锚点渲染；**与线上真实文章页逐项比对同类特征**（5 项两边都有）；刻意不同的两处确实没有。
+
+### 真实事故：CI 把服务器构建回退了（同日，已修）
+预览页上线后 404，且真 token 也 404。证据链：`/root/blog-src/dist/server` 的 manifest 里路径是
+`/home/runner/work/blog/blog/...`（runner 上构建的），而 `dist/server/pages/*` 的 mtime 晚于我本地构建
+—— 即**一次 CI 发布把产物覆盖成了更早提交的版本**。根因：CI 上传要排队 11–25 分钟，
+「这一次的产物」可能来自十来分钟前的提交；复制过去就是回退线上，顺带盖掉后台刚发布的文章。
+**修法**：`deploy.yml` 删掉 scp + 复制产物两步（runner 只保留「能不能构建」的校验），
+发布改为 ssh 执行 `ops/deploy-ssr.sh`（先 pull 到最新 origin/main 再构建，与后台同一条路）；
+`deploy-ssr.sh` 加 flock（`/var/lock/blog-deploy.lock`）把多个触发者排成一队 ——
+⚠️ 那把锁保护**服务器产物**，`BlogRepoService.LOCK` 保护**仓库**，两件事都要有。
+
+### 边界
+- 预览是**未发布内容**：谁拿到 URL 谁就能看（token 只出现在后台界面里）；30 分钟后自动失效。
+- 内存存储随 JVM 重启清空：那是刻意的（刷新一次编辑器就重新 POST 一份），代价是重启后旧预览链接失效。
 
