@@ -879,3 +879,39 @@ P1（生命周期接口）、P2（部署闭环）、P3a（预览链路）的能�
 - 搜索索引是**覆盖式**的：万一 reindex 脚本坏了，下次站点构建会把索引恢复到「静态页」状态
   （题解又搜不到，但搜索本身不坏）。
 
+## 2026-10-16 · 题解并入 sitemap（同一份清单的第二个消费者）
+
+### 背景
+上一条解决了「站内搜得到」，但**搜索引擎**仍发现不了题解：sitemap 同样是构建产物
+（`@astrojs/sitemap` 只枚举预渲染路由），线上 247 条 URL 里只有聚合页 `/blog/solutions/`，
+单篇题解进不去 —— 只能靠文章正文里的内链被爬到。
+
+### 改动（博客仓 `3753bde`；Java `039997a`）
+- **脚本改名** `ops/reindex-search.sh` → **`ops/refresh-indexes.sh`**：它现在管**两份**衍生索引
+  （pagefind 站内搜索 + sitemap），名字得跟得上；两份索引消费的是**同一份已发布清单**，
+  且都必须在每次构建后补跑（构建会把两份都重置成「只有静态页」的形态）—— 合在一个脚本里才不会漂移。
+- **新增第 6 步**：把已发布清单拼成带 `<!-- notelab:solutions -->` 标记的 `<url>` 块，**幂等**注入
+  `/var/www/blog/sitemap-0.xml`（重复跑先删旧块再插，不会叠加）；`<lastmod>` 取 `updated` 回退
+  `published`，两者都没有就不写（空的 `<lastmod>` 是无效值）。自检要求**注入条数 == 已发布条数**、
+  且注入后整份 XML 仍可被 `xml.dom.minidom` 解析。
+- Java：`BLOG_REINDEX_SCRIPT` 默认路径改指新脚本名；`reindexScript()`/`queueReindex()` 注释与
+  发布响应的 note 文案补上 sitemap 这一路。
+- **为什么不做成 SSR 的 sitemap 路由**：那要多改一处 nginx（`location = /blog/sitemap-solutions.xml`）
+  且每次爬取都打一次 java+DB；而就地注入写在现有 sitemap 里，对爬虫是**一个**文件、零运行时依赖。
+  代价是注入块会被构建抹掉 —— 这正好由 deploy 脚本第 6 步兜住（与 pagefind 同一套机制）。
+
+### 验收（真打生产）
+- `.sync/verify-blog-sitemap.js` **26 条全绿**：robots 指向 sitemap-index、index 引用 sitemap-0.xml；
+  sitemap 是合法 XML、注入标记**恰好一对**；**已发布 6 篇 = sitemap 里 6 篇（双向包含）**、
+  聚合页仍在；预览路由（`/blog/preview/`、`/blog/solutions/preview/`）**没有**混进去、无字面量 `[slug]`；
+  每条解答都有合法 `<lastmod>`，抽查地址 200。
+- **幂等**：连跑两次脚本 → 解答 URL 仍是 6 条、sitemap 总 URL 253（247+6）不变。
+- **未发布内容结构上进不来**：`PracticeDao.markUnpublished` 会把 `published_slug` **清空**，
+  而 sitemap 块只由公开清单（只出已发布）生成 —— 两道保险。
+- **构建后能自愈**：完整跑一次 `ops/deploy-ssr.sh`（构建会抹掉注入块）→ 第 6 步重新注入 →
+  sitemap 校验仍全绿。
+
+### 边界
+- sitemap 与搜索索引一样是**最终一致**的：题解发布后几秒内进 sitemap（排队 + 抓页 + 注入）。
+- 单文件 sitemap 现在 253 条 URL，远未触及 5 万条/50MB 的分片阈值；涨到接近时再考虑分片。
+
