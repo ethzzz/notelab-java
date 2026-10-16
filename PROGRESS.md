@@ -832,3 +832,50 @@ P1（生命周期接口）、P2（部署闭环）、P3a（预览链路）的能�
 - 预览里的插图走 B 端受登录保护的 `/api/practice/images/{id}` —— iframe 与后台同源会带上会话，
   所以未发布的图也能显示；公开解答页走的是另一条匿名出口。
 
+## 2026-10-16 · 题解并入站内搜索（方案②：不动发布模型，额外维护索引）
+
+### 背景（用户提问驱动）
+「文章起草 vs 练习解答」澄清之后暴露一个真实取舍：解答页是**运行时渲染**（`prerender=false`），
+构建产物 `dist/client` 里没有它们，而 pagefind 只索引构建产物 → **题解搜不到**
+（可靠证据：构建日志 `Indexed 203 pages` = 只有静态页；顺带纠正一条错误判据：`grep 索引目录里的 slug`
+永远零命中，因为 pagefind 索引是压缩编码的 —— 我一开始用它当证据，差点把后来的成功判成失败）。
+
+用户选定**方案②**：保留「秒级发布」，额外跑一次索引生成（而不是把题解改回构建期渲染）。
+
+### 改动（博客仓 `530ef7a`+`f434319`；Java `cd51247`；notelab-b `9b0c626`）
+1. **`ops/reindex-search.sh`（新）**：取公开的已发布解答清单 → `cp -al` 造站点副本（硬链接，秒级）
+   → 抓每篇解答的 SSR HTML 进副本 → `pagefind --site <副本> --output-subdir pagefind-new`
+   → **原子 rename** 换入 `/var/www/blog/pagefind`。三条硬约束写在脚本头：
+   ① 抓来的 HTML **绝不能进 `dist/client`**（静态文件会盖住 SSR 路由，秒级生效就没了）；
+   ② 与部署脚本共用同一把 flock（构建重写 dist/client，索引读它 —— 不能并发）；
+   ③ `REINDEX_LOCK=0` 供部署脚本内嵌调用（同锁嵌套会死锁）。
+2. **`deploy-ssr.sh` 末尾补跑它**：`npm run build` 里的 pagefind 每次都会把题解从索引抹掉，
+   所以「索引的完整形态 = 静态页 + 这一步」；刻意不 fail-fast（索引失败不影响站点）。
+3. **任务分两类**：`blog_deploy_job.job_kind`（`deploy` / `reindex`，ALTER + `hasColumn` 守护）；
+   `BlogDeployService` 拆出 `deployScript()` / `reindexScript()` 与 `runDeploy()` / `runReindex()`（共用收尾），
+   新增 `triggerReindex()`：已有索引任务在跑/排队就**跳过**（它执行时才取最新清单，天然覆盖期间变化）。
+   `PracticeController` 的发布与下线各入队一次（best-effort，结果以 `search` 字段回前端）。
+   ⚠️「部署期间不许改文章」的判据改成 `countActiveDeploys()`：索引任务几秒钟结束，不该挡住编辑。
+   ⚠️ reindex **不占仓库锁**（不碰 git），与构建的互斥由脚本自身 flock 保证。
+4. **B 端**：`/blog-deploy` 历史加「类型」列（部署 / 搜索索引）并修掉「非 manual 即发布」这个会导致
+   reindex 被显示成「发布」的二分；发布弹窗在 `search.ok=false` 时显示一行说明。
+
+### 验收（真打生产）
+- **功能级（唯一算数的证据）**：站内搜索「两数之和」→ 结果第 1 条是
+  `/blog/solutions/algo-01-ex01-two-sum-ii/`（另有 `/blog/solutions/algo-01-ex06-three-sum/`），
+  截图 `.agent/tmp/shots/20261016-shot-blog-search.png`（`.sync/shot-blog-search.js` 顺带断言结果里
+  必须出现 `/solutions/` 链接）。
+- **索引元数据**：`/blog/pagefind/pagefind-entry.json` → `page_count: 209`（静态带标记 203 + 已发布解答 6）。
+- `.sync/verify-blog-search-reindex.js` **14 条全绿**：`job_kind` 生效；发布 → `search.ok` + jobId；
+  紧接着再发布 → `skipped`；任务跑完 `success`/`probe=200`，日志尾部含
+  `索引页数=209（静态带标记 203 + 解答 6 = 期望 ≥ 209）` 与「已换入」；下线 → 重新发布，
+  且结束时解答页仍在线上（200）。
+- 脚本自检**不能用 grep 索引目录**（见上），已改成页数判据并把这条教训写进脚本注释。
+- 索引任务实测 **4.4–4.8 秒**（`/blog-deploy` 历史可见），不打断读者的秒级发布体验。
+
+### 边界
+- 索引重建**不删任何内容**：它读「当前已发布清单」，所以下线一篇解答后跑一次，索引里自然不含它。
+- 新增一篇解答后，从「发布成功」到「搜得到」有几秒延迟（排队 + 抓页 + 建索引），页面本身仍是即时可见。
+- 搜索索引是**覆盖式**的：万一 reindex 脚本坏了，下次站点构建会把索引恢复到「静态页」状态
+  （题解又搜不到，但搜索本身不坏）。
+
