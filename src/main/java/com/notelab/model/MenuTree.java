@@ -98,7 +98,10 @@ public final class MenuTree {
                     // ⚠️ 页面与接口都只给超管：PermGuard.SUPER_ONLY_PAGES + RESTRICTED_PREFIXES。
                     menu("blog-article-gen", "博客文章生成", "🏋️", "/practice", true),
                     // 文章记录：每篇博客文章的浏览数与改动记录（浏览数由博客侧上报，见 BlogStatController）。
-                    menu("blog-articles", "文章记录", "📊", "/blog-articles", true))));
+                    menu("blog-articles", "文章记录", "📊", "/blog-articles", true),
+                    // 部署状态：博客是静态站，写进仓库后要构建一次才上线 —— 这一页看进度/结果/失败原因
+                    // （后台触发的服务器本地构建，见 BlogDeployService；单开一页是用户 2026-10-16 定的）。
+                    menu("blog-deploy", "部署状态", "🚀", "/blog-deploy", true))));
 
     private static Map<String, Object> menu(String key, String name, String icon, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();

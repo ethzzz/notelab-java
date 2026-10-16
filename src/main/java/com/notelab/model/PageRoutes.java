@@ -80,6 +80,8 @@ public final class PageRoutes {
             new String[]{"/blog-gen", "博客·文章起草"},
             // 博客管理 → 文章记录（每篇 posts 的浏览数与改动记录；浏览数由博客侧匿名上报）
             new String[]{"/blog-articles", "博客·文章记录"},
+            // 博客管理 → 部署状态（后台触发的服务器本地构建：进度、结果、失败日志尾部）
+            new String[]{"/blog-deploy", "博客·部署状态"},
             // 路径不含 /admin 前缀：PAGE_ROUTES 与前端 router.pathname 比对，
             // 而 B 端 basePath（/admin）由 Next 自己拼，写进去会永远匹配不上 → 页面被守卫拦掉
             new String[]{"/game-access", "游戏登录管理"}
