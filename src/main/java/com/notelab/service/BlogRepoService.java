@@ -19,19 +19,27 @@ import java.util.stream.Stream;
 /**
  * 博客仓（astro-blog-fuwari / GitHub ethzzz/blog）的读写收敛点。
  *
- * <p>为什么要有这个类：写博客的文件有两个入口 —— 文章生成（{@code BlogContentController}）
- * 与练习实践发布（{@code PracticeController}）。clone / pull / commit / push 这套东西
- * 一旦各写一份，就会出现「一边能 push、另一边因为没 pull 而 push 被拒」这类只在生产暴露的差异。
+ * <p>为什么要有这个类：clone / pull / commit / push 这套东西一旦各写一份，就会出现
+ * 「一边能 push、另一边因为没 pull 而 push 被拒」这类只在生产暴露的差异。
+ *
+ * <p>⚠️ 当前**唯一**的写入方是 {@link BlogArticleService}（文章起草：新建 / 更新 / 上下线 / 删除，
+ * 见 {@code BlogContentController}）。历史沿革必须记住，否则会照着老注释做错判断：
+ * 练习实践（{@code PracticeController}）**2026-10-15 起不再写仓库** —— 它的解答改成了
+ * 「数据库为真相 + 博客解答页运行时读接口」，本仓对它只剩下**只读**用途（列路线文章清单做 relatedPost 推导）。
  *
  * <p>仓库写入流程固定为：{@link #ensure()}（clone 或 ff-only pull）→ {@link #writeText}/{@link #writeBinary}
- * → {@link #commitPush}。push 到 main 会触发博客的 GitHub Actions 构建部署（约 3–5 分钟生效）。
+ * → {@link #commitPush}。push 到 main 会触发博客的 GitHub Actions 构建部署。
+ * ⚠️ 那条 CI 链路的 scp 上传实测要 11–25 分钟、而且失败过（2026-10-16 读 Actions API 逐步骤核实），
+ * 所以 admin 侧发布**不依赖它**：发布后由后台触发服务器本地构建（实测 80 秒），见任务简报 P2。
  *
  * <h3>三个必须守住的点</h3>
  * <ol>
  *   <li><b>SSH 必须非交互</b>：{@code git pull} 卡在主机指纹确认上会让整个 HTTP 请求挂到超时。
  *       统一注入 {@code GIT_SSH_COMMAND}（BatchMode + accept-new）与 {@code GIT_TERMINAL_PROMPT=0}。</li>
  *   <li><b>并发要串行化</b>：git 索引锁（{@code index.lock}）撞上就是「另一个 git 进程在运行」。
- *       所有会碰工作区/索引的动作走同一把 {@link #LOCK}。</li>
+ *       所有会碰工作区/索引的动作走同一把 {@link #LOCK}。
+ *       ⚠️ 但它只保护**单条 git 命令** —— 调用方若要「读文件 → 改 → 写回」，
+ *       必须自己在外面再串行化一次（{@link BlogArticleService} 为此有自己的写锁）。</li>
  *   <li><b>路径必须防穿越</b>：调用方传的是相对路径，直接 resolve 后要校验没跑出仓根
  *       （否则一个 {@code ../../etc/passwd} 就能写到仓外）。</li>
  * </ol>
