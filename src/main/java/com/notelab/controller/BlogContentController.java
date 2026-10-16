@@ -1,76 +1,76 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
-import com.notelab.common.YamlText;
 import com.notelab.dao.BlogStatDao;
 import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
+import com.notelab.service.BlogArticleService;
 import com.notelab.service.BlogRepoService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.NoSuchElementException;
 
 /**
- * 博客管理：B 端把文章写入「十年前端笔记」博客仓库（GitHub: ethzzz/blog）。
+ * 博客管理（B 端）：文章起草 / 文章记录。
  *
- * <p>两个动作：
+ * <p><b>本类只做 HTTP 这一层</b> —— 鉴权、解析载荷、拼响应、记改动日志。
+ * 文章的机制（frontmatter、slug 规则、去重、校验、读-改-写）全部在 {@link BlogArticleService}，
+ * 那里是唯一真相源；原因见那个类的注释（预检与真写必须共用一份实现）。
+ *
+ * <p>接口一览（都要求 B 端登录；{@code PermGuard} 另把 {@code /api/blog} 限定为仅超管）：
  * <ul>
- *   <li>POST /api/blog/generate —— 给提示词，调 notelab-java 现有的 QwenClient（Aliyun MaaS 网关）起草一篇
- *       完整 Markdown（含 YAML frontmatter），返回草稿供前端审阅。</li>
- *   <li>POST /api/blog/content —— 把文章写进博客仓库的 src/content/posts/：手动模式传结构化字段，
- *       AI 模式传 raw_markdown（frontmatter 已在草稿里），后端统一组装/规范化 frontmatter 后提交。</li>
- *   <li>GET  /api/blog/list   —— 列出本地 clone 已有的文章 slug（前端做最近文章清单用）。</li>
+ *   <li>{@code POST /generate}      —— 给提示词，调 QwenClient 起草一篇完整 Markdown（不落盘）</li>
+ *   <li>{@code POST /plan}          —— **干跑**：会写成什么（文件名=URL、会覆盖谁、缺什么）</li>
+ *   <li>{@code POST /content}       —— 新建并写入博客仓（结构化字段，或 AI 草稿的 raw_markdown）</li>
+ *   <li>{@code PUT /articles/{slug}}—— 更新既有文章（可改名）</li>
+ *   <li>{@code POST /articles/{slug}/draft} —— 上线 / 下线（只动 frontmatter 的 draft 那一行）</li>
+ *   <li>{@code DELETE /articles/{slug}}     —— 删除（**仅允许草稿**）</li>
+ *   <li>{@code GET /list}           —— 全部 slug（起草页的「最近文章」）</li>
+ *   <li>{@code GET /articles}       —— 清单 + 浏览数 + 最后一次后台改动（文章记录页）</li>
+ *   <li>{@code GET /articles/{slug}}—— 单篇详情：元信息 + 正文 + **原文全文** + 改动记录</li>
+ *   <li>{@code GET /options}        —— 分类 / 标签候选（取自仓内现状，别再手输）</li>
  * </ul>
  *
- * <p>仓库写入：本地维护一份博客源码 clone（BLOG_REPO_LOCAL，默认 /root/blog-src），先 pull --ff-only 同步，
- * 写文件后 git add/commit/push 回 GitHub。所有写操作都要求 B 端登录（AuthUtil）。
- *
- * <p>frontmatter 全部用单引号包裹标量（含 @ 开头的标签如 @types 也安全），避免 YAML 解析失败整站构建挂掉。
+ * <p>仓库写入本身（clone / pull / commit / push）在 {@link BlogRepoService}。
+ * push 到 main 会触发博客的 GitHub Actions（实测它的上传步骤要 11–25 分钟）；
+ * ⚠️ admin 侧发布**不依赖**它 —— 发布后由后台触发服务器本地构建（约 80 秒），见任务简报 P2。
  */
 @RestController
 @RequestMapping("/api/blog")
 public class BlogContentController {
 
     private static final Logger log = LoggerFactory.getLogger(BlogContentController.class);
-    private static final DateTimeFormatter FMTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx");
 
-    /** 文章目录（仓内相对路径）。clone / pull / commit / push 统一走 {@link BlogRepoService}，别在本类里重写一套 */
-    private static final String POSTS_DIR = "src/content/posts";
-
-    private static Path postsDir() {
-        return BlogRepoService.resolve(POSTS_DIR);
-    }
-
-    // ===================== AI 起草 =====================
+    // ==================================================================================
+    // AI 起草（本类里唯一还留着的业务：它只跟 Qwen 有关，与文章机制无关）
+    // ==================================================================================
 
     @PostMapping("/generate")
     public ResponseEntity<Map<String, Object>> generate(@RequestBody(required = false) String raw,
                                                         HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        JsonNode node;
-        try {
-            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
-            node = JsonUtil.parse(raw);
-        } catch (Exception e) {
-            return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
-        }
+        JsonNode node = parseJson(raw);
+        if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+
         String prompt = JsonSanitizer.str(node, "prompt");
         if (prompt.isEmpty()) return ResponseEntity.status(400).body(Map.of("error", "prompt 不能为空"));
         String category = JsonSanitizer.str(node, "category");
@@ -79,9 +79,8 @@ public class BlogContentController {
         if (persona.isEmpty()) persona = "资深前端工程师，工作十年，一直保持做笔记的习惯";
         int length = JsonSanitizer.clampInt(node.get("length"), 800, 6000, 2500);
 
-        String system = buildSystemPrompt(category, tags, persona, length);
         List<Map<String, String>> messages = List.of(
-                Map.of("role", "system", "content", system),
+                Map.of("role", "system", "content", buildSystemPrompt(category, tags, persona, length)),
                 Map.of("role", "user", "content", prompt));
         String key = QwenKeys.candidates().isEmpty() ? "" : QwenKeys.candidates().get(0);
         String markdown;
@@ -94,82 +93,140 @@ public class BlogContentController {
         if (markdown == null || markdown.isBlank()) {
             return ResponseEntity.status(502).body(Map.of("error", "AI 返回为空"));
         }
-        // 去掉模型可能夹带的 ```markdown 围栏，保证落库即合法 .md
-        markdown = stripFence(markdown);
-        return ResponseEntity.ok(Map.of("ok", true, "markdown", markdown));
+        // 去掉模型可能夹带的 ```markdown 围栏，保证落盘即合法 .md
+        return ResponseEntity.ok(Map.of("ok", true, "markdown", stripFence(markdown)));
     }
 
-    // ===================== 写入博客仓库 =====================
+    // ==================================================================================
+    // 计划（干跑）
+    // ==================================================================================
 
-    @PostMapping("/content")
-    public ResponseEntity<Map<String, Object>> content(@RequestBody(required = false) String raw,
-                                                       HttpServletRequest request) {
+    /**
+     * 干跑：返回「会写成什么」，一行都不写。
+     *
+     * <p>阻塞项（blockers）在这里是**正常结果**而不是错误：前端拿它做二次确认
+     * （文件名=URL、会覆盖谁、缺什么），所以照样 200 —— 真正写入的接口才用 400 拒绝。
+     */
+    @PostMapping("/plan")
+    public ResponseEntity<Map<String, Object>> plan(@RequestBody(required = false) String raw,
+                                                    HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        JsonNode node;
+        JsonNode node = parseJson(raw);
+        if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        BlogArticleService.Plan plan = BlogArticleService.plan(node);
+        Map<String, Object> body = new LinkedHashMap<>(plan.toBody());
+        body.put("ok", true);
+        body.put("ready", plan.ready());
+        return ResponseEntity.ok(body);
+    }
+
+    // ==================================================================================
+    // 写入：新建 / 更新 / 上下线 / 删除
+    // ==================================================================================
+
+    /** 新建一篇文章（结构化字段，或 AI 草稿的 {@code raw_markdown}）。 */
+    @PostMapping("/content")
+    public ResponseEntity<Map<String, Object>> create(@RequestBody(required = false) String raw,
+                                                      HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        JsonNode node = parseJson(raw);
+        if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        return write(request, node, false);
+    }
+
+    /**
+     * 更新一篇既有文章（可改名）。
+     *
+     * <p>⚠️ slug 从**路径**取（它决定改的是哪一篇），body 里的 {@code slug} 一律被它覆盖 ——
+     * 一条请求里出现两个「要改谁」的答案时以路径为准，免得前端漏传就改错文件。
+     */
+    @PutMapping("/articles/{slug}")
+    public ResponseEntity<Map<String, Object>> update(@PathVariable String slug,
+                                                      @RequestBody(required = false) String raw,
+                                                      HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        JsonNode parsed = parseJson(raw);
+        if (parsed == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        ObjectNode node = (ObjectNode) parsed;
+        node.put("mode", "update");
+        node.put("slug", slug);
+        return write(request, node, true);
+    }
+
+    /**
+     * 上线 / 下线：{@code {"draft":true}} 转草稿（下线），{@code false} 发布。
+     * 只改 frontmatter 的 draft 那一行，正文与其它字段一个字节都不动。
+     */
+    @PostMapping("/articles/{slug}/draft")
+    public ResponseEntity<Map<String, Object>> setDraft(@PathVariable String slug,
+                                                        @RequestBody(required = false) String raw,
+                                                        HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        JsonNode node = parseJson(raw);
+        if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        if (!node.has("draft")) return ResponseEntity.status(400).body(Map.of("error", "缺少 draft 字段"));
+        boolean draft = node.get("draft").asBoolean();
         try {
-            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
-            node = JsonUtil.parse(raw);
-        } catch (Exception e) {
-            return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
-        }
-        try {
-            Map<String, Object> r = writeArticle(node);
-            // 记一条后台改动（admin「文章记录」页展示）。
-            // ⚠️ 只记**经过这个接口**的写入：博客仓的 md 同样可以直接编辑、提交（日常就是这么维护的），
-            //    那些改动不会出现在这张表里。口径是「后台记录」，不是「仓库全历史」——
-            //    要全覆盖得改读 git log，那是另一个取舍（见 BlogStatDao 的注释）。
-            Map<String, Object> me = AuthUtil.user(request);
-            if (me != null) {
-                BlogStatDao.log(String.valueOf(r.get("slug")), "create",
-                        String.valueOf(r.getOrDefault("title", "")),
-                        Boolean.TRUE.equals(r.get("draft"))
-                                ? "经「文章起草」写入（草稿）" : "经「文章起草」写入（已发布）",
-                        AuthUtil.userId(me), String.valueOf(me.get("username")));
-            }
+            String title = titleOf(slug);
+            Map<String, Object> r = BlogArticleService.setDraft(slug, draft);
+            logAction(request, slug, draft ? "unpublish" : "publish", title,
+                    draft ? "经「文章起草」转为草稿（下线）" : "经「文章起草」发布上线");
             return ResponseEntity.ok(r);
         } catch (Exception e) {
-            log.error("写入博客失败", e);
-            return ResponseEntity.status(500).body(Map.of("error", "写入博客失败：" + e.getMessage()));
+            return fail(e, "切换上下线失败");
         }
     }
 
-    // ===================== 列表 =====================
+    /** 删除（仅限草稿；已发布的先下线）。 */
+    @DeleteMapping("/articles/{slug}")
+    public ResponseEntity<Map<String, Object>> remove(@PathVariable String slug, HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        try {
+            String title = titleOf(slug);
+            Map<String, Object> r = BlogArticleService.delete(slug);
+            logAction(request, slug, "delete", title, "经「文章起草」删除（原为草稿）");
+            return ResponseEntity.ok(r);
+        } catch (Exception e) {
+            return fail(e, "删除失败");
+        }
+    }
 
+    // ==================================================================================
+    // 读：清单 / 详情 / 候选
+    // ==================================================================================
+
+    /** 全部 slug（按发布时间倒序）。起草页的「最近文章」用它。 */
     @GetMapping("/list")
     public ResponseEntity<Map<String, Object>> list(HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
         List<Map<String, Object>> items = new ArrayList<>();
-        for (String name : BlogRepoService.listNames(POSTS_DIR)) {
-            if (name.endsWith(".md")) items.add(Map.of("slug", name.replaceAll("\\.md$", "")));
-            if (items.size() >= 200) break;
+        for (BlogArticleService.Article a : BlogArticleService.list()) {
+            items.add(Map.of("slug", a.slug()));
         }
         return ResponseEntity.ok(Map.of("ok", true, "items", items));
     }
 
-    // ===================== 文章记录（admin「文章记录」页） =====================
-
     /**
-     * 博客文章清单 + 统计：每篇的标题 / 分类 / 发布日 / 草稿态 + 浏览数 + 最后一次后台改动。
+     * 文章清单 + 统计：标题 / 分类 / 发布日 / 草稿态 + 浏览数 + 最后一次后台改动。
      *
-     * <p>数据来自两处：**文章本身**（博客仓的 md，见 {@link #scanArticles()}）与
-     * **统计**（blog_article_stat 的浏览数、blog_article_log 的改动记录）。
-     * 之所以在 Java 侧拼而不是让前端分别取：前端要按浏览数排序/筛选，拿两份数据自己 join 会很难受。
+     * <p>数据来自两处：**文章本身**（博客仓的 md）与**统计**（blog_article_stat 的浏览数、
+     * blog_article_log 的改动记录）。在 Java 侧拼而不是让前端 join：前端要按浏览数排序/筛选，
+     * 拿两份数据自己拼会很难受。
      */
     @GetMapping("/articles")
     public ResponseEntity<Map<String, Object>> articles(HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        List<Map<String, Object>> arts = scanArticles();
-        List<String> slugs = arts.stream().map(a -> String.valueOf(a.get("slug"))).toList();
+        List<BlogArticleService.Article> arts = BlogArticleService.list();
+        List<String> slugs = arts.stream().map(BlogArticleService.Article::slug).toList();
         // 浏览数与最后改动都是**一次查完**再在内存里拼：逐篇查 = 202 次往返
         Map<String, Long> views = BlogStatDao.viewsOf(slugs);
         Map<String, Map<String, Object>> lastLogs = BlogStatDao.lastLogs();
 
         List<Map<String, Object>> items = new ArrayList<>();
-        for (Map<String, Object> a : arts) {
-            String slug = String.valueOf(a.get("slug"));
-            Map<String, Object> one = new LinkedHashMap<>(a);
-            one.put("views", views.getOrDefault(slug, 0L));
-            one.put("lastChange", lastLogs.get(slug));
+        for (BlogArticleService.Article a : arts) {
+            Map<String, Object> one = new LinkedHashMap<>(a.toMeta());
+            one.put("views", views.getOrDefault(a.slug(), 0L));
+            one.put("lastChange", lastLogs.get(a.slug()));
             items.add(one);
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -179,212 +236,114 @@ public class BlogContentController {
         return ResponseEntity.ok(out);
     }
 
-    /** 单篇详情：文章元信息 + 浏览数 + 后台改动记录 */
+    /**
+     * 单篇详情：元信息 + 正文 + **原文全文** + 浏览数 + 后台改动记录。
+     *
+     * <p>为什么要回原文全文（{@code markdown}）：编辑页要能把整篇（含 frontmatter）原样装载；
+     * 只给结构化字段的话，{@code image} / {@code lang} 这类本类不管理的键在页面上就看不见，
+     * 用户改一次保存就可能把它们弄丢。
+     */
     @GetMapping("/articles/{slug}")
     public ResponseEntity<Map<String, Object>> article(@PathVariable String slug, HttpServletRequest request) {
         if (AuthUtil.user(request) == null) return AuthUtil.unauth();
-        Map<String, Object> found = null;
-        for (Map<String, Object> a : scanArticles()) {
-            if (slug.equals(a.get("slug"))) { found = a; break; }
-        }
-        if (found == null) return ResponseEntity.status(404).body(Map.of("error", "没有这篇文章"));
-        Map<String, Object> out = new LinkedHashMap<>(found);
+        BlogArticleService.Article a = BlogArticleService.read(slug);
+        if (a == null) return ResponseEntity.status(404).body(Map.of("error", "没有这篇文章"));
+        Map<String, Object> out = new LinkedHashMap<>(a.toMeta());
+        out.put("body", a.body());
+        String raw = BlogArticleService.rawOf(slug);
+        out.put("markdown", raw == null ? "" : raw);
         out.put("views", BlogStatDao.viewsOf(slug));
         out.put("logs", BlogStatDao.logsOf(slug, 50));
         return ResponseEntity.ok(out);
     }
 
-    // ===================== 实现 =====================
+    /** 分类 / 标签候选（取自仓内现有文章），外加总数与草稿数。 */
+    @GetMapping("/options")
+    public ResponseEntity<Map<String, Object>> options(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        return ResponseEntity.ok(BlogArticleService.options());
+    }
 
-    /** 文章清单缓存：202 篇 md 全读一遍是毫秒级，但没必要每个请求都做 */
-    private static final long ART_CACHE_MS = 5 * 60_000L;
-    private static volatile List<Map<String, Object>> artCache = List.of();
-    private static volatile long artCacheAt = 0;
+    // ==================================================================================
+    // 内部
+    // ==================================================================================
+
+    /** 解析请求体。{} 或非法 JSON → {@code null}（调用方回 400）。 */
+    private static JsonNode parseJson(String raw) {
+        try {
+            if (raw == null || raw.isBlank()) throw new IllegalArgumentException();
+            return JsonUtil.parse(raw);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     /**
-     * 扫博客仓的 posts 目录，解析每篇的 slug 与 frontmatter。
+     * 共用的写入路径：先出计划（有 blocker 就 400，一行都不写），再落盘，最后记改动日志。
      *
-     * <p>⚠️ 缓存 5 分钟：这是**统计视图**，不是内容编辑器 —— 刚在仓库里改完标题要等一会儿才反映出来。
-     * 读失败时沿用旧缓存（清空等于列表突然变空，比陈旧更难排查）。
+     * @param update true = 更新既有文章（决定日志文案与动作名）
      */
-    private static List<Map<String, Object>> scanArticles() {
-        long now = System.currentTimeMillis();
-        if (now - artCacheAt <= ART_CACHE_MS && !artCache.isEmpty()) return artCache;
-
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (String name : BlogRepoService.listNames(POSTS_DIR)) {
-            if (!name.endsWith(".md")) continue;
-            Map<String, Object> one = new LinkedHashMap<>();
-            String slug = name.substring(0, name.length() - 3);
-            one.put("slug", slug);
-            one.put("title", "");
-            one.put("category", "");
-            one.put("published", "");
-            one.put("draft", false);
-            try {
-                String text = Files.readString(
-                        BlogRepoService.resolve(POSTS_DIR + "/" + name), StandardCharsets.UTF_8);
-                Frontmatter fm = parseFrontmatter(text);
-                one.put("title", fm.title);
-                one.put("category", fm.category);
-                one.put("draft", fm.draft);
-                // published 不在 Frontmatter 的字段里（写作时用不到），列表页要显示，单独抠一行
-                java.util.regex.Matcher m =
-                        java.util.regex.Pattern.compile("^published:\\s*(.+)$",
-                                java.util.regex.Pattern.MULTILINE).matcher(text);
-                if (m.find()) one.put("published", m.group(1).trim().replaceAll("^['\"]|['\"]$", ""));
-            } catch (Exception e) {
-                log.warn("读取文章 {} 的 frontmatter 失败：{}", name, e.toString());
+    private static ResponseEntity<Map<String, Object>> write(HttpServletRequest request, JsonNode node,
+                                                             boolean update) {
+        try {
+            BlogArticleService.Plan plan = BlogArticleService.plan(node);
+            if (!plan.ready()) {
+                Map<String, Object> body = new LinkedHashMap<>(plan.toBody());
+                body.put("ok", false);
+                return ResponseEntity.status(400).body(body);
             }
-            out.add(one);
-        }
-        // 默认按发布日期倒序（最近写的在前），日期相同按 slug —— 顺序稳定，翻页不会乱跳
-        out.sort((a, b) -> {
-            int c = String.valueOf(b.get("published")).compareTo(String.valueOf(a.get("published")));
-            return c != 0 ? c : String.valueOf(a.get("slug")).compareTo(String.valueOf(b.get("slug")));
-        });
-        if (!out.isEmpty()) {
-            artCache = List.copyOf(out);
-            artCacheAt = now;
-        }
-        return artCache.isEmpty() ? out : artCache;
-    }
-
-    private Map<String, Object> writeArticle(JsonNode node) throws Exception {
-        String rawMd = JsonSanitizer.str(node, "raw_markdown");
-        String title, category, description, tagsJoined;
-        boolean draft;
-        String body;
-
-        if (!rawMd.isEmpty()) {
-            // AI 确认发布：草稿已带 frontmatter，解析后覆盖 draft 为用户选择
-            Frontmatter fm = parseFrontmatter(rawMd);
-            title = fm.title.isEmpty() ? JsonSanitizer.str(node, "title") : fm.title;
-            category = fm.category.isEmpty() ? JsonSanitizer.str(node, "category") : fm.category;
-            description = fm.description.isEmpty() ? JsonSanitizer.str(node, "description") : fm.description;
-            tagsJoined = fm.tags.isEmpty() ? JsonSanitizer.str(node, "tags") : fm.tags;
-            draft = node.has("draft") ? node.get("draft").asBoolean() : fm.draft;
-            body = fm.body;
-        } else {
-            title = JsonSanitizer.str(node, "title");
-            category = JsonSanitizer.str(node, "category");
-            description = JsonSanitizer.str(node, "description");
-            tagsJoined = JsonSanitizer.str(node, "tags");
-            draft = node.has("draft") ? node.get("draft").asBoolean() : true;
-            body = JsonSanitizer.str(node, "content_md");
-        }
-        if (title.isEmpty()) throw new IllegalArgumentException("title 不能为空");
-        if (body.isEmpty()) throw new IllegalArgumentException("正文不能为空");
-
-        String slug = slugify(JsonSanitizer.str(node, "slug"));
-        if (slug.isEmpty()) slug = slugify(title);
-        if (slug.isEmpty()) slug = "post";
-
-        BlogRepoService.ensure();
-
-        String fileName = slug + ".md";
-        int i = 1;
-        while (BlogRepoService.exists(POSTS_DIR + "/" + fileName)) {
-            fileName = slug + "-" + i + ".md";
-            i++;
-        }
-
-        String fmText = buildFrontmatter(title, category, description, tagsJoined, draft);
-        String rel = POSTS_DIR + "/" + fileName;
-        BlogRepoService.writeText(rel, fmText + body + "\n");
-
-        String commit = BlogRepoService.commitPush(
-                "blog: add " + (title.length() > 40 ? title.substring(0, 40) : title), List.of(rel));
-        return Map.of(
-                "ok", true,
-                "slug", fileName.replaceAll("\\.md$", ""),
-                "title", title,
-                "path", rel,
-                "commit", commit,
-                "draft", draft);
-    }
-
-    // clone / pull / commit / push 已收敛到 {@link BlogRepoService}（练习实践发布共用同一套）。
-    // 之前这里各写一份，两处对「clone 放哪、push 被拒怎么办」的处理并不一致 —— 这类差异只在生产暴露。
-
-    // ===================== 文本/工具 =====================
-
-    private String buildFrontmatter(String title, String category, String tagsJoined,
-                                    String description, boolean draft) {
-        List<String> tags = java.util.Arrays.stream(tagsJoined.split(","))
-                .map(String::trim).filter(t -> !t.isEmpty()).collect(Collectors.toList());
-        StringBuilder sb = new StringBuilder();
-        sb.append("---\n");
-        sb.append("title: ").append(YamlText.quote(title)).append("\n");
-        sb.append("published: ").append(OffsetDateTime.now().format(FMTER)).append("\n");
-        sb.append("description: ").append(YamlText.quote(description)).append("\n");
-        if (tags.isEmpty()) {
-            sb.append("tags: []\n");
-        } else {
-            sb.append("tags: [")
-                    .append(tags.stream().map(YamlText::quote).collect(Collectors.joining(", ")))
-                    .append("]\n");
-        }
-        sb.append("category: ").append(YamlText.quote(category.isEmpty() ? "未分类" : category)).append("\n");
-        sb.append("draft: ").append(draft ? "true" : "false").append("\n");
-        sb.append("---\n");
-        return sb.toString();
-    }
-
-    /** 解析 --- 包裹的 frontmatter；解析不出则整段当作正文 */
-    private static Frontmatter parseFrontmatter(String md) {
-        Frontmatter fm = new Frontmatter();
-        if (md.startsWith("---")) {
-            int end = md.indexOf("\n---", 3);
-            if (end > 0) {
-                String head = md.substring(3, end).strip();
-                fm.body = md.substring(end + 4);
-                for (String line : head.split("\n")) {
-                    int c = line.indexOf(':');
-                    if (c < 0) continue;
-                    String k = line.substring(0, c).trim();
-                    String v = line.substring(c + 1).trim();
-                    switch (k) {
-                        case "title" -> fm.title = unquote(v);
-                        case "description" -> fm.description = unquote(v);
-                        case "category" -> fm.category = unquote(v);
-                        case "draft" -> fm.draft = v.equalsIgnoreCase("true") || v.equals("1");
-                        case "tags" -> fm.tags = v.replaceAll("[\\[\\]'\"]", "").trim();
-                        default -> { /* 忽略未知字段 */ }
-                    }
-                }
-                return fm;
+            Map<String, Object> r = BlogArticleService.apply(plan);
+            StringBuilder detail = new StringBuilder(update ? "经「文章起草」更新" : "经「文章起草」写入");
+            detail.append(plan.draft() ? "（草稿）" : "（已发布）");
+            if (plan.renamed()) {
+                detail.append("；slug 由 ").append(plan.oldSlug()).append(" 改为 ").append(plan.slug());
             }
+            logAction(request, plan.slug(), update ? "update" : "create", plan.title(), detail.toString());
+            return ResponseEntity.ok(r);
+        } catch (Exception e) {
+            return fail(e, update ? "更新文章失败" : "写入文章失败");
         }
-        fm.body = md;
-        return fm;
     }
 
-    // 单引号 YAML 标量已收敛到 common/YamlText.quote（练习实践发布共用同一口径）
-
-    private static String unquote(String v) {
-        if (v == null) return "";
-        return v.strip().replaceAll("^['\"]|['\"]$", "");
-    }
-
-    /** 中文/字母/数字保留，其余变 -；折叠多 -、去首尾 - */
-    private String slugify(String s) {
-        if (s == null) return "";
-        StringBuilder sb = new StringBuilder();
-        for (char ch : s.trim().toLowerCase().toCharArray()) {
-            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
-                    || (ch >= '\u4e00' && ch <= '\u9fa5') || ch == '-') {
-                sb.append(ch);
-            } else if (ch == ' ' || ch == '_') {
-                sb.append('-');
-            } else {
-                sb.append('-');
-            }
+    /**
+     * 记一条后台改动（admin「文章记录」页展示）。
+     *
+     * <p>⚠️ 只记**经过本接口**的动作：博客仓的 md 同样可以直接编辑、提交（日常就是这么维护的），
+     * 那些改动不会出现在这张表里。口径是「后台记录」，不是「仓库全历史」。
+     */
+    private static void logAction(HttpServletRequest request, String slug, String action,
+                                  String title, String detail) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return;
+        try {
+            BlogStatDao.log(slug, action, title, detail, AuthUtil.userId(me), String.valueOf(me.get("username")));
+        } catch (Exception e) {
+            // 日志写失败不该让一次已经成功的发布返回错误 —— 但必须留痕
+            log.warn("写博客改动日志失败 slug={} action={}：{}", slug, action, e.toString());
         }
-        return sb.toString().replaceAll("-{2,}", "-").replaceAll("^-|-$", "");
     }
 
-    private String buildSystemPrompt(String category, String tags, String persona, int length) {
+    /** 日志里要一个标题；读不到就回空串 */
+    private static String titleOf(String slug) {
+        BlogArticleService.Article a = BlogArticleService.read(slug);
+        return a == null ? "" : a.title();
+    }
+
+    private static ResponseEntity<Map<String, Object>> fail(Exception e, String what) {
+        if (e instanceof NoSuchElementException) {
+            return ResponseEntity.status(404).body(Map.of("error", e.getMessage()));
+        }
+        if (e instanceof IllegalStateException) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        }
+        if (e instanceof IllegalArgumentException) {
+            return ResponseEntity.status(400).body(Map.of("error", e.getMessage()));
+        }
+        log.error(what, e);
+        return ResponseEntity.status(500).body(Map.of("error", what + "：" + e.getMessage()));
+    }
+
+    private static String buildSystemPrompt(String category, String tags, String persona, int length) {
         return "你是一位" + persona + "。请按以下要求写一篇技术博客文章，直接输出完整的 Markdown（含 YAML frontmatter）。\n"
                 + "要求：\n"
                 + "- 分类(category)：[" + (category.isEmpty() ? "未分类" : category) + "]\n"
@@ -396,7 +355,7 @@ public class BlogContentController {
     }
 
     /** 去掉模型可能夹带的 ```markdown ... ``` 围栏 */
-    private String stripFence(String md) {
+    private static String stripFence(String md) {
         String t = md.strip();
         if (t.startsWith("```")) {
             int firstNL = t.indexOf('\n');
@@ -406,18 +365,5 @@ public class BlogContentController {
             }
         }
         return t;
-    }
-
-    // ===================== 进程执行 =====================
-    // 已移除：run / runCapture 收敛到 BlogRepoService.run（那里补了超时与非交互 SSH 环境变量）
-
-    /** frontmatter 解析结果 */
-    private static final class Frontmatter {
-        String title = "";
-        String category = "";
-        String description = "";
-        String tags = "";
-        boolean draft = false;
-        String body = "";
     }
 }
