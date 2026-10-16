@@ -11,6 +11,7 @@ import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
 import com.notelab.service.BlogArticleService;
 import com.notelab.service.BlogDeployService;
+import com.notelab.service.BlogPreviewService;
 import com.notelab.service.BlogRepoService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -270,6 +271,41 @@ public class BlogContentController {
         out.put("script", BlogDeployService.script());
         out.put("autoDeploy", BlogDeployService.autoEnabled());
         return out;
+    }
+
+    // ==================================================================================
+    // 预览（交给博客自己的 SSR 路由渲染，保证与线上文章页一致）
+    // ==================================================================================
+
+    /**
+     * 存一份「正在编辑的草稿」，返回可直接嵌 iframe 的预览地址。
+     *
+     * <p>为什么要多这一步：预览必须与线上一致，而线上正文是**博客的构建期管线**渲染的
+     * （expressive-code / KaTeX / 提示块）。后台再怎么配都是另一套库。所以正文交给博客侧渲染，
+     * 本接口只负责把这份还没落盘的草稿放进短时存储里（见 {@link BlogPreviewService}）。
+     */
+    @PostMapping("/preview")
+    public ResponseEntity<Map<String, Object>> preview(@RequestBody(required = false) String raw,
+                                                       HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        JsonNode node = parseJson(raw);
+        if (node == null) return ResponseEntity.status(400).body(Map.of("error", "请求体不是合法 JSON"));
+        return ResponseEntity.ok(BlogPreviewService.put(AuthUtil.userId(me), node));
+    }
+
+    /**
+     * 取一份预览给博客渲染 —— **匿名可读**。
+     *
+     * <p>⚠️ 这不是疏忽：博客的 SSR 进程没有 B 端会话，它只能匿名来取；所以授权手段只剩
+     * 「拿着不可猜的 token」这一条（128 位随机 + 30 分钟 TTL + 只读，见 {@code PermGuard.PUBLIC_PREFIXES}）。
+     * 过期或不存在一律 404，让博客页面显示「预览已过期」而不是一片空白。</p>
+     */
+    @GetMapping("/preview/{token}")
+    public ResponseEntity<Map<String, Object>> previewPayload(@PathVariable String token) {
+        BlogPreviewService.Entry e = BlogPreviewService.get(token);
+        if (e == null) return ResponseEntity.status(404).body(Map.of("error", "预览不存在或已过期"));
+        return ResponseEntity.ok(BlogPreviewService.payload(e));
     }
 
     // ==================================================================================

@@ -104,7 +104,11 @@ public final class PermGuard {
             "/api/lowcode/public",      // 表单对外发布：取定义 / 匿名提交（自带 IP 节流 + 字段校验）
             "/api/learning/public",     // 编程学习：C 端 /learn 未登录可看（只读，无写风险，故不需节流）
             "/api/practice/public",     // 练习实践：博客解答页运行时拉取（只读，且只出已发布内容）
-            "/api/blog/public"          // 博客文章浏览数：读者浏览器匿名上报 + 批量读取（自带白名单 + 节流）
+            "/api/blog/public",         // 博客文章浏览数：读者浏览器匿名上报 + 批量读取（自带白名单 + 节流）
+            // 草稿预览：博客的 SSR 进程**匿名**来取（它没有 B 端会话），所以只能靠「不可猜的 token + 30 分钟 TTL」
+            // 授权 —— 见 BlogPreviewService。⚠️ 加了这一条，POST /api/blog/preview 也不再被门禁拦，
+            // 那个接口在 Controller 里自带登录判断（AuthUtil），安全边界没有变。
+            "/api/blog/preview"
     );
 
     /** 该 api 路径是否是公开端点（精确等于该前缀，或位于其下） */
