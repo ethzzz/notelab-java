@@ -142,19 +142,21 @@ public final class BlogDeployService {
         }
 
         String path = verifyPath == null || verifyPath.isBlank() ? "/blog/" : verifyPath;
-        Integer probe = null;
-        if (exit == 0) probe = probe(path);
+        Probe pr = new Probe(null, "");
+        if (exit == 0) pr = probe(path);
 
-        boolean ok = exit == 0 && (probe == null || probe == 200);
+        Integer code = pr.code();
+        boolean ok = exit == 0 && (code == null || code == 200);
         StringBuilder note = new StringBuilder();
         if (exit != 0) note.append("\n[失败] 部署脚本退出码 ").append(exit).append("（见上方输出尾部）");
-        else if (probe != null && probe != 200) note.append("\n[失败] 脚本成功，但探活 ").append(path).append(" 得到 ").append(probe);
-        else note.append("\n[完成] 探活 ").append(path).append(" → ").append(probe == null ? "未取到" : probe);
+        else if (code != null && code != 200) note.append("\n[失败] 脚本成功，但探活 ").append(path).append(" 得到 ").append(code);
+        else note.append("\n[完成] 探活 ").append(path).append(" → ").append(code == null ? "未取到" : code);
+        if (!pr.note().isEmpty()) note.append("\n[探活细节] ").append(pr.note());
 
         long ms = System.currentTimeMillis() - t0;
         String status = ok ? BlogDeployDao.SUCCESS : BlogDeployDao.FAILED;
-        BlogDeployDao.finish(jobId, status, exit, probe, ms, tail(out + note));
-        log.info("博客部署 job={} 结束：{}（exit={} probe={} {}ms）", jobId, status, exit, probe, ms);
+        BlogDeployDao.finish(jobId, status, exit, code, ms, tail(out + note));
+        log.info("博客部署 job={} 结束：{}（exit={} probe={} {}ms）{}", jobId, status, exit, code, ms, pr.note());
     }
 
     /**
@@ -201,19 +203,32 @@ public final class BlogDeployService {
      * <p>探不到（超时/网络抖动）返回 {@code null} 并记「未取到」：那是「不知道」，
      * 不能写成「失败」，否则一次网络抖动会把一次成功的部署标成红的。
      */
-    private static Integer probe(String path) {
-        List<String> cmd = List.of("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+    private static Probe probe(String path) {
+        // -sS：静默进度但**保留错误**（裸 -s 会把失败原因一起吞掉，只剩一个 000，等于没说为什么）
+        List<String> cmd = List.of("curl", "-sS", "-o", "/dev/null", "-w", "HTTP_CODE=%{http_code}\\n",
                 "--max-time", "20", "--resolve", "haolo.cloud:443:127.0.0.1", SITE + path);
         try {
             Result r = exec(cmd, 30);
-            String out = r.out().trim();
-            if (out.length() < 3) return null;
-            return Integer.parseInt(out.substring(out.length() - 3));
+            String out = r.out();
+            int i = out.lastIndexOf("HTTP_CODE=");
+            if (i < 0) return new Probe(null, "curl 没有输出状态码：" + oneLine(out));
+            String digits = out.substring(i + "HTTP_CODE=".length()).trim();
+            if (!digits.matches("\\d{3}")) return new Probe(null, "curl 状态码无法解析：" + oneLine(out));
+            int code = Integer.parseInt(digits);
+            return new Probe(code, code == 200 ? "" : "curl 输出：" + oneLine(out.substring(0, i)));
         } catch (Exception e) {
-            log.warn("博客部署探活失败 {}：{}", path, e.toString());
-            return null;
+            return new Probe(null, "探活异常：" + e);
         }
     }
+
+    /** 把多行输出压成一行（落库的日志尾巴是给人看的，别塞进一堆换行） */
+    private static String oneLine(String s) {
+        String t = s == null ? "" : s.replace('\n', ' ').replace('\r', ' ').trim();
+        return t.length() > 300 ? t.substring(0, 300) + "…" : t;
+    }
+
+    /** 探活结果：状态码 + 失败时的细节（细节要留痕，否则「000」无法排查） */
+    private record Probe(Integer code, String note) {}
 
     private static String tail(String s) {
         if (s == null) return "";
