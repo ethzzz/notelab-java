@@ -51,7 +51,14 @@ public final class BlogDeployService {
     /** 落库的输出尾巴长度（TEXT 够放，但没必要存几 MB） */
     private static final int MAX_LOG = 8000;
 
-    private static final String SITE = "https://haola.cloud";
+    /**
+     * 站点根。
+     * ⚠️ 域名别手打：这里是 `haolo.cloud`（不是 haola）。2026-10-16 就因为写成 `haola.cloud`，
+     * 探活一直返回 000 —— 而 curl 报的是「Could not resolve host: haola.cloud」，
+     * 与 `--resolve haolo.cloud:...` 的目标拼写不一致，所以映射根本没生效、回落到 DNS 才失败。
+     * 排查这类问题时**先逐字读报错里的主机名**，别急着怀疑环境。
+     */
+    private static final String SITE = "https://haolo.cloud";
 
     /**
      * 单线程 + 有界队列（容量 2）。拒绝策略用 Abort，由 {@link #trigger} 翻译成「队列已满」。
