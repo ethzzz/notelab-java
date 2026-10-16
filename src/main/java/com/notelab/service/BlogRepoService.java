@@ -142,6 +142,24 @@ public final class BlogRepoService {
     }
 
     /**
+     * 当前 clone 的 HEAD 短 hash（拿不到就回空串，绝不抛）。
+     *
+     * <p>用途：把「线上是哪次提交部署的」与「仓里现在是什么」对上 —— 部署任务落库时记一份，
+     * 状态页就能显示「这次部署的是哪一版」。取不到时回空串而不是报错：这个值只用于显示，
+     * 不该让一次部署因为 `git rev-parse` 蹭到锁而失败。
+     */
+    public static String headCommit() {
+        synchronized (LOCK) {
+            try {
+                return exec(git("rev-parse", "--short", "HEAD"), false).trim();
+            } catch (Exception e) {
+                log.warn("读取博客仓 HEAD 失败：{}", e.toString());
+                return "";
+            }
+        }
+    }
+
+    /**
      * 提交并推送。
      *
      * @param paths 仓内相对路径列表（git add 的目标）。⚠️ 只 add 这些 ——

@@ -575,6 +575,30 @@ final class DbSchema {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 KEY idx_blog_log_slug (slug, created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+
+        // ---- 博客部署任务（2026-10-16，P2）----
+        // admin 发布后触发的**服务器本地构建**（ops/deploy-ssr.sh，实测构建 80 秒）。
+        // 为什么落库而不是只放内存：① 构建要 1–2 分钟，刷新页面/换个人看都要看到同一个进度；
+        // ② 失败原因（脚本尾部输出）必须留痕，否则「点了没反应」无从排查；
+        // ③ JVM 重启会让内存里的 job 消失而库里那行还在 —— 启动时清残（见 BlogDeployDao.abortStaleJobs）。
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS blog_deploy_job (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                trigger_by BIGINT NULL,
+                trigger_by_name VARCHAR(64) NOT NULL DEFAULT '',
+                trigger_kind VARCHAR(16) NOT NULL DEFAULT 'manual',
+                commit_hash VARCHAR(64) NOT NULL DEFAULT '',
+                verify_path VARCHAR(300) NOT NULL DEFAULT '',
+                status VARCHAR(16) NOT NULL DEFAULT 'queued',
+                exit_code INT NULL,
+                probe_code INT NULL,
+                duration_ms BIGINT NULL,
+                log_tail TEXT NULL,
+                queued_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME NULL,
+                finished_at DATETIME NULL,
+                KEY idx_blog_deploy_status (status, id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /** 列存在守护（information_schema）：存在返回 true */

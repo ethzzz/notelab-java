@@ -5,10 +5,12 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
+import com.notelab.dao.BlogDeployDao;
 import com.notelab.dao.BlogStatDao;
 import com.notelab.infra.QwenClient;
 import com.notelab.infra.QwenKeys;
 import com.notelab.service.BlogArticleService;
+import com.notelab.service.BlogDeployService;
 import com.notelab.service.BlogRepoService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -48,7 +50,12 @@ import java.util.NoSuchElementException;
  *   <li>{@code GET /articles}       —— 清单 + 浏览数 + 最后一次后台改动（文章记录页）</li>
  *   <li>{@code GET /articles/{slug}}—— 单篇详情：元信息 + 正文 + **原文全文** + 改动记录</li>
  *   <li>{@code GET /options}        —— 分类 / 标签候选（取自仓内现状，别再手输）</li>
+ *   <li>{@code POST /deploy}        —— 手动触发/重试一次部署（构建 + 发布到线上）</li>
+ *   <li>{@code GET /deploy/latest}、{@code /deploy/{id}}、{@code GET /deploy} —— 部署状态 / 历史</li>
  * </ul>
+ *
+ * <p>写入类动作成功后会**自动排一次部署**（{@link BlogDeployService}，`BLOG_AUTO_DEPLOY=0` 可关），
+ * 因为博客是静态站：commit 推上去了但没构建，读者什么都看不到。
  *
  * <p>仓库写入本身（clone / pull / commit / push）在 {@link BlogRepoService}。
  * push 到 main 会触发博客的 GitHub Actions（实测它的上传步骤要 11–25 分钟）；
@@ -171,6 +178,7 @@ public class BlogContentController {
             Map<String, Object> r = BlogArticleService.setDraft(slug, draft);
             logAction(request, slug, draft ? "unpublish" : "publish", title,
                     draft ? "经「文章起草」转为草稿（下线）" : "经「文章起草」发布上线");
+            maybeDeployInto(request, r, draft ? "" : "/blog/posts/" + slug + "/", "publish");
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             return fail(e, "切换上下线失败");
@@ -185,10 +193,78 @@ public class BlogContentController {
             String title = titleOf(slug);
             Map<String, Object> r = BlogArticleService.delete(slug);
             logAction(request, slug, "delete", title, "经「文章起草」删除（原为草稿）");
+            maybeDeployInto(request, r, "", "publish");
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             return fail(e, "删除失败");
         }
+    }
+
+    // ==================================================================================
+    // 部署（构建 + 发布到线上）
+    // ==================================================================================
+
+    /**
+     * 手动触发一次部署（也用于「重试」）。
+     *
+     * <p>body 可选：{@code {"slug":"<文章>"}} 表示「部署完探活这一篇」；不传就是整站部署。
+     * ⚠️ 只有**已发布**的文章才把文章 URL 当探活目标 —— 草稿本来就不该可访问，
+     * 拿它当判据必然假失败。
+     */
+    @PostMapping("/deploy")
+    public ResponseEntity<Map<String, Object>> deploy(@RequestBody(required = false) String raw,
+                                                      HttpServletRequest request) {
+        Map<String, Object> me = AuthUtil.user(request);
+        if (me == null) return AuthUtil.unauth();
+        JsonNode node = (raw == null || raw.isBlank()) ? null : parseJson(raw);
+        String slug = node == null ? "" : JsonSanitizer.str(node, "slug");
+        String verifyPath = "";
+        if (!slug.isEmpty()) {
+            BlogArticleService.Article a = BlogArticleService.read(slug);
+            if (a != null && !a.draft()) verifyPath = "/blog/posts/" + slug + "/";
+        }
+        Map<String, Object> r = BlogDeployService.trigger(AuthUtil.userId(me),
+                String.valueOf(me.get("username")), "manual", verifyPath);
+        if (!Boolean.TRUE.equals(r.get("ok"))) return ResponseEntity.status(429).body(r);
+        if (!slug.isEmpty()) logAction(request, slug, "deploy", titleOf(slug), "手动触发部署并探活");
+        return ResponseEntity.ok(r);
+    }
+
+    /** 某次部署的状态（前端轮询用） */
+    @GetMapping("/deploy/{id}")
+    public ResponseEntity<Map<String, Object>> deployStatus(@PathVariable long id, HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> row = BlogDeployDao.get(id);
+        if (row == null) return ResponseEntity.status(404).body(Map.of("error", "没有这次部署记录"));
+        return ResponseEntity.ok(row);
+    }
+
+    /** 最近一次部署 + 当前配置（部署状态页首屏用它，省一次请求） */
+    @GetMapping("/deploy/latest")
+    public ResponseEntity<Map<String, Object>> deployLatest(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        return ResponseEntity.ok(deploySummary());
+    }
+
+    /** 部署历史（最近 20 条）+ 同一份摘要 */
+    @GetMapping("/deploy")
+    public ResponseEntity<Map<String, Object>> deployHistory(HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        Map<String, Object> out = deploySummary();
+        out.put("items", BlogDeployDao.recent(20));
+        return ResponseEntity.ok(out);
+    }
+
+    /** 部署相关的共同摘要：最近一次 + 活跃数 + 仓里 HEAD + 配置 */
+    private static Map<String, Object> deploySummary() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("latest", BlogDeployDao.latest());
+        out.put("active", BlogDeployDao.countActive());
+        out.put("headCommit", BlogRepoService.headCommit());
+        out.put("script", BlogDeployService.script());
+        out.put("autoDeploy", BlogDeployService.autoEnabled());
+        return out;
     }
 
     // ==================================================================================
@@ -299,9 +375,39 @@ public class BlogContentController {
                 detail.append("；slug 由 ").append(plan.oldSlug()).append(" 改为 ").append(plan.slug());
             }
             logAction(request, plan.slug(), update ? "update" : "create", plan.title(), detail.toString());
+            maybeDeployInto(request, r, plan.draft() ? "" : "/blog/posts/" + plan.slug() + "/", "publish");
             return ResponseEntity.ok(r);
         } catch (Exception e) {
             return fail(e, update ? "更新文章失败" : "写入文章失败");
+        }
+    }
+
+    /**
+     * 发布类动作（写入 / 上下线 / 删除）之后的**自动部署**：把一次构建排进队列。
+     *
+     * <p>三个刻意的取舍：
+     * <ul>
+     *   <li><b>入队失败绝不影响写入的结果</b>：文章已经提交推送成功了，那才是这次请求的主要结果。
+     *       部署结果作为 {@code deploy} 字段附在响应里，前端据此提示「已发布，但部署在排队 / 被拒」。</li>
+     *   <li><b>被拒不是异常</b>：上一场构建还没跑完时（构建约 1–2 分钟）是**正常**情况，
+     *       返回 {@code {ok:false, reason}}，让前端说清「为什么没开始」而不是让用户以为坏了。</li>
+     *   <li><b>开关在配置里</b>：{@code BLOG_AUTO_DEPLOY=0} 关掉自动部署（改配置不用改代码）。</li>
+     * </ul>
+     */
+    private static void maybeDeployInto(HttpServletRequest request, Map<String, Object> resp,
+                                        String verifyPath, String kind) {
+        if (!BlogDeployService.autoEnabled()) {
+            resp.put("deploy", Map.of("ok", false, "reason", "自动部署已关闭（BLOG_AUTO_DEPLOY=0）"));
+            return;
+        }
+        Map<String, Object> me = AuthUtil.user(request);
+        try {
+            resp.put("deploy", BlogDeployService.trigger(
+                    me == null ? null : AuthUtil.userId(me),
+                    me == null ? "" : String.valueOf(me.get("username")), kind, verifyPath));
+        } catch (Exception e) {
+            log.warn("自动部署入队失败：{}", e.toString());
+            resp.put("deploy", Map.of("ok", false, "reason", "自动部署入队异常：" + e.getMessage()));
         }
     }
 

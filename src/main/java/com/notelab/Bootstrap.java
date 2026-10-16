@@ -3,6 +3,7 @@ package com.notelab;
 import javax.sql.DataSource;
 
 import com.notelab.common.AppConfig;
+import com.notelab.dao.BlogDeployDao;
 import com.notelab.dao.Db;
 import com.notelab.dao.PermDao;
 import com.notelab.dao.TrpgDao;
@@ -33,6 +34,10 @@ public class Bootstrap implements CommandLineRunner {
         Db.init(dataSource);
         // TRPG 生成任务清残：必须在 Db.init 之后执行（原在 TrpgController @PostConstruct 中早于建库，从未生效）
         TrpgDao.abortStaleTrpgGenTasks();
+        // 博客部署任务清残：同理 —— 重启时那场构建的收尾代码已经随进程没了，
+        // 不清的话「活跃任务数」恒大于 0，之后任何部署都会被当成并发部署挡掉。
+        int staleJobs = BlogDeployDao.abortStaleJobs();
+        if (staleJobs > 0) log.warn("博客部署任务清残：{} 条 running/queued 被标记为中断", staleJobs);
         PermService.registerAllRoutes(handlerMapping);
         RagService.init();
         log.info("NoteLab-Java 启动完成：port=8001, mysql={}:{}/{}, user={}, base_url={}, model={}, key={}, secret_key={}, data_dir={}, perm_routes={}",
