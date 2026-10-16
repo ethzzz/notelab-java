@@ -91,17 +91,22 @@ public final class MenuTree {
             // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
             group("g_blog", "博客管理", "📖", List.of(
                     // 文章起草：手动输入 / AI 起草**路线文章**（posts）后提交到博客仓库（BlogContentController）。
-                    // 从「文章生成」改名过来 —— 原来与下面的「博客文章生成」太像，而两者产物完全不同。
+                    // 从「文章生成」改名过来 —— 原来与「博客文章生成」太像，而两者产物完全不同。
                     menu("blog-gen", "文章起草", "✍️", "/blog-gen", true),
-                    // 博客文章生成（原「练习实践」）：一条记录一道题，Markdown 正文 + 可传插图，
-                    // 发布即出现在博客的解答页（2026-10-15 起接口驱动，见 PracticeController）。
-                    // ⚠️ 页面与接口都只给超管：PermGuard.SUPER_ONLY_PAGES + RESTRICTED_PREFIXES。
-                    menu("blog-article-gen", "博客文章生成", "🏋️", "/practice", true),
                     // 文章记录：每篇博客文章的浏览数与改动记录（浏览数由博客侧上报，见 BlogStatController）。
                     menu("blog-articles", "文章记录", "📊", "/blog-articles", true),
                     // 部署状态：博客是静态站，写进仓库后要构建一次才上线 —— 这一页看进度/结果/失败原因
                     // （后台触发的服务器本地构建，见 BlogDeployService；单开一页是用户 2026-10-16 定的）。
-                    menu("blog-deploy", "部署状态", "🚀", "/blog-deploy", true))));
+                    menu("blog-deploy", "部署状态", "🚀", "/blog-deploy", true))),
+            // 练习解答：一条记录 = 一道练习题解，配好发布信息后出现在博客的**解答页**
+            // （内容存 MySQL、发布即生效、不写博客仓，见 PracticeController）。
+            // ⚠️ 2026-10-16 从「博客管理」挪出来单独成组：原来叫「博客文章生成」、与「文章起草」并排，
+            //    名字和位置都让人以为两者重复 —— 实际产物（题解 vs 文章）、真相源（MySQL vs git 仓库）、
+            //    发布方式（运行时读接口 秒级 vs 构建 约 1 分钟）全都不一样。
+            //    这次只改了**显示名与菜单归属**：菜单 key 与页面 path（/practice）都没动，
+            //    所以历史角色授权（page:/practice）与 /practice?id=N 的二级页书签都不受影响。
+            group("g_solutions", "练习解答", "🏋️", List.of(
+                    menu("practice", "解答记录", "📝", "/practice", true))));
 
     private static Map<String, Object> menu(String key, String name, String icon, String path, boolean ready) {
         Map<String, Object> m = new LinkedHashMap<>();

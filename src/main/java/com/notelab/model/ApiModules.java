@@ -69,7 +69,7 @@ public final class ApiModules {
             Map.entry("notes", "笔记接口"),
             Map.entry("canvas", "画布接口"),
             Map.entry("dev-notes", "开发笔记接口"),
-            Map.entry("practice", "博客文章生成接口"),
+            Map.entry("practice", "练习解答接口"),
             Map.entry("trpg", "TRPG 接口"),
             Map.entry("spire-content", "爬塔内容接口"),
             Map.entry("spire-assets", "爬塔素材接口"),

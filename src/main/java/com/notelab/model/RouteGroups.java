@@ -51,7 +51,7 @@ public final class RouteGroups {
             Map.entry("/stress-test", List.of("admin/stress-test")),
             Map.entry("/trpg/gen", List.of("trpg")),
             Map.entry("/practice/dev-summary", List.of("dev-notes")),
-            // 练习实践：记录 CRUD 与插图上传都在 /api/practice（同一模块键）
+            // 练习解答（原「练习实践」/「博客文章生成」）：记录 CRUD、插图上传、发布与博客预览都在 /api/practice
             Map.entry("/practice", List.of("practice")),
             Map.entry("/learning", List.of("learning")),
             Map.entry("/analytics", List.of("analytics")),

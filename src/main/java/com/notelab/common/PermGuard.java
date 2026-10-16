@@ -63,7 +63,7 @@ public final class PermGuard {
             "/api/ui-config",   // 界面配置（对应 /ui 页面，可改全站菜单名/图标/背景）
             "/api/admin",       // 运维/开发类管理接口（含接口压测 /api/admin/stress-test），仅 super_admin
             "/api/analytics",   // 数据看板查询（PRD-P0 §6.3）：只有超管能看全站经营数据
-            "/api/practice",    // 博客文章生成（原练习实践）：解答直接对外发布，内容即公开
+            "/api/practice",    // 练习解答（原练习实践 / 博客文章生成）：解答直接对外发布，内容即公开
             "/api/blog"         // 博客管理（文章起草 / 文章记录）：会写博客仓库、触发 AI 起草、看全站内容数据
     );
 
@@ -80,7 +80,7 @@ public final class PermGuard {
      * → {@code setRoleRoutes} 拒绝授予。权威仍是这份常量，改这里重启即生效。
      */
     public static final List<String> SUPER_ONLY_PAGES = List.of(
-            "/practice",        // 博客文章生成（原练习实践）：一条记录直接对外发布
+            "/practice",        // 练习解答（原「博客文章生成」）：一条记录直接对外发布
             "/blog-gen",        // 文章起草：写博客仓库 + 触发 AI 起草
             "/blog-articles",   // 文章记录：全站文章的浏览数与改动记录，属经营数据
             "/blog-deploy"      // 部署状态：能触发一次线上构建，等于能改线上内容

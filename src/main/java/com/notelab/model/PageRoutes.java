@@ -56,11 +56,13 @@ public final class PageRoutes {
             new String[]{"/loot-editor/balance", "摸金·全局参数"},
             // 项目实践 → 项目开发总结（与 MenuTree.g_practice 一一对应；漏这里叶子会被 RBAC 过滤）
             new String[]{"/practice/dev-summary", "项目实践·开发总结"},
-            // 博客文章生成（原练习实践，与 MenuTree 的 blog-article-gen 一一对应；漏这里叶子会被 RBAC 过滤）。
-            // ⚠️ 路径仍是 /practice —— 只改显示名与菜单归属，不动 URL（旧书签与 /practice?id=N 的二级页都还认）。
+            // 练习解答（原「博客文章生成」/「练习实践」，2026-10-16 改名并挪进自己的菜单分组
+            // g_solutions —— 与 MenuTree 的 practice 一一对应；漏这里叶子会被 RBAC 过滤）。
+            // ⚠️ 路径仍是 /practice —— 只改显示名与菜单归属，不动 URL（旧书签与 /practice?id=N 的二级页都还认），
+            //    权限码 page:/practice 因此不变，历史角色授权不会失效。
             // ⚠️ 二级页面走 /practice?id=<记录id>&mode=view|edit —— 守卫的 pages.includes(pathname) 是
             //    **精确匹配**，子路由 /practice/xxx 不在表里会被判无权限（协作画布 / 编程学习踩过同一个坑）。
-            new String[]{"/practice", "博客·博客文章生成"},
+            new String[]{"/practice", "练习解答·解答记录"},
             // 编程学习（与 MenuTree.g_learn 一一对应；漏这里 → 叶子被 RBAC 过滤看不到）。
             // 详情页用 /learning?track=<code> 单页承载 —— 守卫的 pages.includes(pathname) 是**精确匹配**，
             // 子路由 /learning/xxx 不在表里会被判无权限（协作画布踩过同一个坑）。

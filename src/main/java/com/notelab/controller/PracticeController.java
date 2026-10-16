@@ -5,6 +5,7 @@ import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.dao.PracticeDao;
 import com.notelab.dao.PracticeImageDao;
+import com.notelab.service.BlogPreviewService;
 import com.notelab.service.BlogRepoService;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -580,6 +581,44 @@ public class PracticeController {
         body.put("willRename", !oldSlug.isEmpty() && !oldSlug.equals(plan.slug));
         body.put("oldSlug", oldSlug);
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 博客预览（解答）：把**当前记录的发布计划**交给博客自己的页面渲染。
+     *
+     * <p>与「文章起草」那条预览完全同源（同一个 {@code BlogPreviewService}）：服务端把内容放进短时存储，
+     * 返回可嵌 iframe 的地址；博客侧路由用**自己的** markdown 管线出页面 —— 所以是「预览＝线上观感」，
+     * 而不是后台用另一套库画个近似图。解答与文章用**两条**预览路由（`/blog/solutions/preview/<token>/`
+     * 与 `/blog/preview/<token>/`），因为两者的页面布局本来就不同（解答有难度徽章与「返回原题」）。
+     *
+     * <p>⚠️ 预览**不因为 blocker 拒绝**：blockers 是「发布信息还没配齐」，而预览恰恰要能看半成品效果。
+     * ⚠️ 正文里引用的插图走 B 端受登录保护的 {@code /api/practice/images/{id}} —— 预览 iframe 与后台
+     *    同源，浏览器会带上会话，所以**未发布的图也能显示**（公开解答页走的是另一条匿名出口）。
+     */
+    @PostMapping("/records/{id}/blog-preview")
+    public ResponseEntity<Map<String, Object>> blogPreview(@PathVariable long id, HttpServletRequest request) {
+        Map<String, Object> user = AuthUtil.user(request);
+        if (user == null) return AuthUtil.unauth();
+        Map<String, Object> rec = PracticeDao.getRecord(id);
+        if (rec == null) return ResponseEntity.status(404).body(Map.of("error", "记录不存在"));
+        Plan plan;
+        try {
+            plan = buildPlan(rec);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "预检失败：" + e));
+        }
+        Map<String, Object> out = BlogPreviewService.putSolution(
+                AuthUtil.userId(user),
+                str(rec.get("title")),
+                str(rec.get("description")),
+                splitCsv(str(rec.get("tags"))),
+                plan.difficulty(),
+                plan.relatedPost(),
+                plan.body());
+        out.put("slug", plan.slug());
+        out.put("relatedPost", plan.relatedPost());
+        out.put("blockers", plan.blockers());
+        return ResponseEntity.ok(out);
     }
 
     // ==================================================================================

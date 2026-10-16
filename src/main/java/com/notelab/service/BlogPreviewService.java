@@ -49,15 +49,20 @@ public final class BlogPreviewService {
     private BlogPreviewService() {}
 
     /**
-     * 一份待预览的草稿。
+     * 一份待预览的内容。
      *
-     * @param body 正文 Markdown（**不含** frontmatter —— frontmatter 的字段已经拆成 title/tags/... 了）
+     * @param kind        {@code post}（博客文章）或 {@code solution}（练习解答）—— 博客侧按它选布局，
+     *                    也对得上「token 不能跨类型乱用」（拿文章 token 去解答预览路由会 404）
+     * @param difficulty  仅解答用（简单/中等/困难），文章留空
+     * @param relatedPost 仅解答用：关联的路线文章 slug（解答页据此显示「返回原题」）
+     * @param body        正文 Markdown（**不含** frontmatter —— frontmatter 的字段已经拆成 title/tags/... 了）
      */
-    public record Entry(long ownerUid, long createdAt, String slug, String title, String description,
-                        List<String> tags, String category, boolean draft, String published, String body) {}
+    public record Entry(long ownerUid, long createdAt, String kind, String slug, String title, String description,
+                        List<String> tags, String category, boolean draft, String published,
+                        String difficulty, String relatedPost, String body) {}
 
     /**
-     * 存一份草稿并返回 token。
+     * 存一份草稿并返回 token（博客文章那条路）。
      *
      * <p>**刻意不复用** {@code BlogArticleService.plan()}：那是「要写进仓库」的计划，
      * 会因为「标题为空 / slug 撞名 / 正文为空」直接给 blocker —— 而预览恰恰要能看**半成品**
@@ -84,20 +89,47 @@ public final class BlogPreviewService {
             if (body.isEmpty()) body = stripFrontmatter(raw);
         }
 
-        Entry e = new Entry(ownerUid, System.currentTimeMillis(), slug,
+        Entry e = new Entry(ownerUid, System.currentTimeMillis(), "post", slug,
                 title.isEmpty() ? "（未填标题）" : title,
                 description, tags, category,
                 !node.has("draft") || node.get("draft").asBoolean(),
-                published, body);
+                published, "", "", body);
+        return store(e, "/blog/preview/");
+    }
+
+    /**
+     * 存一份**练习解答**的预览（博客侧路由 {@code /blog/solutions/preview/<token>/}）。
+     *
+     * <p>为什么由服务端来拼这份数据：解答要展示的字段不是记录里的裸字段，而是**发布计划的产物**
+     * （{@code PracticeController.buildPlan} 推出来的 difficulty / relatedPost / 正文）。
+     * 让浏览器自己拼一份，就会出现「预览里是一个样、真发布是另一个样」——
+     * 与「预检与真发共用同一个计划」是同一条理由。
+     *
+     * <p>⚠️ 调用方刻意**不因为 blocker 就拒绝预览**：blockers 是「发布信息还没配齐」，
+     * 而预览恰恰要能看半成品效果。
+     */
+    public static Map<String, Object> putSolution(long ownerUid, String title, String description,
+                                                  List<String> tags, String difficulty, String relatedPost,
+                                                  String body) {
+        Entry e = new Entry(ownerUid, System.currentTimeMillis(), "solution", "", 
+                title.isEmpty() ? "（未填标题）" : title,
+                description == null ? "" : description, tags == null ? List.of() : tags, "",
+                true, "", difficulty == null ? "" : difficulty, relatedPost == null ? "" : relatedPost,
+                body == null ? "" : body);
+        return store(e, "/blog/solutions/preview/");
+    }
+
+    /** 落库 + 返回前端要的地址（两条路共用；URL 前缀按类型不同） */
+    private static Map<String, Object> store(Entry e, String urlPrefix) {
         sweep();
         String token = newToken();
         STORE.put(token, e);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", true);
         out.put("token", token);
-        out.put("url", "/blog/preview/" + token + "/");
+        out.put("url", urlPrefix + token + "/");
         out.put("expiresInSec", TTL_MS / 1000);
-        out.put("chars", body.length());
+        out.put("chars", e.body().length());
         return out;
     }
 
@@ -117,12 +149,16 @@ public final class BlogPreviewService {
     public static Map<String, Object> payload(Entry e) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", true);
+        // kind 决定博客用哪套布局渲染；也是「token 不能跨类型用」的依据（另一条路由会 404）
+        out.put("kind", e.kind());
         out.put("title", e.title());
         out.put("description", e.description());
         out.put("tags", e.tags());
         out.put("category", e.category());
         out.put("draft", e.draft());
         out.put("published", e.published());
+        out.put("difficulty", e.difficulty());
+        out.put("relatedPost", e.relatedPost());
         out.put("body", e.body());
         // slug 只用于页面内的展示性信息（例如「将来会发布到 /blog/posts/<slug>/」），没有也不影响渲染
         out.put("slug", e.slug());
