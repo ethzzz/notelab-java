@@ -8,12 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,17 +52,6 @@ public final class BlogDeployService {
     private static final int MAX_LOG = 8000;
 
     private static final String SITE = "https://haola.cloud";
-
-    /**
-     * 探活用的共享 client。
-     * ⚠️ 不能写成 `try (HttpClient c = ...)`：{@code HttpClient} 到 **Java 21** 才 implements AutoCloseable，
-     * 本仓是 Java 17（pom 里 java.version=17），那样写直接编译不过。
-     * 共享一个实例也是官方建议（连接复用），与 QwenClient / LlmHealth 的写法一致。
-     */
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build();
 
     /**
      * 单线程 + 有界队列（容量 2）。拒绝策略用 Abort，由 {@link #trigger} 翻译成「队列已满」。
@@ -208,16 +192,23 @@ public final class BlogDeployService {
     /**
      * 探活。
      *
-     * <p>服务器**能直连自己的域名**（实测 200），所以不必像 ops 脚本那样 `curl --resolve`；
-     * 探不到（网络/证书/超时）返回 {@code null} 并记「未取到」—— 那是「不知道」，
+     * <p>⚠️ 走 <b>curl --resolve</b>，不用 JVM 自己的 HttpClient —— 2026-10-16 实测踩到：
+     * {@code HttpClient} 连 `https://haolo.cloud` 抛 **ConnectException**（服务器把域名解析出 IPv6，
+     * 而那条路由实际不通；curl 有 Happy Eyeballs 会回落到 IPv4，Java 不会）。
+     * 而 `--resolve haolo.cloud:443:127.0.0.1` 直接绕开 DNS、按域名做 SNI/证书校验，
+     * 与 ops 的部署脚本、`nginx-blog-ssr.sh` **同一个探活口径** —— 探活方式也只该有一份。
+     *
+     * <p>探不到（超时/网络抖动）返回 {@code null} 并记「未取到」：那是「不知道」，
      * 不能写成「失败」，否则一次网络抖动会把一次成功的部署标成红的。
      */
     private static Integer probe(String path) {
+        List<String> cmd = List.of("curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                "--max-time", "20", "--resolve", "haolo.cloud:443:127.0.0.1", SITE + path);
         try {
-            HttpRequest req = HttpRequest.newBuilder(URI.create(SITE + path))
-                    .timeout(Duration.ofSeconds(15))
-                    .GET().build();
-            return HTTP.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
+            Result r = exec(cmd, 30);
+            String out = r.out().trim();
+            if (out.length() < 3) return null;
+            return Integer.parseInt(out.substring(out.length() - 3));
         } catch (Exception e) {
             log.warn("博客部署探活失败 {}：{}", path, e.toString());
             return null;
