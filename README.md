@@ -271,8 +271,34 @@ Controller 只做「鉴权 / 解析 / 响应 / 记改动日志」。
 | GET | `/api/blog/articles` | 清单 + 浏览数（按访客去重）+ 最后一次**后台**改动（一次查完再内存拼） |
 | GET | `/api/blog/articles/{slug}` | 单篇：元信息 + `body` + 原文 `markdown` + 浏览数 + 改动记录 |
 | GET | `/api/blog/options` | 分类 / 标签候选（取自仓内现有文章，避免手输把同一类内容写裂）+ 总数 / 草稿数 |
+| POST | `/api/blog/deploy` | **手动触发/重试部署**（后台跑服务器本地构建）。body 可选 `{slug}` → 探活该篇；已有任务在跑 → **429** |
+| GET | `/api/blog/deploy/{id}` | 某次部署的状态：`status`/`exit_code`/`probe_code`/`duration_ms`/`log_tail`/`commit_hash` |
+| GET | `/api/blog/deploy/latest`、`GET /api/blog/deploy` | 最近一次 + `active` + 仓里 `headCommit` + 配置；后者另带最近 20 条历史 |
 
 ⚠️ 三条语义：**更新是行内改写**（保留 `image`/`lang` 等本类不管理的键）、**`published` 默认不变**
 （改正文不该把文章顶回时间线，要改日期得显式传）、**显式指定的 slug 撞名即报错**（只有由标题推导的 slug
 才自动加 `-1`）。权限：`PermGuard` 把 `/api/blog` 与 `/blog-gen`、`/blog-articles` 都限定为仅超管。
-验收：`mvn package` ✅ + `.sync/verify-blog-admin-p1.js` 46 条断言全绿（详见 PROGRESS.md 末节）。
+验收：`mvn package` ✅ + `.sync/verify-blog-admin-p1.js` 46 条断言全绿、`.sync/verify-blog-deploy-p2.js`
+40 条断言全绿（详见 PROGRESS.md 末节）。
+
+## 博客部署：后台触发的服务器本地构建（✅ 2026-10-16，P2）
+
+**为什么不用 GitHub Actions 当主路**：那条路实测 `Upload dist to server` 要 **11.5–24.9 分钟**，
+而且对当时的 HEAD 是失败的（2026-10-16 读 Actions API 逐步骤核实）。所以 admin 侧的发布走
+`service/BlogDeployService` → 服务器本地跑 `ops/deploy-ssr.sh`（实测**构建 69–80 秒**、峰值内存 1.73GB）。
+
+- **队列**：单线程 + 有界队列（容量 2），有活跃任务即拒绝（429）—— 两条构建同时
+  `find /var/www/blog -mindepth 1 -delete` + 覆盖写会互相覆盖出半成品站点。
+- **限权**：`nice -n 19`（这台机器只有 2 核，构建会把 CPU 打满）。
+- **探活**：构建成功后 `curl --resolve haolo.cloud:443:127.0.0.1 <路径>`，结果落 `probe_code`。
+  ⚠️ 探活路径按语义选：发布/更新（已发布）探文章 URL，必须 200；下线/删除不能探那一篇
+  （它本来就该 404），否则会把成功判成失败。
+- **状态**：`blog_deploy_job` 表（P2 新增），`Bootstrap` 启动时把残留的 `running` 标记为中断
+  —— 否则活跃任务数恒 > 0，之后任何部署都会被挡掉。
+- **自动部署**：会影响线上的写入（发布 / 更新已发布文章 / 上下线）成功后自动排队；
+  草稿的保存与删除**不构建**。可用 `BLOG_AUTO_DEPLOY=0` 关掉。
+- ⚠️ **互斥语义**：部署进行中（约 1 分钟）所有写入返回 **409**「正在部署，等它结束再改文章」——
+  构建脚本要 `git pull` 并读整个工作区，与 java 的提交在同一份 clone 上并发会踩出
+  `fatal: Cannot fast-forward to multiple branches`（2026-10-16 实测，部署白失败而写入成功）。
+- 配置项（`.env`）：`BLOG_DEPLOY_SCRIPT`（默认 `/root/blog-src/ops/deploy-ssr.sh`）、
+  `BLOG_DEPLOY_TIMEOUT_SEC`（默认 600）、`BLOG_AUTO_DEPLOY`（默认开）。

@@ -644,3 +644,55 @@ B 端「用户组 → 路由菜单」的绑定此前已通（角色组分配路�
 - 前端仍是老样子：`blog-gen` 只能新建、`blog-articles` 只读 —— 编辑 / 上下线 / 删除的 UI 是 **P3**。
 - 发布**还不是**「点一下就上线」：admin 侧要等后台触发的服务器本地构建（**P2**，实测构建 80 秒）。
 
+## 2026-10-16 · 博客部署闭环（P2：后台触发服务器本地构建）
+
+### 背景
+博客是静态站，文章改完必须重新构建才会上线。原来只有两条路：① 等 GitHub Actions —— 逐步骤实测
+`Upload dist to server` 要 **11.5–24.9 分钟**，而且对当时的 HEAD 是**失败**的；② 人上服务器手跑
+`ops/deploy-ssr.sh`（线上当时就是这么发的）。后台点完发布之后既没有部署动作，也没有任何「上线了没有」的反馈。
+
+### 改动（提交 `9d95f16` + 四处修正 `1b814cf` / `605cc47` / `3ddf340` / `22ea4b5`）
+- 新表 `blog_deploy_job`（`DbSchema`，纯 `CREATE TABLE IF NOT EXISTS`）+ `dao/BlogDeployDao`
+  （含 `abortStaleJobs`：JVM 重启会让 `running` 永远停住，不清的话活跃任务数恒 > 0，
+  之后任何部署都会被当成并发部署挡掉 —— 照 `TrpgDao.abortStaleTrpgGenTasks` 的先例挂在 `Bootstrap`）。
+- `service/BlogDeployService`：单线程 + 有界队列（容量 2）、`nice -n 19`、独立线程读流、可配超时
+  （`BLOG_DEPLOY_TIMEOUT_SEC` 默认 600s）、输出尾部与退出码落库、成功后 `curl --resolve` 探活。
+- `BlogRepoService`：新增 `headCommit()`（部署任务记录触发时的版本）与 `exclusive(Supplier)`
+  （**构建也要占仓库锁**，见下面第 3 条踩坑）。
+- 接口：`POST /api/blog/deploy`（手动/重试，body 可选 `{slug}` 指定探活目标）、
+  `GET /api/blog/deploy/{id}`、`GET /api/blog/deploy/latest`、`GET /api/blog/deploy`（最近 20 条）。
+- 自动部署：**会影响线上**的写入（发布 / 更新已发布文章 / 上下线）成功后自动排一次构建
+  （`BLOG_AUTO_DEPLOY=0` 可关）；**草稿的保存与草稿的删除不构建** —— 读者看不到的变化不值得占机器 70 秒。
+
+### 验收（服务器实测 + 真打生产 HTTP）
+- `.sync/verify-blog-deploy-p2.js` **40 条断言全绿**（耗时约 4 分钟，含 3 次真实构建）：
+  - 手动触发 → 轮询 → `success`，**构建 69–75 秒**（与 P0 实测的 80 秒一致）、`probe_code=200`、
+    输出尾部 8000 字符落库、`headCommit` 与触发时一致；
+  - **并发挡板**：构建中再触发 → **429**「已经有一个部署在跑」；
+  - **发布探针文章 → 构建完成后该 URL 真的 200**（`verify_path` = `/blog/posts/<slug>/`）；
+  - **构建期间写入 → 409**；草稿保存/删除 **skipped**（不构建）；探针自清理（再读 404）；
+  - 未登录的三个部署接口一律 401，`/deploy/999999` → 404。
+- 上线前实测：`mvn -B -DskipTests -q package` ✅ → `pm2 restart` → `/api/menu` 401 ✅。
+
+### 三条真实踩坑（都值得记，避免后人重犯）
+1. **JVM 直连自己的域名会 `ConnectException`** —— 服务器把域名解析出 IPv6 而那条路由不通；
+   curl 有 Happy Eyeballs 会回落 IPv4，Java 的 `HttpClient` 不会。
+   → 探活改走 `curl --resolve haolo.cloud:443:127.0.0.1`，与 ops 脚本、`nginx-blog-ssr.sh` **同一口径**。
+   （另注：`HttpClient` 到 Java 21 才 implements `AutoCloseable`，本仓 Java 17 不能写 `try (HttpClient ...)`。）
+2. **域名拼错**：常量写成了 `haola.cloud`（正确 `haolo.cloud`）。`--resolve` 映射的是正确拼写，
+   两者不一致 → 映射不生效 → curl 回落 DNS → 报 `Could not resolve host: haola.cloud`。
+   为此白跑了两次诊断（先怀疑 IPv6、再怀疑代理变量）。**教训：报到脸上的主机名要逐字读。**
+   现在探活的失败原因会连同 curl 原文压成一行落进 `log_tail` 的 `[探活细节]`（这正是它把问题说清的地方）。
+3. **构建与写入并发会互相踩**：部署脚本 `git pull` 与 java 在同一份 clone 上 commit/push 撞车 →
+   `fatal: Cannot fast-forward to multiple branches`，脚本退出 **128**、整次部署白失败，
+   **而写入本身是成功的**（「一半成功」最难排查）；失败还让挡板误判空闲、紧接着又排了一次构建。
+   → ① 部署脚本整段跑在 `BlogRepoService.exclusive` 里；② 部署进行中所有写入快速失败 **409**
+   （挂锁等一分钟对前端更糟）；③ 验证脚本加 `waitIdle` 适配。
+
+### 边界与残留
+- 部署进行中（约 1 分钟）后台**改不了文章**（409）—— 这是刻意互斥，不是 bug；P3 的界面会显示构建进度。
+- `blog_deploy_job` 里留下了本次验收的若干条记录（含 3 条失败：探活 null / probe 0 / exit 128）——
+  那是真实的部署历史与排查线索，刻意保留，未清空。
+- CI 侧仍会部署 `/var/www/blog`（两条路并存）：CI 成功会覆盖本地构建的产物，CI 失败不影响线上；
+  真正的风险是"CI 用一个更旧的提交覆盖"，所以 admin 侧发布后若看到线上回退，重跑一次部署即可。
+
