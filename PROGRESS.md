@@ -915,3 +915,53 @@ P1（生命周期接口）、P2（部署闭环）、P3a（预览链路）的能�
 - sitemap 与搜索索引一样是**最终一致**的：题解发布后几秒内进 sitemap（排队 + 抓页 + 注入）。
 - 单文件 sitemap 现在 253 条 URL，远未触及 5 万条/50MB 的分片阈值；涨到接近时再考虑分片。
 
+## 2026-10-17 · 解答浏览数回流（白名单扩到 posts ∪ 已发布解答）
+
+### 背景
+浏览数这套体系（读者浏览器上报 → `blog_article_stat` → 后台「文章记录」）对文章是完整的，
+但**解答这条链是断的**：`POST /api/blog/public/view` 传题解 slug 直接 404「没有这篇文章」
+—— 白名单只扫博客仓 `src/content/posts`，解答的 slug（`practice_record.published_slug`）不在里面；
+解答页也没有 `ViewCount` 组件，后台解答列表更没有浏览列。⇒「读者读了哪道题」永远回不到后台。
+
+### 改动（Java `8a694d0`；notelab-b `34534de`；博客 `5f713d7`）
+1. 新增 `service/BlogViewWhitelist`：白名单 = posts（仓内文件名）∪ 已发布解答
+   （`published_slug <> ''`，与公开接口同一判据）。两份各自 5 分钟缓存、读失败沿用旧缓存
+   （清空 = 所有上报判非法 = 整站计数停摆），失败后 30 秒重试。
+   **发布/下线后主动 `invalidateSolutions()`** —— 发布是秒级动作，不失效的话刚发的题解
+   前 5 分钟的阅读会进不了统计。
+2. `BlogStatController` 委托它；文案「没有这篇文章」→「博客上没有这篇内容」。
+   三条护栏（slug 白名单 / visitorId 形状 / IP 节流）一条都没放宽。
+3. `PracticeController`：`/records` 与 `/records/{id}` 批量补 `views`（按 `published_slug` 一次 `IN` 查）。
+   三条刻意口径：**只给已发布补**（没地址就谈不上被读了多少）；**没有记录补 0**
+   （后台要的正是「确实没人看」这个信息，与博客前端「不显示 0」刻意相反）；
+   **查失败不抛**（展示性指标，数据库抖一下不该让列表 500）。
+4. 博客：解答详情挂 `<ViewCount primary>`（会记一次阅读）、解答清单每条只展示不上报
+   （整页合并成一次批量请求，与文章列表同一个机制）。
+5. 后台：解答列表加「浏览」列（未发布显示 —）+ 详情地址行显示「N 次浏览」。
+
+### 为什么解答能复用 blog_article_stat
+键是**对外 slug** —— 那正是两者各自的 URL 身份，也是浏览器上报时手里唯一的标识。
+两个后台页面各按自己的 slug 集合取数（文章记录看 posts、解答记录看 published_slug），混表不混口径。
+⚠️ 下线会清 `published_slug` ⇒ 浏览数随之不可见；重新发布到同一 slug 会**接回历史计数**
+（统计认 slug、不认记录 id）。这是刻意的：改个错别字重发不该把阅读量清零。
+
+### 验收（真打生产）
+- `.sync/verify-solution-views.js` **24 条全绿**：解答 slug 上报 200（改前 404）、同访客去重、
+  未知 slug 仍 404、visitorId 形状 400、文章那条路未受影响；批量读；博客详情/清单的挂载点
+  （清单页「带 primary 的元素 = 0」）；后台列表/详情 `views` 与公开接口一致；未登录 401。
+- `.sync/shot-practice-views.js` **7 条全绿**（系统 Chrome + CDP，注 cookie）：列表表头含「浏览」
+  且有一行等于公开值、详情行读到「2 次浏览」、博客页 `.vc-num` 从 `hidden` 变可见并显示数字。
+  三张截图：`.agent/tmp/shots/20261017-shot-practice-views-{list,detail}.png`、`20261017-shot-blog-solution-views.png`。
+- 回归：`verify-blog-sitemap.js` 26 条仍全绿；pagefind `page_count` 仍 209（构建后 refresh-indexes 正常）。
+
+### 两条踩坑
+1. **假红**：断言「清单页不该上报」时直接 grep 字面量 `data-view-primary="1"`，把 ViewCount
+   **内联脚本里的选择器字符串**也数进去了（详情页因此数到 2 个）。只数标签上的属性才对
+   （`/<[^>]*data-view-primary="1"[^>]*>/`）。
+2. **两个仓的构建撞车**：push 博客仓会触发 CI → ssh 上服务器跑 `deploy-ssr.sh`，
+   而我这边同时发起了 `notelab-b` 的 build（load 冲到 2.55，机器扛住了但很险）。
+   ⇒ 发下一个仓的构建前先 `ps` 看有没有 `deploy-ssr`/`astro build` 在跑（与「部署一律串行」同一条纪律）。
+
+### 边界
+- 浏览数仍是**展示性指标**：同浏览器同 slug 只算一次，换浏览器/无痕会算新访客。
+- 统计接口 `GET /views` 不校验白名单（只回数字），所以「已下线解答的历史数字」仍可被读到 —— 不构成信息泄露。
