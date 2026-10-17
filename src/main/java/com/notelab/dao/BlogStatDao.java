@@ -6,13 +6,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 博客文章统计：浏览数（按访客去重）与后台改动记录。
+ * 博客内容统计：浏览数（按访客去重）与后台改动记录。
  *
  * <p>⚠️ 本类刻意落在 {@code com.notelab.dao}：{@link Db} 的 {@code exec/queryAll} 是**包级私有**，
  * 只有同包类能直接发 SQL（与 {@link AnalyticsDao} / {@link PracticeDao} 同规矩）。
  *
- * <p>⚠️ 这里统计的是博客的**路线文章**（posts，202 篇静态 md），不是练习解答（solutions）。
- * 两者是博客上完全不同的两种内容，别混在一个计数口径里。
+ * <p>统计对象是博客上的**全部可读内容**：路线文章（posts）与已发布的练习解答（solutions）。
+ * 两者共用 {@code blog_article_stat} / {@code blog_article_visitor}，键都是**对外 slug**
+ * —— 那是它们在博客上唯一的身份，也是浏览数组件上报时手里唯一的标识。
+ * 后台两个页面各按自己的 slug 集合取数（见 {@code /api/blog/articles} 与
+ * {@code PracticeController#records}），所以混表不会混口径。
+ *
+ * <p>⚠️ 同一条 slug 只该属于一种内容。posts 是仓里的 md 文件名、solutions 是
+ * {@code module+chapter+题号} 推导出来的公开名，命名空间实际不重叠；真撞上时计数会被共享，
+ * 属于可接受的理论风险（改法只有给 slug 加前缀，那会让 URL 和计数键不一致，更糟）。
+ *
+ * <p>改动记录（{@link #log}）仍只服务文章：解答的改动审计在 {@code practice_record} 的
+ * created/updated 字段上，不需要第二份。
  */
 public final class BlogStatDao {
 

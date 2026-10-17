@@ -167,6 +167,22 @@ public final class PracticeDao {
         return out;
     }
 
+    /**
+     * 已发布解答的**对外 slug 清单**（只取 slug，不读正文）—— 浏览数白名单用。
+     *
+     * <p>为什么不复用 {@link #listPublished()}：那个要拼出整行的展示字段（还给标题/标签做解析），
+     * 白名单每 5 分钟问一次「有哪些 slug」，只需要一列。
+     */
+    public static List<String> publishedSlugs() {
+        List<String> out = new ArrayList<>();
+        for (Map<String, Object> r : Db.queryAll(
+                "SELECT published_slug FROM practice_record WHERE published_slug <> ''")) {
+            String s = str(r.get("published_slug"));
+            if (!s.isEmpty()) out.add(s);
+        }
+        return out;
+    }
+
     /** 按对外 slug 取一条（**含正文**）。不存在返回 null。 */
     public static Map<String, Object> getByPublishedSlug(String slug) {
         if (slug == null || slug.isBlank()) return null;

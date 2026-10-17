@@ -2,7 +2,7 @@ package com.notelab.controller;
 
 import com.notelab.common.ClientIp;
 import com.notelab.dao.BlogStatDao;
-import com.notelab.service.BlogRepoService;
+import com.notelab.service.BlogViewWhitelist;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,16 +10,19 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * 博客文章浏览数：{@code /api/blog/public/**}，**匿名可读可写**。
+ * 博客内容浏览数：{@code /api/blog/public/**}，**匿名可读可写**。
+ *
+ * <p>统计对象是博客上的两种内容，**共用一张按 slug 计数的表**：路线文章（posts，静态 md）
+ * 与已发布的练习解答（solutions，运行时渲染）。它们对外的身份都是 URL 里的那个 slug，
+ * 所以「同一浏览器同一 slug 只算一次」这条口径对两者天然一致。
+ * 两个后台页面各按自己的 slug 取数（文章记录看 posts、解答记录看 published_slug），不会互相污染。
  *
  * <p>为什么是公开端点：博客是静态站，读者绝大多数没有 NoteLab 账号，甚至不知道有这个后台。
  * 计数这件事必须由**读者自己的浏览器**上报（服务端渲染时根本没有"读者"这个概念）。
@@ -28,8 +31,9 @@ import java.util.regex.Pattern;
  *
  * <h3>无会话写入口的三条护栏</h3>
  * <ol>
- *   <li><b>slug 白名单</b>：只接受博客仓里真实存在的文章（读目录 + 5 分钟缓存）。
- *       只校验格式的话，任何人都能拿随机串往统计表里灌行。</li>
+ *   <li><b>slug 白名单</b>：只接受博客上真实存在的内容 —— 博客仓的文章（posts）
+ *       ∪ 已发布的练习解答（solutions），判定与缓存都在
+ *       {@link com.notelab.service.BlogViewWhitelist}。只校验格式的话，任何人都能拿随机串往统计表里灌行。</li>
  *   <li><b>visitorId 形状校验</b>：前端 localStorage 里的随机串，限制字符集与长度，
  *       挡住把任意文本（甚至 SQL/HTML 片段）当 id 存进来。</li>
  *   <li><b>按 IP 节流</b>：正常读者一分钟看不了几篇；没有这道闸，一个循环脚本就能把数字刷上天。</li>
@@ -57,38 +61,7 @@ public class BlogStatController {
 
     private final Map<String, long[]> hits = new ConcurrentHashMap<>();
 
-    // ---------------- slug 白名单（懒加载 + 过期） ----------------
-
-    private static final long CACHE_MS = 5 * 60_000L;
-    private static volatile Set<String> slugCache = Set.of();
-    private static volatile long slugCacheAt = 0;
-
-    /**
-     * 博客仓 posts 目录里的 slug 集合。
-     *
-     * <p>⚠️ 读失败时**沿用上一次的缓存**而不是清空：清空等于「所有上报都被判非法」，
-     * 博客仓暂时读不到（比如 git 操作占着目录）就整站计数停摆，那是把一个小故障放大成停服。
-     */
-    private static Set<String> knownSlugs() {
-        long now = System.currentTimeMillis();
-        if (now - slugCacheAt <= CACHE_MS) return slugCache;
-        try {
-            Set<String> s = new HashSet<>();
-            for (String n : BlogRepoService.listNames("src/content/posts")) {
-                if (n.endsWith(".md")) s.add(n.substring(0, n.length() - 3));
-            }
-            if (!s.isEmpty()) {
-                slugCache = Set.copyOf(s);
-                slugCacheAt = now;
-            }
-        } catch (Exception e) {
-            log.warn("读取博客文章清单失败，沿用旧缓存（{} 篇）：{}", slugCache.size(), e.toString());
-            slugCacheAt = now - CACHE_MS + 30_000L;   // 30 秒后重试，别每个请求都去打文件系统
-        }
-        return slugCache;
-    }
-
-    // ---------------- 上报 ----------------
+    // ---------------- 上报 ---------------
 
     /**
      * 记一次浏览。返回**计数后**的浏览数，前端直接拿它更新数字（省掉一次往返）。
@@ -102,8 +75,8 @@ public class BlogStatController {
         String visitor = body == null || body.get("visitorId") == null
                 ? "" : String.valueOf(body.get("visitorId")).trim();
 
-        if (!knownSlugs().contains(slug)) {
-            return ResponseEntity.status(404).body(Map.of("error", "没有这篇文章"));
+        if (!BlogViewWhitelist.known().contains(slug)) {
+            return ResponseEntity.status(404).body(Map.of("error", "博客上没有这篇内容"));
         }
         if (!VISITOR_RE.matcher(visitor).matches()) {
             return ResponseEntity.status(400).body(Map.of("error", "visitorId 格式不对"));
@@ -124,7 +97,7 @@ public class BlogStatController {
 
     /**
      * 批量读浏览数（列表页一次问几十篇）。
-     * 没有统计的文章会缺席（而不是补 0）—— 前端据此把「还没人看过」和「读不到数据」区分开。
+     * 没有统计的内容会缺席（而不是补 0）—— 前端据此把「还没人看过」和「读不到数据」区分开。
      */
     @GetMapping("/views")
     public ResponseEntity<Map<String, Object>> views(@RequestParam(required = false) String slugs) {

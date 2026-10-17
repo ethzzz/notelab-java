@@ -3,11 +3,13 @@ package com.notelab.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
+import com.notelab.dao.BlogStatDao;
 import com.notelab.dao.PracticeDao;
 import com.notelab.dao.PracticeImageDao;
 import com.notelab.service.BlogDeployService;
 import com.notelab.service.BlogPreviewService;
 import com.notelab.service.BlogRepoService;
+import com.notelab.service.BlogViewWhitelist;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
@@ -231,6 +233,7 @@ public class PracticeController {
         try {
             long total = PracticeDao.countRecords(title, ts);
             List<Map<String, Object>> items = PracticeDao.listRecords(title, ts, (p - 1) * n, n);
+            attachViews(items);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("items", items);
             body.put("total", total);
@@ -253,7 +256,42 @@ public class PracticeController {
             return ResponseEntity.status(500).body(Map.of("error", "查询失败：" + e));
         }
         if (r == null) return ResponseEntity.status(404).body(Map.of("error", "记录不存在"));
+        attachViews(List.of(r));
         return ResponseEntity.ok(r);
+    }
+
+    /**
+     * 给列表/详情补上**博客浏览数**（{@code views}）。
+     *
+     * <p>数据是读者浏览器匿名上报的（{@code /api/blog/public/view}），按对外 slug 存在
+     * {@code blog_article_stat}，与文章用的是同一张表、同一套「同访客同一篇只算一次」口径。
+     *
+     * <p>三条刻意的小口径：
+     * <ul>
+     *   <li><b>只给已发布的补</b>：没有 {@code published_slug} 就没有对外地址，谈不上被读了多少。
+     *       下线会清掉 slug，所以下线后这一列会消失 —— 重新发布到同一 slug 时，
+     *       历史计数会自动接上（统计按 slug 存，不认记录 id）。</li>
+     *   <li><b>没有记录补 0</b>：这里与博客前端刻意相反。博客上「0」会被读者误读成「数据坏了」，
+     *       后台要的恰恰是「这篇确实还没人看」这个信息。</li>
+     *   <li><b>查失败不抛</b>：浏览数是展示性指标，数据库抖一下不该让整个列表 500。</li>
+     * </ul>
+     */
+    private static void attachViews(List<Map<String, Object>> items) {
+        List<String> slugs = new ArrayList<>();
+        for (Map<String, Object> it : items) {
+            String s = str(it.get("published_slug"));
+            if (!s.isEmpty()) slugs.add(s);
+        }
+        if (slugs.isEmpty()) return;
+        try {
+            Map<String, Long> views = BlogStatDao.viewsOf(slugs);
+            for (Map<String, Object> it : items) {
+                String s = str(it.get("published_slug"));
+                if (!s.isEmpty()) it.put("views", views.getOrDefault(s, 0L));
+            }
+        } catch (Exception ignored) {
+            // 见方法头第三条：宁可这一列不显示，也不要让列表挂掉
+        }
     }
 
     // ==================================================================================
@@ -668,6 +706,8 @@ public class PracticeController {
             }
             // 发布态落在记录上；改过 slug 时旧 slug 被直接覆盖（旧链接失效，但对外只有这一个地址）
             PracticeDao.markPublished(id, plan.slug, "");
+            // 刚发的这篇立刻可被计数（否则要等白名单 5 分钟缓存过期，前几个读者会白读）
+            BlogViewWhitelist.invalidateSolutions();
 
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("ok", true);
@@ -706,6 +746,8 @@ public class PracticeController {
             return ResponseEntity.status(400).body(Map.of("error", "这条还没有发布，无需下线"));
         }
         PracticeDao.markUnpublished(id);
+        // 下线后这个 slug 不该再被计数（页面已 404，但统计接口本来还会认它）
+        BlogViewWhitelist.invalidateSolutions();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", true);
         out.put("slug", slug);
