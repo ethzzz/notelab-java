@@ -73,6 +73,12 @@ public final class PageRoutes {
             // 详情页用 /learning?track=<code> 单页承载 —— 守卫的 pages.includes(pathname) 是**精确匹配**，
             // 子路由 /learning/xxx 不在表里会被判无权限（协作画布踩过同一个坑）。
             new String[]{"/learning", "编程学习"},
+            // 学习路线文档（2026-10-18，与 MenuTree.g_learn 的三条新叶子一一对应）：
+            //   文档正文是 notelab-b 的 src/content/study/*.md，随 git 走；这里只登记页面路由。
+            // ⚠️ 漏登记 → 叶子被 RBAC 过滤，菜单里根本看不到（不是 404，是"没有这一项"）。
+            new String[]{"/study/java", "编程学习·Java 路线"},
+            new String[]{"/study/go", "编程学习·Go 路线"},
+            new String[]{"/study/react", "编程学习·React 路线"},
             new String[]{"/user/accounts", "账户管理"},
             new String[]{"/user/roles", "角色组管理"},
             new String[]{"/user/invites", "邀请码"},

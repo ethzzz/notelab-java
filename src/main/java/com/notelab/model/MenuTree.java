@@ -82,8 +82,17 @@ public final class MenuTree {
             // 内容存 ui_config.learning（见 LearningContentController），后台知识库、编辑即生效、无发布快照。
             // 每个语言带 runner 标签说明「能不能在浏览器里真跑、走什么方案」（能力表只读，见 LearningSeed.RUNNERS）。
             // ⚠️ 路由 /learning 必须同步登记在 PageRoutes.PAGE_ROUTES，漏了叶子会被 RBAC 过滤 → 谁都看不到。
+            //
+            // 学习路线文档（2026-10-18）：同一分组下再挂三份**长文档**，与上面的「课程」分工不同 ——
+            //   课程 = 短课时 + 随堂测试 + 学习进度（内容在 ui_config.learning，可在线编辑）；
+            //   文档 = 可对照开发的 Markdown 全文（在 notelab-b 的 src/content/study/*.md，随 git 走）。
+            // 两者不合并的原因：一个要能在线改、一个要能 diff/review；混在一起会互相打架。
+            // ⚠️ 三条新 path 同样必须登记 PageRoutes，漏了普通角色看不到。
             group("g_learn", "编程学习", "🎓", List.of(
-                    menu("learn-tracks", "学习路线", "🎓", "/learning", true))),
+                    menu("learn-tracks", "学习路线", "🎓", "/learning", true),
+                    menu("learn-java", "Java 路线", "☕", "/study/java", true),
+                    menu("learn-go", "Go 路线", "🐹", "/study/go", true),
+                    menu("learn-react", "React 路线", "⚛️", "/study/react", true))),
             group("g_users", "用户管理", "👥", List.of(
                     menu("user-accounts", "账户管理", "👤", "/user/accounts", true),
                     menu("user-roles", "角色组管理", "🗂️", "/user/roles", true),
