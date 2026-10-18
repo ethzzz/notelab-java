@@ -965,3 +965,42 @@ P1（生命周期接口）、P2（部署闭环）、P3a（预览链路）的能�
 ### 边界
 - 浏览数仍是**展示性指标**：同浏览器同 slug 只算一次，换浏览器/无痕会算新访客。
 - 统计接口 `GET /views` 不校验白名单（只回数字），所以「已下线解答的历史数字」仍可被读到 —— 不构成信息泄露。
+
+## 2026-10-18 · 后台「文档管理」成组（笔记表加 doc_type，新增 PRD 管理）
+
+### 背景
+后台的「文档编辑」与「笔记」原先塞在「工具箱」里，和压测、低代码、文生图并列 —— 三者
+没有任何共同点；而新增的 PRD 管理又是一类同类内容。同时 PRD 与笔记在数据上完全同构
+（Markdown 正文 + 列表 + 导出），各建一张表/各写一套 Controller 只会让功能慢慢分叉。
+
+### 改动（Java `da246a7`；notelab-b `ebc4177`）
+1. **菜单**：新增一级分组 `g_docs`「文档管理」= 文档编辑 / 笔记 / PRD 管理；
+   `docs`、`notes` 从 `g_tools` 移出。菜单 key 保持不变（`/ui` 的名称覆盖按键存），
+   改的是 **page path**：`/docs → /documents/editor`、`/notes → /documents/notes`、新增 `/documents/prd`。
+2. **权限**：权限码是 `page:<path>`，所以这次是**刻意让 key 变化** —— 旧 `page:/docs`、
+   `page:/notes` 由启动期 `pruneRoutes` 清掉，连带 `deleteOrphanRoleRoutes` 删掉角色授予。
+   不存在「换了地址权限还悄悄跟着走」这种事，非超管必须重新勾。
+3. **数据**：`notes` 加 `doc_type`（note | prd，默认 note），老数据自动归入笔记；
+   列与索引分别用 `hasColumn` / `hasIndex` 守护（老库 `CREATE TABLE IF NOT EXISTS` 是空操作，
+   只补列会永远少 `idx_notes_type`）。
+4. **接口**：`NoteController` 每个入口收 `type`（缺省 note），白名单校验（非法 400）；
+   读/改/删按 `(id, doc_type)` 定位，跨类型 404。新增 `model/NoteType` 收口常量与归一化。
+5. **仪表盘**：笔记卡与内容趋势线改成 `WHERE doc_type='note'`，另加 PRD 卡；
+   三张卡的 path 同步指向新页面。
+6. **前端**：`notes/page.tsx` 抽成 `components/notes-panel.tsx`（`type` 参数化，差异只有文案/图标），
+   三个页面分别是「原 docs 页（git mv）」「两行薄页」。旧地址在 next.config 里 307。
+
+### 验收
+- `.sync/verify-doc-admin.js` **40/40**：菜单结构（工具箱已无文档/笔记、g_docs 三页有序）、
+  权限码（新三条在、旧两条已下线）、类型隔离（跨类型读/删 404、非法类型 400、两列表互不串）、
+  P8 六份已导入、三页 200、旧地址 307、未登录 401、仪表盘三张卡 path 正确。
+- `.agent/tmp/shot-doc-admin.mjs` **14/14**（系统 Chrome + CDP + 注 cookie）：六行 PRD 在表里、
+  打开一篇 h2 渲染出来（Markdown 真解析）、笔记页看不到 PRD-P8、文档编辑页「导入 docx」在。
+- 服务器 `npx tsc --noEmit` exit 0；`.sync/import-prds.js` 幂等（首跑 6 新建、再跑 6 更新）。
+- 截图：`.agent/tmp/shots/20261018-docadmin-0{1..5}-*.png`。
+
+### 一条口径
+PRD 与笔记**同表同接口**，但 `doc_type` 是**归类**不是安全边界：接口权限是模块级的
+（`/api/notes` 对应 `notes` 模块），勾了 PRD 页就连带勾上笔记接口，反之亦然。
+这不是疏漏 —— B 端接口权限从来是模块级；真要按类型隔离数据，得先有按类型的接口授权，
+目前没有这个需求（见 `RouteGroups.PAGE_MODULES` 的注释）。
