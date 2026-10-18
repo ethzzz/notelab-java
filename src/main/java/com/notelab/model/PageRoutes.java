@@ -28,12 +28,18 @@ public final class PageRoutes {
             new String[]{"/lowcode", "低代码平台"},
             // B/C 拆分 P6：/trpg/play、/vs、/spire 游玩页已移至 C 端，从 B 端页面路由表移除
             new String[]{"/trpg/gen", "生成剧本"},
-            new String[]{"/docs", "文档编辑"},
+            // 文档管理（2026-10-18，与 MenuTree.g_docs 一一对应）：文档编辑 / 笔记 / PRD 管理。
+            // ⚠️ 路径由 /docs、/notes 迁到 /documents/* ⇒ 权限码 page:<path> 随之变化，
+            //    非超管角色要在「角色组管理 → 分配路由」里重新勾选这三页（旧 page:/docs、page:/notes 成为死码）。
+            //    旧地址由 notelab-b/next.config.ts 的 redirects 307 兜住，书签不会 404。
+            //    守卫的 pages.includes(pathname) 是**精确匹配**，三页必须逐条登记。
+            new String[]{"/documents/editor", "文档管理·文档编辑"},
+            new String[]{"/documents/notes", "文档管理·笔记"},
+            new String[]{"/documents/prd", "文档管理·PRD 管理"},
             // 协作画布（与 MenuTree.g_tools 的 canvas 一一对应；漏这里叶子会被 RBAC 过滤看不到）。
             // ⚠️ 编辑页用 /canvas?room=<roomId> 单页承载（守卫 pages.includes(pathname) 是**精确匹配**，
             //    子路由 /canvas/xxx 不在表里会被判无权限），故本表只需登记 /canvas 一条。
             new String[]{"/canvas", "协作画布"},
-            new String[]{"/notes", "笔记"},
             // 爬塔工坊由单页 4 个 Tab 拆成 6 个子页（原 /spire-editor 现为 307 重定向，见 notelab-b/next.config.ts）。
             // ⚠️ 这里与 MenuTree.gc_spire 必须一一对应：只加菜单不加路由 → 叶子被 RBAC 过滤，谁都看不到；
             //    只加路由不加菜单 → 没有入口。历史 role 里的 page:/spire-editor 行会自然失效（不在本表 → 不再开通任何路径），

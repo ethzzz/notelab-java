@@ -66,7 +66,8 @@ public final class ApiModules {
             Map.entry("translate", "翻译接口"),
             // ---- 内容与游戏配置 ----
             Map.entry("docs", "文档接口"),
-            Map.entry("notes", "笔记接口"),
+            // 笔记与 PRD 共用一套接口（notes.doc_type 区分类型），标签也写成两者
+            Map.entry("notes", "笔记 / PRD 接口"),
             Map.entry("canvas", "画布接口"),
             Map.entry("dev-notes", "开发笔记接口"),
             Map.entry("practice", "练习解答接口"),

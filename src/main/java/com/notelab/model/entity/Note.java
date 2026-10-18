@@ -6,12 +6,14 @@ import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDateTime;
 
-/** notes 表（B 端笔记：Markdown 正文存 content_md） */
+/** notes 表（B 端笔记/PRD：Markdown 正文存 content_md，doc_type 区分文档类型） */
 @TableName("notes")
 public class Note {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+    /** 文档类型：note（笔记）/ prd（产品需求文档），见 {@link com.notelab.model.NoteType} */
+    private String docType;
     private String title;
     private String contentMd;
     private Long sizeBytes;
@@ -21,6 +23,9 @@ public class Note {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+
+    public String getDocType() { return docType; }
+    public void setDocType(String docType) { this.docType = docType; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

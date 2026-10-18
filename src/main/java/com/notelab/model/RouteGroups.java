@@ -44,9 +44,14 @@ public final class RouteGroups {
             Map.entry("/english", List.of("english")),
             Map.entry("/translate", List.of("translate", "admin/translate")),
             Map.entry("/toolbox", List.of("toolbox")),
-            Map.entry("/docs", List.of("docs")),
             Map.entry("/canvas", List.of("canvas")),
-            Map.entry("/notes", List.of("notes")),
+            // 文档管理（2026-10-18 从工具箱移出并成组）：三页各自用哪套接口模块。
+            // ⚠️ PRD 管理**复用** notes 模块（同表同接口，doc_type 区分类型）——
+            //    分配路由时勾哪一页都会连带勾上 /api/notes，这是刻意的：接口权限是模块级，
+            //    按文档类型细分只会让「勾了 PRD 页却读不到数据」成为常态。
+            Map.entry("/documents/editor", List.of("docs")),
+            Map.entry("/documents/notes", List.of("notes")),
+            Map.entry("/documents/prd", List.of("notes")),
             Map.entry("/tools", List.of("tools")),
             Map.entry("/stress-test", List.of("admin/stress-test")),
             Map.entry("/trpg/gen", List.of("trpg")),

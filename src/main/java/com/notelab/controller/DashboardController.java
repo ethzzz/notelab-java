@@ -3,6 +3,7 @@ package com.notelab.controller;
 import com.notelab.dao.AnalyticsDao;
 import com.notelab.dao.DashboardDao;
 import com.notelab.dao.PracticeImageDao;
+import com.notelab.model.NoteType;
 import com.notelab.service.PermService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -88,8 +89,10 @@ public class DashboardController {
         List<Map<String, Object>> out = new ArrayList<>();
         out.add(card("bUsers", "B 端账号", DashboardDao.count("users"), "个", "/user/accounts"));
         out.add(card("cUsers", "C 端用户", DashboardDao.count("c_users"), "个", "/c-users"));
-        out.add(card("notes", "笔记", DashboardDao.count("notes"), "篇", "/notes"));
-        out.add(card("documents", "文档", DashboardDao.count("documents"), "篇", "/docs"));
+        // 笔记与 PRD 同表（notes.doc_type），两张卡必须各数各的类型，不能用 count("notes")
+        out.add(card("notes", "笔记", DashboardDao.countNotes(NoteType.NOTE), "篇", "/documents/notes"));
+        out.add(card("prd", "PRD", DashboardDao.countNotes(NoteType.PRD), "篇", "/documents/prd"));
+        out.add(card("documents", "文档", DashboardDao.count("documents"), "篇", "/documents/editor"));
         out.add(card("canvas", "协作画布", DashboardDao.count("canvas_doc"), "个", "/canvas"));
         out.add(card("practice", "练习记录", DashboardDao.count("practice_record"), "条", "/practice"));
         out.add(card("lowcode", "低代码提交", DashboardDao.count("lowcode_records"), "条", "/lowcode"));
@@ -109,7 +112,8 @@ public class DashboardController {
     private static List<Map<String, Object>> contentTrend(String from, String to) {
         Map<String, Map<String, Object>> byDay = new TreeMap<>();
         List<String> keys = List.of("notes", "documents", "practice");
-        fill(byDay, DashboardDao.dailyNew("notes", from, to), "notes", keys);
+        // 「笔记」这条线只数 doc_type='note'：PRD 也存 notes 表，不筛的话导入 PRD 那天会冒充笔记产出
+        fill(byDay, DashboardDao.dailyNewNotes(NoteType.NOTE, from, to), "notes", keys);
         fill(byDay, DashboardDao.dailyNew("documents", from, to), "documents", keys);
         fill(byDay, DashboardDao.dailyNew("practice_record", from, to), "practice", keys);
         return padDays(byDay, from, to, keys);

@@ -38,8 +38,25 @@ public final class DashboardDao {
                 + " GROUP BY day ORDER BY day", from, to);
     }
 
-    /** 练习实践按类型分布 {@code {type, n}}，条数降序（给环形图）。 */
-    public static List<Map<String, Object>> practiceByType() {
+    /**
+     * notes 表按**文档类型**计数。
+     *
+     * <p>⚠️ 笔记与 PRD 自 2026-10-18 起同表存储（{@code notes.doc_type}），
+     * {@link #count}("notes") 不再等于「笔记数」—— 直接用它会把 PRD 也算进笔记卡。
+     */
+    public static long countNotes(String docType) {
+        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS n FROM notes WHERE doc_type = ?", docType);
+        return r == null ? 0L : num(r.get("n"));
+    }
+
+    /** notes 表按文档类型的每日新增（趋势图的「笔记」线要用，否则 PRD 会被算成笔记产出）。 */
+    public static List<Map<String, Object>> dailyNewNotes(String docType, String from, String to) {
+        return Db.queryAll("SELECT DATE_FORMAT(created_at,'%Y-%m-%d') AS day, COUNT(*) AS n FROM notes"
+                + " WHERE doc_type = ? AND created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)"
+                + " GROUP BY day ORDER BY day", docType, from, to);
+    }
+
+    /** 练习实践按类型分布 {@code {type, n}}，条数降序（给环形图）。 */    public static List<Map<String, Object>> practiceByType() {
         return Db.queryAll("SELECT type, COUNT(*) AS n FROM practice_record GROUP BY type ORDER BY n DESC");
     }
 

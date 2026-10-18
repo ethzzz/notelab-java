@@ -336,16 +336,29 @@ final class DbSchema {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         // ---- B 端笔记（只增不改）：Markdown 正文存 content_md，Notion 式笔记列表/编辑/查看 ----
+        // doc_type 区分**文档类型**（note 普通笔记 / prd 产品需求文档）：两者字段、编辑器、接口完全一样，
+        // 只是「在不同页面里、各看各的」。默认 'note' ⟹ 老数据自动归入笔记，无需回填。
         Db.exec("""
             CREATE TABLE IF NOT EXISTS notes (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                doc_type VARCHAR(16) NOT NULL DEFAULT 'note',
                 title VARCHAR(200) NOT NULL,
                 content_md LONGTEXT NOT NULL,
                 size_bytes BIGINT NOT NULL DEFAULT 0,
                 created_by BIGINT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_notes_type (doc_type, id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // doc_type 是后加的列：老库靠这两句补上（MySQL 没有 ADD COLUMN IF NOT EXISTS，先查再 ALTER，重启幂等）
+        if (!hasColumn("notes", "doc_type")) {
+            Db.exec("ALTER TABLE notes ADD COLUMN doc_type VARCHAR(16) NOT NULL DEFAULT 'note'");
+        }
+        // ⚠️ 索引必须单独守护：上面的 ALTER 只补列不补索引，而 CREATE TABLE IF NOT EXISTS 对已存在的表是空操作，
+        //    老库因此会永远少这条索引（列表页按 doc_type 过滤会退化成全表扫）。
+        if (!hasIndex("notes", "idx_notes_type")) {
+            Db.exec("ALTER TABLE notes ADD KEY idx_notes_type (doc_type, id)");
+        }
         // ---- B 端协作画布（只增不改）：只存元数据，画布内容由协作服务(notelab-b/collab)的 SQLite 持有。
         //      room_id 为 16 位 hex 随机串，前端用它拼协作 ws 地址与页面参数；不复用、不顺序分配。
         //      engine 决定这个画布由哪套引擎渲染（tldraw | excalidraw）：两套实现的文档格式不通用，

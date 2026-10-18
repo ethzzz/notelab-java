@@ -54,16 +54,26 @@ public final class MenuTree {
                     menu("english", "英语学习", "🗣️", "/english", true),
                     menu("translate", "翻译句子库", "🌐", "/translate", true),
                     menu("toolbox", "文本工具箱", "🧰", "/toolbox", true),
-                    menu("docs", "文档编辑", "📝", "/docs", true),
                     // 协作画布：tldraw 白板（画布 + 富文本卡片），多人实时协作；
                     // 元数据存 canvas_doc（见 CanvasController），内容由协作服务 :3030 的 SQLite 持有。
                     menu("canvas", "协作画布", "🖌️", "/canvas", true),
-                    menu("notes", "笔记", "🗒️", "/notes", true),
                     menu("tools", "AI工具库", "🔧", "/tools", true),
                     menu("stress-test", "接口压测", "🔥", "/stress-test", true),
                     menu("lowcode", "低代码平台", "🧱", "/lowcode", true),
                     menu("image", "文生图", "🎨", "/image", false),
                     menu("audio", "语音转文字", "🎤", "/audio", false))),
+            // 文档管理（2026-10-18）：文档编辑 / 笔记从「工具箱」移出，与新增的 PRD 管理并成一组。
+            // 三类内容同属「写作与存档」，放在工具箱里和压测、低代码混在一起没有共同点。
+            // ⚠️ 菜单 key 保持 docs / notes 不动（/ui 里的名称覆盖按键存），**页面 path 变了**：
+            //    /docs → /documents/editor、/notes → /documents/notes ⇒ 权限码 page:<path> 随之变化，
+            //    非超管角色需在「角色组管理 → 分配路由」里重新勾选这三页（旧 page:/docs、page:/notes 成为死码）。
+            //    旧地址由 notelab-b/next.config.ts 的 redirects 307 兜住，书签不会 404。
+            group("g_docs", "文档管理", "📚", List.of(
+                    menu("docs", "文档编辑", "📝", "/documents/editor", true),
+                    menu("notes", "笔记", "🗒️", "/documents/notes", true),
+                    // PRD 管理：与笔记同一套实现（同表 notes.doc_type、同 Markdown 编辑器、同导出），
+                    // 只在「看哪一类文档」上分开。见 NoteController#type 与 com.notelab.model.NoteType。
+                    menu("prd", "PRD 管理", "📐", "/documents/prd", true))),
             // 项目实践：把做项目时踩到的技术难点沉淀成结构化记录（现象 / 原因 / 解决方案 / 代码）。
             // 内容存 ui_config.dev_notes（见 DevNoteController），不是 C 端消费的配置，编辑即生效、无发布快照。
             group("g_practice", "项目实践", "🧪", List.of(
