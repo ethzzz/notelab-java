@@ -1,0 +1,9 @@
+# 换行符口径（本机 Windows 的 core.autocrlf 默认是 true，会在**检出时**把工作副本转成 CRLF）
+#
+# ⚠️ bash 脚本必须 LF：带 CR 的 .sh 在 bash 下会报 "$'\r': command not found"（服务器与 Git Bash 都一样）。
+#    这里的 eol=lf 让工作副本与仓库 blob 都保持 LF，不受 core.autocrlf 影响。
+*.sh text eol=lf
+#
+# ⚠️ 批处理反而要 CRLF：LF-only 的 .cmd/.bat 在 cmd 里跑 label/goto 之类的写法可能出问题。
+*.cmd text eol=crlf
+*.bat text eol=crlf
