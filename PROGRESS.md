@@ -1005,7 +1005,7 @@ PRD 与笔记**同表同接口**，但 `doc_type` 是**归类**不是安全边�
 这不是疏漏 —— B 端接口权限从来是模块级；真要按类型隔离数据，得先有按类型的接口授权，
 目前没有这个需求（见 `RouteGroups.PAGE_MODULES` 的注释）。
 
-## 2026-10-19 · 本机同步/发布快捷脚本（按下仓即触发服务器构建）
+## 2026-10-19 · 同步/发布快捷脚本（bash；本地与服务器同一个文件）
 
 ### 背景
 「手改了某个仓、push 了，怎么让服务器重建对应服务」这件事每次都要现查长命令：
@@ -1015,23 +1015,28 @@ ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-b"
 ```
 
 ### 改动
-`ops/` 下新增一组本机入口（**实现只有一份**，其余是转发）：
+`ops/` 下新增一组入口（**实现只有一份**，其余是转发）：
 
 | 文件 | 作用 |
 |---|---|
-| `sync-notelab-java.cmd` / `sync-notelab-b.cmd` / `sync-notelab-c.cmd` / `sync-ai-lab.cmd` / `sync-all.cmd` | 敲 `.\sync-notelab-b` 即同步该仓；开关原样透传（`--build` / `--no-build` / `--dry-run` / `-h`） |
-| `sync-deploy.ps1` | 真正的实现：本地校验仓名 → `ssh -n myapp ...sync-deploy.sh <仓> [开关]` → 透传退出码 |
+| `sync-notelab-java.sh` / `sync-notelab-b.sh` / `sync-notelab-c.sh` / `sync-ai-lab.sh` / `sync-all.sh` | `bash ops/sync-notelab-b.sh` 即同步该仓；开关原样透传（`--build` / `--no-build` / `--dry-run` / `-h`） |
+| `sync-repo.sh` | 真正的实现：校验仓名 → **在服务器上就直接跑 `sync-deploy.sh`；在本机则 `ssh -n myapp` 让服务器跑** |
+| `sync.cmd` | 唯一的 Windows 兜底入口（自己去找 Git 自带的 bash），仅当本机 `bash` 不在 PATH 时用 |
 
-**为什么 `.cmd` 垫 `ps1`**（两个都是踩出来的）：
-1. Windows 默认执行策略**禁止运行 `.ps1`**（实测 `PSSecurityException`），所以每个 `.cmd` 只是
-   `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sync-deploy.ps1" -Repo <仓> %*`。
-2. `ps1` 必须**带 BOM**：Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按 GBK 读，
-   中文注释里的字节被解析成引号 → 直接 `ParserError`（实测）。
-3. `ps1` **刻意不用 `[CmdletBinding()]` / `[Parameter()]`**：用了就成"高级脚本"，
-   `--dry-run` 会被当成未知参数名报错、到不了 `$args`（实测两次才对）。
+**为什么是 bash 而不是 `.cmd`/`.ps1`**：这批入口会随仓库同步到服务器（Linux），而且
+"在服务器上直接跑"才是它的第二种正常用法 —— 用 bash 就做到**同一个文件两边都能跑**。
+⚠️ 所以实现里**不能写死 `ssh`**：先判断能不能看到 `/root/Notelab/notelab-java/ops/sync-deploy.sh`，
+看得到就直接 `exec bash` 它（在服务器上自己 ssh 自己会绕回本机或直接失败）。
+
+> 历史（同日先做过一版，已删除）：`.cmd` + `.ps1`。被 Windows 默认执行策略拦（`PSSecurityException`），
+> 于是不用 `[CmdletBinding()]`、`.ps1` 加 BOM、`.cmd` 垫 `-ExecutionPolicy Bypass` 才跑通 —— 三个坑都真实存在，
+> 但那套只能在本机用、且与 bash 版是两份要同步维护的东西。改成 bash 后全部作废。
 
 ### 验收
+- `bash -n` 六个脚本全部通过（0 语法错）；文件均为 **LF、无 BOM**（`write` 落地时确认过字节）。
+- 本机跑 `bash ops/sync-notelab-java.sh` → ssh → 「已是最新（aa02e26），无需构建」。
+- 本机跑 `ops\sync.cmd notelab-c`（走 Git Bash 兜底）→ 「已是最新（3eab27f）」。
+- 开关透传：`bash ops/sync-notelab-b.sh --dry-run` → 服务器脚本收到 `--dry-run`。
 - 坏仓名 → 本地拒绝，不跑 ssh（`[x] 不认识的仓：notelab-xx`）。
-- `.\sync-notelab-java` → 「已是最新（ab07c4d），无需构建」；`.\sync-notelab-b` → 有变更 →
-  真构建 + 重启 + 探活 `HTTP 308`；`.\sync-notelab-c --dry-run` → 开关透传到服务器脚本。
-- 六个文件都在 `ops/` 下，而 `sync-deploy.sh` 把 `ops/*` 算作文档变更 → 提交它们**不会**触发无谓重建。
+- 在**服务器上**跑同一批脚本 → 走"本地实现"分支，不 ssh（见下方自验记录）。
+- 这些文件都在 `ops/` 下，而 `sync-deploy.sh` 把 `ops/*` 算作文档变更 → 提交它们**不会**触发无谓重建。
