@@ -1038,5 +1038,14 @@ ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-b"
 - 本机跑 `ops\sync.cmd notelab-c`（走 Git Bash 兜底）→ 「已是最新（3eab27f）」。
 - 开关透传：`bash ops/sync-notelab-b.sh --dry-run` → 服务器脚本收到 `--dry-run`。
 - 坏仓名 → 本地拒绝，不跑 ssh（`[x] 不认识的仓：notelab-xx`）。
-- 在**服务器上**跑同一批脚本 → 走"本地实现"分支，不 ssh（见下方自验记录）。
+- 在**服务器上**跑同一批脚本 → 走"本地实现"分支，不 ssh：实测
+  `ssh myapp "bash /root/.../ops/sync-notelab-java.sh"` → 「已是最新（a2f8f29）」，`file` 显示
+  该脚本为 `Bourne-Again shell script … executable`、`grep -c $'\r'` = 0（LF 干净）。
 - 这些文件都在 `ops/` 下，而 `sync-deploy.sh` 把 `ops/*` 算作文档变更 → 提交它们**不会**触发无谓重建。
+
+### 顺手补的坑：`.gitattributes`（`a9e1f97`）
+本机 `core.autocrlf=true`，而仓库此前**没有** `.gitattributes` —— 提交时 git 已经在提示
+「LF will be replaced by CRLF」，也就是下一次检出会把工作副本里的 `.sh` 变成 CRLF，
+带 CR 的 bash 脚本一跑就 `$'\r': command not found`（本机 Git Bash 与服务器都一样）。
+所以加了 `.gitattributes`：`*.sh` 固定 `eol=lf`、`*.cmd`/`*.bat` 固定 `eol=crlf`（批处理的 label/goto 怕 LF-only）。
+验证：`git check-attr eol` → `sync-repo.sh: lf` / `sync-deploy.sh: lf` / `sync.cmd: crlf`。
