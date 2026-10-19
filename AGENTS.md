@@ -24,6 +24,11 @@ git push origin main
 ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-java"
 ```
 - **不要在 `/root/Notelab/notelab-java` 里手改代码**——服务器是只读部署目标；脚本发现工作区脏会直接拒绝执行。完整行为与参数见根 `AGENTS.md`「开发流程」。
+- **本机快捷方式**（2026-10-19 加）：`ops/` 下有一组 Windows 垫片，双击或敲 `.\sync-notelab-b` 即可，
+  不必记上面那条长命令 —— `sync-notelab-java` / `sync-notelab-b` / `sync-notelab-c` / `sync-ai-lab` / `sync-all`。
+  开关原样透传（`--build` / `--no-build` / `--dry-run` / `-h`）；实现只有一份 `ops/sync-deploy.ps1`。
+  ⚠️ 用 `.cmd` 垫片调 `powershell -ExecutionPolicy Bypass` 是因为 Windows 默认禁止跑 `.ps1`
+  （`[CmdletBinding()]`/`[Parameter()]` 会让 `--dry-run` 这类透传参数报"未知参数"，所以实现里刻意没用）。
 - **`ops/sync-deploy.sh` 这个脚本本身就在本仓**（`E:\code\NoteLab\notelab-java\ops\sync-deploy.sh`），服务器执行的是仓内副本；改它要走「本地改 → push → 对 `notelab-java` 同步」自己这套流程。
 - 脚本只在**有变更**时构建；仅文档变更自动跳过（强制构建加 `--build`）；**构建失败不会重启服务**，老进程继续服务。
 - Maven 镜像已配在 `/root/.m2/settings.xml`，**不要改镜像**。

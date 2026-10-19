@@ -1004,3 +1004,34 @@ PRD 与笔记**同表同接口**，但 `doc_type` 是**归类**不是安全边�
 （`/api/notes` 对应 `notes` 模块），勾了 PRD 页就连带勾上笔记接口，反之亦然。
 这不是疏漏 —— B 端接口权限从来是模块级；真要按类型隔离数据，得先有按类型的接口授权，
 目前没有这个需求（见 `RouteGroups.PAGE_MODULES` 的注释）。
+
+## 2026-10-19 · 本机同步/发布快捷脚本（按下仓即触发服务器构建）
+
+### 背景
+「手改了某个仓、push 了，怎么让服务器重建对应服务」这件事每次都要现查长命令：
+
+```bash
+ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-b"
+```
+
+### 改动
+`ops/` 下新增一组本机入口（**实现只有一份**，其余是转发）：
+
+| 文件 | 作用 |
+|---|---|
+| `sync-notelab-java.cmd` / `sync-notelab-b.cmd` / `sync-notelab-c.cmd` / `sync-ai-lab.cmd` / `sync-all.cmd` | 敲 `.\sync-notelab-b` 即同步该仓；开关原样透传（`--build` / `--no-build` / `--dry-run` / `-h`） |
+| `sync-deploy.ps1` | 真正的实现：本地校验仓名 → `ssh -n myapp ...sync-deploy.sh <仓> [开关]` → 透传退出码 |
+
+**为什么 `.cmd` 垫 `ps1`**（两个都是踩出来的）：
+1. Windows 默认执行策略**禁止运行 `.ps1`**（实测 `PSSecurityException`），所以每个 `.cmd` 只是
+   `powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0sync-deploy.ps1" -Repo <仓> %*`。
+2. `ps1` 必须**带 BOM**：Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按 GBK 读，
+   中文注释里的字节被解析成引号 → 直接 `ParserError`（实测）。
+3. `ps1` **刻意不用 `[CmdletBinding()]` / `[Parameter()]`**：用了就成"高级脚本"，
+   `--dry-run` 会被当成未知参数名报错、到不了 `$args`（实测两次才对）。
+
+### 验收
+- 坏仓名 → 本地拒绝，不跑 ssh（`[x] 不认识的仓：notelab-xx`）。
+- `.\sync-notelab-java` → 「已是最新（ab07c4d），无需构建」；`.\sync-notelab-b` → 有变更 →
+  真构建 + 重启 + 探活 `HTTP 308`；`.\sync-notelab-c --dry-run` → 开关透传到服务器脚本。
+- 六个文件都在 `ops/` 下，而 `sync-deploy.sh` 把 `ops/*` 算作文档变更 → 提交它们**不会**触发无谓重建。
