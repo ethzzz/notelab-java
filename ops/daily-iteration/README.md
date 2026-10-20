@@ -57,8 +57,17 @@ python3 ops/daily-iteration/daily-check.py --deep   # 手动跑一次全量巡�
 ## 已知噪音（Qoder 研判时勿误判为真实故障）
 - `notelab-java` 关机期 `ClassNotFoundException` / `NoClassDefFoundError`（Spring Boot fat-jar shutdown hook，无害）。
 - `notelab-c` / `notelab-b` 的 `Server Reference ID did not match`（爬虫/扫描器乱 POST Server Action，外部噪音）。
+  **2026-10-21 起已从告警计数与样本中剔除**，报告里会写「已排除 Server Action 噪音 N 条」；第 7 节仍会列出它，但标注为噪音。
 - Swap 长期 ~1980MB（Kokoro TTS 历史驻留；物理内存充足即非紧急）。
 - 错误日志已改为**按较上次新增量**告警，只关注新增部分，历史累计不再重复报。
+
+## 报告第 7 节：错误聚合与 5xx 率（2026-10-21 新增）
+- **应用 ERROR 按 rid 聚合**：最近 24h 的 `ERROR` 行按 `[rid]` 分组，给出 TOP 5 rid + 样本；直接拿 rid 执行
+  `bash ops/logs.sh req <rid>` 就能串起 nginx 与应用日志。错误类型做了规范化（抹掉 id/数字）便于归并。
+- **其它进程错误**：Next/Python 的 `error.log` 没有时间戳，取各文件最近 2000 行按类型聚合（噪音已标注）。
+- **5xx 率**：读 `/var/log/nginx/notelab.json.log`，统计 24h 请求量、5xx 数与占比、5xx 路径 TOP；
+  占比 ≥1% 记 🟡，≥5% 记 🔴。日志不存在时显式跳过，不误报。
+- 依赖：nginx JSON 日志由 `ops/nginx-notelab.conf` 里的 `log_format notelab_json` 产出；没有它时本节只显示应用侧错误。
 
 ## 安全纪律
 - `setup-mybackup.sh` 不回显任何密码值；密码只写入 `/root/.my.cnf`(600)，不上命令行、不进 git。

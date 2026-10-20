@@ -91,7 +91,17 @@ bash ops/logs.sh err --since 10m
 | `ClassNotFoundException`（关机期） | fat jar 关闭钩子 | 无害 |
 | `Failed to load static file for page: /500` | App Router 缺 `pages/500.html` 的框架噪音 | 可选：补 `app/global-error.tsx` 或忽略 |
 
-## 6. 加日志的约定
+## 6. 每日巡检第 7 节
+
+`ops/daily-iteration/daily-check.py` 每天 7:30 跑，第 7 节就是这套日志体系的消费方：
+
+- 应用 ERROR 按 `rid` 聚合（TOP 5 + 样本），直接 `logs.sh req <rid>` 深挖；
+- Next/Python 的 error.log 按类型聚合（已标注爬虫噪音）；
+- nginx JSON 统计 24h 请求量 / 5xx 数 / 5xx 占比 / 5xx 路径 TOP（≥1% 黄、≥5% 红）。
+
+报告在 `/root/ops/reports/YYYY-MM-DD.md`。
+
+## 7. 加日志的约定
 
 - 用 `log.info("key={} key2={}", a, b)` 的 key=value 形式，**不要拼字符串**；
 - 需要跨行关联的字段放 MDC（目前只有 `reqId`），不要塞进 message；
