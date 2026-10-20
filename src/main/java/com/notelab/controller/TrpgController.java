@@ -107,7 +107,7 @@ public class TrpgController {
             TrpgService.finishTrpgGenTask(taskId, id);
         } catch (LlmException e) {
             TrpgService.failTrpgGenTask(taskId, e.messageFull());
-        } catch (java.net.http.HttpTimeoutException e) {
+        } catch (RuntimeException e) {
             TrpgService.failTrpgGenTask(taskId, "模型生成超时，请重试");
         } catch (IllegalArgumentException e) {
             TrpgService.failTrpgGenTask(taskId, "模型输出解析失败：" + e.getMessage());
