@@ -93,12 +93,28 @@ cmd_slow() {
 }
 
 cmd_5xx() {
+  local since="2h"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --since) since="${2:?}"; shift 2 ;;
+      *) die "未知参数：$1" ;;
+    esac
+  done
   [ -f "$NGINX_JSON" ] || die "找不到 $NGINX_JSON"
-  echo "== nginx 侧 5xx =="
-  grep -E '"status":5[0-9][0-9]' "$NGINX_JSON" | tail -n 50 || echo "（无）"
+  local cutoff; cutoff="$(since_cutoff "$since")"
+  echo "== nginx 侧 5xx（$since 内，cutoff=$cutoff）=="
+  gawk -v c="$cutoff" '
+    match($0, /"ts":"([^"]+)"/, a) {
+      if (substr(a[1], 1, 19) < c) next
+      match($0, /"status":([0-9]+)/, s)
+      if (s[1] + 0 >= 500) print
+    }
+  ' "$NGINX_JSON" || echo "（无）"
   echo
-  echo "== 应用侧 ERROR（最近 50 条）=="
-  grep -h ' ERROR ' "$PM2_LOGS"/*.log 2>/dev/null | tail -n 50 || echo "（无）"
+  echo "== 应用侧 ERROR（$since 内，最近 50 条）=="
+  grep -h ' ERROR ' "$PM2_LOGS"/*.log 2>/dev/null \
+    | awk -v c="$cutoff" 'substr($0,1,19) >= c' \
+    | tail -n 50 || echo "（无）"
 }
 
 cmd_stats() {
@@ -150,7 +166,7 @@ case "${1:-help}" in
   req) shift; cmd_req "$@" ;;
   err) shift; cmd_err "$@" ;;
   slow) shift; cmd_slow "$@" ;;
-  5xx) shift; cmd_5xx ;;
+  5xx) shift; cmd_5xx "$@" ;;
   stats) shift; cmd_stats "$@" ;;
   tail) shift; cmd_tail "$@" ;;
   list) cmd_list ;;
