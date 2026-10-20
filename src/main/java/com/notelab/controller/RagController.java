@@ -109,7 +109,7 @@ public class RagController {
             body.put("answer", answer);
             body.put("citations", citations);
             return ResponseEntity.ok(body);
-        } catch (HttpTimeoutException e) {
+        } catch (RuntimeException e) {
             return ResponseEntity.status(504).body(Map.of("error", "模型响应超时（90s）"));
         } catch (LlmException e) {
             return ResponseEntity.status(502).body(Map.of("error", e.messageFull()));

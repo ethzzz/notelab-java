@@ -64,7 +64,7 @@ public class ToolboxController {
             body.put("name", action.get("name"));
             body.put("result", result);
             return ResponseEntity.ok(body);
-        } catch (HttpTimeoutException e) {
+        } catch (RuntimeException e) {
             return ResponseEntity.status(504).body(Map.of("error", "模型响应超时（90s）"));
         } catch (LlmException e) {
             return ResponseEntity.status(502).body(Map.of("error", e.messageFull()));

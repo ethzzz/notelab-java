@@ -74,7 +74,7 @@ public class ChatController {
                 sendSafe(out, Map.of("done", true));
                 return;
             }
-        } catch (HttpTimeoutException e) {
+        } catch (RuntimeException e) {
             sendSafe(out, Map.of("error", "模型响应超时"));
         } catch (Exception e) {
             sendSafe(out, Map.of("error", "请求模型出错：" + unwrap(e)));
