@@ -31,15 +31,28 @@ import java.util.Map;
  */
 public final class LlmGateway {
 
-    /** 配置类问题（别名不存在、模型未登记、平台没 key、协议没实现）：消息直接展示给用户 */
-    public static final class ConfigException extends RuntimeException {
+    /**
+     * 配置类问题（别名不存在、模型未登记、平台没 key、协议没实现）。
+     *
+     * <p>**继承 {@link LlmException}**（状态码 400）而不是裸 RuntimeException：各控制器都先
+     * {@code catch (LlmException)} 给 502 + 可读文案，配置错误若走 RuntimeException 分支，
+     * 会被误报成"响应超时（504）"。
+     */
+    public static final class ConfigException extends LlmException {
         public ConfigException(String msg) {
-            super(msg);
+            super(400, msg);
         }
 
         @Override
         public String toString() {
             return getMessage() == null ? "" : getMessage();
+        }
+
+        /** 配置类错误没有上游响应体，用自身消息当 body，这样 messageFull() 也能给出原因 */
+        @Override
+        public String messageFull() {
+            String m = getMessage() == null ? "" : getMessage();
+            return body.isEmpty() ? m : body;
         }
     }
 
