@@ -105,7 +105,8 @@ public class PracticeController {
             module("java", "Java"),
             module("python", "Python"),
             module("ruoyi", "RuoYi"),
-            module("higress", "Higress"));
+            module("higress", "Higress"),
+            module("docker", "Docker"));
 
     /** 博客 solutions schema 的 difficulty 枚举：**只能是这三个中文词**，写别的值会让博客构建报 schema 错 */
     static final List<String> DIFFICULTIES = List.of("简单", "中等", "困难");
