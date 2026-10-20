@@ -5,7 +5,7 @@
 # 而排查真正需要的能力只有三件——按 rid 串链路、按状态码/耗时筛、按时间窗看错误。
 #
 # 日志位置：
-#   - 应用：/root/.pm2/logs/<服务>-{out,error}.log（由 pm2-logrotate 轮转，10M × 30 份）
+#   - 应用：/root/.pm2/logs/<服务>-{out,error}.log（由 pm2-logrotate 轮转，50M × 14 份、压缩）
 #   - 访问：/var/log/nginx/notelab.json.log（JSON，含 rid/status/rt/ut）
 #
 # 用法：
@@ -171,7 +171,8 @@ case "${1:-help}" in
   tail) shift; cmd_tail "$@" ;;
   list) cmd_list ;;
   help|--help|-h)
-    sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+    # 只打印文件头部的注释块，遇到第一行代码就停
+    awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 && !/^#/ { exit }' "$0"
     ;;
   *) die "未知命令：$1（logs.sh help）" ;;
 esac
