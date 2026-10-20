@@ -647,7 +647,7 @@ final class DbSchema {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INT NOT NULL,
                 title VARCHAR(200) NOT NULL DEFAULT '新对话',
-                model VARCHAR(100) NOT NULL DEFAULT 'qwen3.8-max',
+                model VARCHAR(100) NOT NULL DEFAULT 'deepseek-chat',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 INDEX idx_user (user_id),
