@@ -93,6 +93,9 @@ public final class MenuTree {
                     menu("learn-java", "Java 路线", "☕", "/study/java", true),
                     menu("learn-go", "Go 路线", "🐹", "/study/go", true),
                     menu("learn-react", "React 路线", "⚛️", "/study/react", true),
+                    // Next.js 路线（2026-10-20）：面向高级/资深前端，内容在 notelab-b/src/content/study/nextjs.md。
+                    // ⚠️ 同样必须同步登记 PageRoutes。
+                    menu("learn-nextjs", "Next.js 路线", "▲", "/study/nextjs", true),
                     // 实践项目库（2026-10-19）：按企业业务方向组织的项目文档，内容在
                     // notelab-b/src/content/study/projects/<route>/*.md —— 加项目只加文件，不改路由。
                     // ⚠️ 路由必须同步登记 PageRoutes，否则叶子被 RBAC 过滤 → 谁都看不到。

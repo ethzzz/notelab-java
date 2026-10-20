@@ -79,6 +79,7 @@ public final class PageRoutes {
             new String[]{"/study/java", "编程学习·Java 路线"},
             new String[]{"/study/go", "编程学习·Go 路线"},
             new String[]{"/study/react", "编程学习·React 路线"},
+            new String[]{"/study/nextjs", "编程学习·Next.js 路线"},
             // 实践项目库（2026-10-19）：列表页固定在 /study/projects，详情走 ?p=<route>/<slug>。
             // 用查询参数而不是 /study/projects/xxx，理由同上面几条：守卫是精确匹配。
             new String[]{"/study/projects", "编程学习·实践项目"},
