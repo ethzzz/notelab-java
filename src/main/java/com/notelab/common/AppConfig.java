@@ -101,13 +101,31 @@ public final class AppConfig {
         return get("QWEN_MODEL", "qwen-plus");
     }
 
+    /**
+     * 首选 key —— **单值场景**（拉模型列表 {@code QwenClient.fetchModels}、健康探活）用它。
+     *
+     * <p>⚠️ 必须与 {@link #qwenApiKeys()} **同一口径**：优先 {@code QWEN_API_KEYS} 的第一把，
+     * 只有它为空时才退到 {@code QWEN_API_KEY}。
+     *
+     * <p>2026-10-20 踩过的坑：这里原来只读 {@code QWEN_API_KEY}。而 {@code QWEN_API_KEY} 还留在
+     * <b>/etc/environment</b>（历史遗留的阿里云死 key），进程环境变量优先级高于 `.env` ——
+     * 于是「对话」用 `.env` 里的新 key 正常、`/api/models` 却拿死 key 报 401，
+     * 表现为「模型能用但模型列表永远是空的」。
+     */
     public static String qwenKey() {
+        for (String k : get("QWEN_API_KEYS", "").split(",")) {
+            String t = k.trim();
+            if (!t.isEmpty()) return t;
+        }
         return get("QWEN_API_KEY", "").trim();
     }
 
     /**
      * 候选 key 列表（QwenKeys 轮换用）：QWEN_API_KEYS 逗号分隔；未配置时退化为单把 QWEN_API_KEY。
      * 建议写在 /root/Notelab/notelab-java/.env（仅 Java 生效，不影响 Python 版共用的 QWEN_API_KEY）。
+     *
+     * <p>⚠️ 这里**直接读** QWEN_API_KEY 而不是调 {@link #qwenKey()}：后者会先看 QWEN_API_KEYS，
+     * 两个方法互相调用就成环了（而且会让"退化"分支永远不成立）。
      */
     public static java.util.List<String> qwenApiKeys() {
         java.util.List<String> keys = new java.util.ArrayList<>();
@@ -115,7 +133,10 @@ public final class AppConfig {
             String t = k.trim();
             if (!t.isEmpty()) keys.add(t);
         }
-        if (keys.isEmpty() && !qwenKey().isEmpty()) keys.add(qwenKey());
+        if (keys.isEmpty()) {
+            String single = get("QWEN_API_KEY", "").trim();
+            if (!single.isEmpty()) keys.add(single);
+        }
         return keys;
     }
 
