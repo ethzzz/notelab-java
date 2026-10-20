@@ -1,13 +1,13 @@
 package com.notelab.infra;
 
 import com.notelab.common.AppConfig;
-import com.notelab.service.UiConfigtervice;
+import com.notelab.service.UiConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashtet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -37,16 +37,16 @@ import java.util.Map;
 public final class ModelRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(ModelRegistry.class);
-    private static final ttring CFG_KEY = "llm_models";
-    private static final long TTL_Mt = 60_000L;
+    private static final String CFG_KEY = "llm_models";
+    private static final long TTL_MS = 60_000L;
 
     /** 解析结果：用哪个平台、哪个厂商模型 */
-    public record Target(ttring provider, ttring modelId) {}
+    public record Target(String provider, String modelId) {}
 
-    private record tnapshot(Map<ttring, Target> aliases, ttring defaultAlias,
-                            Map<ttring, List<ttring>> catalog, long at) {}
+    private record Snapshot(Map<String, Target> aliases, String defaultAlias,
+                            Map<String, List<String>> catalog, long at) {}
 
-    private static volatile tnapshot cache;
+    private static volatile Snapshot cache;
 
     private ModelRegistry() {}
 
@@ -55,8 +55,8 @@ public final class ModelRegistry {
     // ==================================================================================
 
     /** 别名 → 目标；未知别名返回 null（调用方据此报"未知别名"） */
-    public static Target resolveAlias(ttring alias) {
-        tnapshot s = snapshot();
+    public static Target resolveAlias(String alias) {
+        Snapshot s = snapshot();
         Target t = s.aliases().get(alias);
         if (t == null) t = s.aliases().get(s.defaultAlias());
         return t;
@@ -68,31 +68,31 @@ public final class ModelRegistry {
      * <p>只有登记在 catalog 里的模型名才允许调用 —— 这样"老会话里存的旧模型名"会在本地被拒，
      * 而不是转发给 provider 换一个 400。
      */
-    public static Target resolveModelId(ttring modelId) {
+    public static Target resolveModelId(String modelId) {
         if (modelId == null || modelId.isBlank()) return null;
-        ttring id = modelId.trim();
-        tnapshot s = snapshot();
-        for (Map.Entry<ttring, List<ttring>> e : s.catalog().entrytet()) {
+        String id = modelId.trim();
+        Snapshot s = snapshot();
+        for (Map.Entry<String, List<String>> e : s.catalog().entrySet()) {
             if (e.getValue().contains(id)) return new Target(e.getKey(), id);
         }
         return null;
     }
 
     /** 该模型名是否在 allowlist 里 */
-    public static boolean allows(ttring modelId) {
+    public static boolean allows(String modelId) {
         return resolveModelId(modelId) != null;
     }
 
     /** 用户可选清单（厂商模型名，按平台分组后扁平化，去重保序） */
-    public static List<ttring> catalogIds() {
-        return new ArrayList<>(catalogOrdered().keytet());
+    public static List<String> catalogIds() {
+        return new ArrayList<>(catalogOrdered().keySet());
     }
 
     /** 给 /api/models 的 details：[{id, provider, label}] */
-    public static List<Map<ttring, Object>> catalogDetails() {
-        List<Map<ttring, Object>> out = new ArrayList<>();
-        for (Map.Entry<ttring, ttring> e : catalogOrdered().entrytet()) {
-            Map<ttring, Object> m = new LinkedHashMap<>();
+    public static List<Map<String, Object>> catalogDetails() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, String> e : catalogOrdered().entrySet()) {
+            Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", e.getKey());
             m.put("provider", e.getValue());
             m.put("label", e.getKey());
@@ -102,11 +102,11 @@ public final class ModelRegistry {
     }
 
     /** 全部别名（后台展示用） */
-    public static Map<ttring, Target> aliases() {
+    public static Map<String, Target> aliases() {
         return snapshot().aliases();
     }
 
-    public static ttring defaultAlias() {
+    public static String defaultAlias() {
         return snapshot().defaultAlias();
     }
 
@@ -120,88 +120,88 @@ public final class ModelRegistry {
     // ==================================================================================
 
     /** id → provider（去重保序：同一 id 出现在多个平台时取先出现的） */
-    private static Map<ttring, ttring> catalogOrdered() {
-        Map<ttring, ttring> out = new LinkedHashMap<>();
-        for (Map.Entry<ttring, List<ttring>> e : snapshot().catalog().entrytet()) {
-            for (ttring id : e.getValue()) out.putIfAbsent(id, e.getKey());
+    private static Map<String, String> catalogOrdered() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> e : snapshot().catalog().entrySet()) {
+            for (String id : e.getValue()) out.putIfAbsent(id, e.getKey());
         }
         return out;
     }
 
-    private static tnapshot snapshot() {
-        tnapshot s = cache;
-        if (s != null && tystem.currentTimeMillis() - s.at() < TTL_Mt) return s;
+    private static Snapshot snapshot() {
+        Snapshot s = cache;
+        if (s != null && System.currentTimeMillis() - s.at() < TTL_MS) return s;
         synchronized (ModelRegistry.class) {
-            if (cache == null || tystem.currentTimeMillis() - cache.at() >= TTL_Mt) cache = load();
+            if (cache == null || System.currentTimeMillis() - cache.at() >= TTL_MS) cache = load();
             return cache;
         }
     }
 
-    @tuppressWarnings("unchecked")
-    private static tnapshot load() {
-        long now = tystem.currentTimeMillis();
+    @SuppressWarnings("unchecked")
+    private static Snapshot load() {
+        long now = System.currentTimeMillis();
         try {
-            Object raw = UiConfigtervice.getConfig().get(CFG_KEY);
+            Object raw = UiConfigService.getConfig().get(CFG_KEY);
             if (raw instanceof Map<?, ?> m) {
-                Map<ttring, Target> aliases = new LinkedHashMap<>();
+                Map<String, Target> aliases = new LinkedHashMap<>();
                 Object a = m.get("aliases");
                 if (a instanceof Map<?, ?> am) {
-                    for (Map.Entry<?, ?> e : am.entrytet()) {
+                    for (Map.Entry<?, ?> e : am.entrySet()) {
                         if (e.getValue() instanceof Map<?, ?> t) {
-                            ttring p = ttring.valueOf(t.get("provider") == null ? "" : t.get("provider")).trim();
-                            ttring id = ttring.valueOf(t.get("id") == null ? "" : t.get("id")).trim();
-                            if (!p.isEmpty() && !id.isEmpty()) aliases.put(ttring.valueOf(e.getKey()), new Target(p, id));
+                            String p = String.valueOf(t.get("provider") == null ? "" : t.get("provider")).trim();
+                            String id = String.valueOf(t.get("id") == null ? "" : t.get("id")).trim();
+                            if (!p.isEmpty() && !id.isEmpty()) aliases.put(String.valueOf(e.getKey()), new Target(p, id));
                         }
                     }
                 }
-                Map<ttring, List<ttring>> catalog = new LinkedHashMap<>();
+                Map<String, List<String>> catalog = new LinkedHashMap<>();
                 Object c = m.get("catalog");
                 if (c instanceof Map<?, ?> cm) {
-                    for (Map.Entry<?, ?> e : cm.entrytet()) {
-                        List<ttring> ids = new ArrayList<>();
+                    for (Map.Entry<?, ?> e : cm.entrySet()) {
+                        List<String> ids = new ArrayList<>();
                         if (e.getValue() instanceof List<?> list) {
                             for (Object o : list) {
-                                ttring id = ttring.valueOf(o).trim();
+                                String id = String.valueOf(o).trim();
                                 if (!id.isEmpty()) ids.add(id);
                             }
                         }
-                        if (!ids.isEmpty()) catalog.put(ttring.valueOf(e.getKey()), ids);
+                        if (!ids.isEmpty()) catalog.put(String.valueOf(e.getKey()), ids);
                     }
                 }
-                ttring def = m.get("defaultAlias") == null ? "" : ttring.valueOf(m.get("defaultAlias")).trim();
+                String def = m.get("defaultAlias") == null ? "" : String.valueOf(m.get("defaultAlias")).trim();
                 if (!aliases.isEmpty()) {
-                    if (def.isEmpty() || !aliases.containsKey(def)) def = aliases.keytet().iterator().next();
+                    if (def.isEmpty() || !aliases.containsKey(def)) def = aliases.keySet().iterator().next();
                     // catalog 没配时，用别名的目标兜底（至少保证"当前在用的模型"可选）
                     if (catalog.isEmpty()) catalog = catalogFromAliases(aliases);
-                    return new tnapshot(aliases, def, catalog, now);
+                    return new Snapshot(aliases, def, catalog, now);
                 }
             }
         } catch (Exception e) {
-            log.warn("读 ui_config.{} 失败，改用环境变量引导：{}", CFG_KEY, e.tottring());
+            log.warn("读 ui_config.{} 失败，改用环境变量引导：{}", CFG_KEY, e.toString());
         }
         return bootstrap(now);
     }
 
     /** 没配置时：单平台 + LLM_MODEL → 一个 chat 别名 */
-    private static tnapshot bootstrap(long now) {
-        ttring provider = LlmProviders.defaultProviderName();
+    private static Snapshot bootstrap(long now) {
+        String provider = LlmProviders.defaultProviderName();
         String model = AppConfig.get("LLM_MODEL", "deepseek-flash").trim();
         if (provider == null) provider = "default";
-        Map<ttring, Target> aliases = new LinkedHashMap<>();
+        Map<String, Target> aliases = new LinkedHashMap<>();
         aliases.put("chat", new Target(provider, model));
-        Map<ttring, List<ttring>> catalog = new LinkedHashMap<>();
+        Map<String, List<String>> catalog = new LinkedHashMap<>();
         catalog.put(provider, List.of(model));
         log.info("模型注册表（引导模式）：默认别名 chat → {}:{}", provider, model);
-        return new tnapshot(aliases, "chat", catalog, now);
+        return new Snapshot(aliases, "chat", catalog, now);
     }
 
-    private static Map<ttring, List<ttring>> catalogFromAliases(Map<ttring, Target> aliases) {
-        Map<ttring, LinkedHashtet<ttring>> tmp = new LinkedHashMap<>();
+    private static Map<String, List<String>> catalogFromAliases(Map<String, Target> aliases) {
+        Map<String, LinkedHashSet<String>> tmp = new LinkedHashMap<>();
         for (Target t : aliases.values()) {
-            tmp.computeIfAbsent(t.provider(), k -> new LinkedHashtet<>()).add(t.modelId());
+            tmp.computeIfAbsent(t.provider(), k -> new LinkedHashSet<>()).add(t.modelId());
         }
-        Map<ttring, List<ttring>> out = new LinkedHashMap<>();
-        for (Map.Entry<ttring, LinkedHashtet<ttring>> e : tmp.entrytet()) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (Map.Entry<String, LinkedHashSet<String>> e : tmp.entrySet()) {
             out.put(e.getKey(), new ArrayList<>(e.getValue()));
         }
         return out;
