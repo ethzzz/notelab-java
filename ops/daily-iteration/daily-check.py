@@ -167,6 +167,16 @@ def check_logs():
             n = int(n)
         except Exception:
             n = 0
+        # Next 的两个前端进程会把「爬虫乱发 Server Action」记成 Error，
+        # 量很大且不是业务故障 —— 计入 delta 会让每天的告警都变黄，故单独剔除并如实标注。
+        noise = 0
+        if label.startswith(("notelab-b", "notelab-c")):
+            _, nz, _ = sh(f"grep -c 'Server Reference ID' '{f}'")
+            try:
+                noise = int(nz)
+            except Exception:
+                noise = 0
+            n = max(0, n - noise)
         _, size, _ = sh(f"du -h '{f}' | cut -f1")
         prev = state.get(label)
         newstate[label] = n
@@ -177,10 +187,14 @@ def check_logs():
         if delta < 0:      # 日志被轮转/截断，视为全量新增
             delta = n
         flag = "🟡" if delta > 0 else "🟢"
-        out(f"- {flag} `{label}`（{size}）：新增 **{delta}** 条（累计 {n}）")
+        out(f"- {flag} `{label}`（{size}）：新增 **{delta}** 条（累计 {n}）"
+            + (f"，已排除 Server Action 噪音 {noise} 条" if noise else ""))
         if delta > 0:
             total_new += delta
-            _, sample, _ = sh(f"tail -n 200 '{f}' | grep {gp} '{pat}' | tail -n 3")
+            sample_cmd = f"tail -n 200 '{f}' | grep {gp} '{pat}'"
+            if label.startswith(("notelab-b", "notelab-c")):
+                sample_cmd += " | grep -v 'Server Reference ID'"
+            _, sample, _ = sh(sample_cmd + " | tail -n 3")
             if sample:
                 out("  ```")
                 for ln in sample.splitlines()[-3:]:
