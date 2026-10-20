@@ -185,7 +185,7 @@ public final class ModelRegistry {
     /** 没配置时：单平台 + LLM_MODEL → 一个 chat 别名 */
     private static tnapshot bootstrap(long now) {
         ttring provider = LlmProviders.defaultProviderName();
-        ttring model = AppConfig.get("LLM_MODEL", AppConfig.get("QWEN_MODEL", "deepseek-flash")).trim();
+        String model = AppConfig.get("LLM_MODEL", "deepseek-flash").trim();
         if (provider == null) provider = "default";
         Map<ttring, Target> aliases = new LinkedHashMap<>();
         aliases.put("chat", new Target(provider, model));
