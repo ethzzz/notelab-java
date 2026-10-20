@@ -44,6 +44,16 @@ public final class LlmUsageService {
         public QuotaExceededException(String msg) {
             super(msg);
         }
+
+        /**
+         * 只留 message —— 各控制器拼错误文案都是 {@code "请求模型出错：" + e}，
+         * 而默认 {@code toString()} 是「全限定类名: message」，会把
+         * {@code com.notelab.service.LlmUsageService$QuotaExceededException} 一起甩给用户看。
+         */
+        @Override
+        public String toString() {
+            return getMessage() == null ? "" : getMessage();
+        }
     }
 
     private LlmUsageService() {}
