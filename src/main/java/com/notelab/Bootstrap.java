@@ -46,7 +46,7 @@ public class Bootstrap implements CommandLineRunner {
         RagService.init();
         log.info("NoteLab-Java 启动完成：port=8001, mysql={}:{}/{}, user={}, base_url={}, model={}, key={}, secret_key={}, data_dir={}, perm_routes={}",
                 AppConfig.mysqlHost(), AppConfig.mysqlPort(), AppConfig.mysqlDb(), AppConfig.mysqlUser(),
-                AppConfig.qwenBaseUrl(), LlmGateway.defaultModelId(),
+                LlmProviders.defaultProviderName(), LlmGateway.defaultModelId(),
                 LlmGateway.keyCount() + " 把",
                 AppConfig.secretKey().equals("dev-secret-change-me") ? "(默认值)" : "(已配置)",
                 AppConfig.dataDir(), PermDao.listRoutes().size());
