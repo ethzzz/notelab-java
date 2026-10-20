@@ -1154,3 +1154,12 @@ key#1 401 \Invalid API-key\、key#2 403 \AccessDenied.Unpurchased\（密钥有�
 4. **translate 未纳入自动回归**：`/api/translate/*` 是 C 端会话（`CAuthUtil`），要 `account.json` 登录 C 端才能测；
    它和判分共用 `LlmGateway.chat("chat")` 同一条路径，但这是"论证"而不是"实测"。
 5. 平台的 baseUrl/protocol/key **仍只在环境变量**：后台只读展示。要"后台配 key"得先做加密存储 + 只写不读 + 审计（架构文档 §7），未做。
+### 回归补充（同日）
+- **translate 已实测**：用 `notelab-c/account.json` 登录 C 端（字段是 `username` 不是 `account`），
+  提交一条译文 → `{"mode":"llm","score":93,"accurate":true,"corrected":"Let's talk about the price.","model":"deepseek-flash"}`。
+  **`mode: llm` 是关键**：说明判分走的是大模型，不是本地降级。已固化进 `.sync/verify-llm-regression.js`（现 17 条）。
+- **rag 已实测（间接）**：`/api/rag/ask` 在有文档时 `citations` 非空 → 命中检索 → 真的调了模型；
+  无文档时会**本地短路**（返回"参考资料中没有提到"，不调模型 —— 所以之前的空库测试不算数）。
+  我没有为了测而上传测试文档：`uploads` 是文件目录，传了就得手动删，不值得。
+- 最终回归：**17/17 全绿**（health/models/账本 + 竞技场 + 博客 AI + extract/toolbox/trpg/english 路由与守卫 +
+  allowlist 本地拒绝 + C 端 translate 判分）。
