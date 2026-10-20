@@ -70,19 +70,43 @@ public final class LlmGateway {
     // ==================================================================================
 
     public static String stream(String alias, List<Map<String, String>> messages, LlmTransport.Handler handler) {
-        return stream(alias, messages, false, handler);
+        return stream(alias, messages, 180, false, handler);
     }
 
     public static String stream(String alias, List<Map<String, String>> messages, boolean disableThinking,
                                 LlmTransport.Handler handler) {
+        return stream(alias, messages, 180, disableThinking, handler);
+    }
+
+    public static String stream(String alias, List<Map<String, String>> messages, int timeoutSec,
+                                LlmTransport.Handler handler) {
+        return stream(alias, messages, timeoutSec, false, handler);
+    }
+
+    public static String stream(String alias, List<Map<String, String>> messages, int timeoutSec,
+                                boolean disableThinking, LlmTransport.Handler handler) {
         ModelRegistry.Target t = resolveAliasOrThrow(alias);
-        return streamTarget(t, messages, disableThinking, handler);
+        return streamTarget(t, messages, timeoutSec, disableThinking, handler);
+    }
+
+    public static String streamModel(String modelId, List<Map<String, String>> messages, LlmTransport.Handler handler) {
+        return streamModel(modelId, messages, 180, false, handler);
     }
 
     public static String streamModel(String modelId, List<Map<String, String>> messages, boolean disableThinking,
                                      LlmTransport.Handler handler) {
+        return streamModel(modelId, messages, 180, disableThinking, handler);
+    }
+
+    public static String streamModel(String modelId, List<Map<String, String>> messages, int timeoutSec,
+                                     LlmTransport.Handler handler) {
+        return streamModel(modelId, messages, timeoutSec, false, handler);
+    }
+
+    public static String streamModel(String modelId, List<Map<String, String>> messages, int timeoutSec,
+                                     boolean disableThinking, LlmTransport.Handler handler) {
         ModelRegistry.Target t = resolveModelOrThrow(modelId);
-        return streamTarget(t, messages, disableThinking, handler);
+        return streamTarget(t, messages, timeoutSec, disableThinking, handler);
     }
 
     // ==================================================================================
@@ -103,6 +127,28 @@ public final class LlmGateway {
     public static String defaultModelId() {
         ModelRegistry.Target t = ModelRegistry.resolveAlias(ModelRegistry.defaultAlias());
         return t == null ? "" : t.modelId();
+    }
+
+    /**
+     * 是否"能用"：默认别名能解析到平台、该平台启用且有 key。
+     *
+     * <p>替代调用点里那些 {@code AppConfig.llmKey().isEmpty()} 判断 —— 调用方只该问"能不能用"，
+     * 不该知道 key 存在哪、有几把。
+     */
+    public static boolean available() {
+        ModelRegistry.Target t = ModelRegistry.resolveAlias(ModelRegistry.defaultAlias());
+        if (t == null) return false;
+        LlmProviders.Provider p = LlmProviders.get(t.provider());
+        return p != null && p.enabled() && p.hasKey();
+    }
+
+    /** 配置了 key 且启用的平台数量（只给数字，不含 key 内容） */
+    public static int providerCount() {
+        int n = 0;
+        for (LlmProviders.Provider p : LlmProviders.all().values()) {
+            if (p.enabled() && p.hasKey()) n++;
+        }
+        return n;
     }
 
     // ==================================================================================
@@ -141,11 +187,11 @@ public final class LlmGateway {
     }
 
     private static String streamTarget(ModelRegistry.Target t, List<Map<String, String>> messages,
-                                       boolean disableThinking, LlmTransport.Handler handler) {
+                                       int timeoutSec, boolean disableThinking, LlmTransport.Handler handler) {
         LlmUsageService.assertWithinDaily();
         LlmTransport transport = transportFor(t.provider());
         try {
-            return transport.stream(t.provider(), t.modelId(), messages, 180, disableThinking, handler);
+            return transport.stream(t.provider(), t.modelId(), messages, timeoutSec, disableThinking, handler);
         } catch (LlmException e) {
             throw e;
         } catch (RuntimeException e) {

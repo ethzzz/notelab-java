@@ -1,5 +1,9 @@
 package com.notelab.controller;
 
+import com.notelab.infra.LlmException;
+
+import com.notelab.service.LlmGateway;
+
 import com.notelab.common.AppConfig;
 import com.notelab.infra.QwenClient;
 import com.notelab.common.SseUtil;
@@ -36,7 +40,6 @@ public class ArenaController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { ChatController.jsonError(response, 401, "请先登录"); return; }
-        String key = AppConfig.qwenKey();
         if (key.isEmpty()) { ChatController.jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
         String message = req.message == null ? "" : req.message.trim();
         if (message.isEmpty()) { ChatController.jsonError(response, 400, "消息不能为空"); return; }
@@ -62,7 +65,7 @@ public class ArenaController {
             final String m = model;
             pool.submit(() -> {
                 try {
-                    queue.put(callOne(m, key, message));
+                    queue.put(callOne(m, message));
                 } catch (InterruptedException ignored) {
                 }
             });
@@ -89,10 +92,10 @@ public class ArenaController {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("model", model);
         try {
-            String content = QwenClient.complete(model,
-                    List.of(Map.of("role", "user", "content", message)), key, 120);
+            String content = LlmGateway.chatModel(model,
+                    List.of(Map.of("role", "user", "content", message)), 120);
             r.put("content", content);
-        } catch (QwenClient.ModelHttpException e) {
+        } catch (LlmException e) {
             r.put("error", e.messageShort());
         } catch (HttpTimeoutException e) {
             r.put("error", String.valueOf(e.getMessage()));

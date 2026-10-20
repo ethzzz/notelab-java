@@ -1,5 +1,9 @@
 package com.notelab.controller;
 
+import com.notelab.infra.LlmException;
+
+import com.notelab.service.LlmGateway;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
@@ -30,7 +34,6 @@ public class ExtractController {
     public ResponseEntity<Map<String, Object>> extract(@RequestBody ExtractReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        String key = AppConfig.qwenKey();
         if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
         String text = req.text == null ? "" : req.text.trim();
         String fields = req.fields == null ? "" : req.fields.trim();
@@ -45,7 +48,7 @@ public class ExtractController {
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", userPrompt));
         try {
-            String raw = QwenClient.complete(AppConfig.qwenModel(), messages, key, 90);
+            String raw = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
             String s = raw.trim();
             int i = s.indexOf('{');
             int j = s.lastIndexOf('}');
@@ -63,7 +66,7 @@ public class ExtractController {
             return ResponseEntity.ok(body);
         } catch (HttpTimeoutException e) {
             return ResponseEntity.status(504).body(Map.of("error", "模型响应超时（90s）"));
-        } catch (QwenClient.ModelHttpException e) {
+        } catch (LlmException e) {
             return ResponseEntity.status(502).body(Map.of("error", e.messageFull()));
         } catch (Exception e) {
             return ResponseEntity.status(502).body(Map.of("error", "请求模型出错：" + e));

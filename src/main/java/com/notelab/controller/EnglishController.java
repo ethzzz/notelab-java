@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.notelab.service.LlmGateway;
+
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.common.JsonUtil;
@@ -92,7 +94,7 @@ public class EnglishController {
                                                       HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        if (AppConfig.qwenKey().isEmpty()) {
+        if (!LlmGateway.available()) {
             return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
         }
         String scenario = (req != null && req.scenario != null && SCENARIO_MAP.containsKey(req.scenario))
@@ -163,7 +165,6 @@ public class EnglishController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { ChatController.jsonError(response, 401, "请先登录"); return; }
-        String key = AppConfig.qwenKey();
         if (key.isEmpty()) { ChatController.jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
         if (req.conversation_id == null) { ChatController.jsonError(response, 422, "conversation_id 必填"); return; }
         Map<String, Object> conv = EnglishDao.enGetConversation(req.conversation_id, AuthUtil.userId(user));
@@ -197,10 +198,9 @@ public class EnglishController {
         EnStreamParser parser = new EnStreamParser(out, message);
         boolean ok = false;
         try {
-            String upstreamErr = QwenClient.streamChat(AppConfig.qwenModel(),
+            String upstreamErr = LlmGateway.streamModel(AppConfig.qwenModel(),
                     List.of(Map.of("role", "system", "content", sysPrompt),
-                            Map.of("role", "user", "content", userPrompt)),
-                    key, 90, parser::onDelta);
+                            Map.of("role", "user", "content", userPrompt)), 90, parser::onDelta);
             if (upstreamErr != null) {
                 parser.sendError(upstreamErr);
             } else {
@@ -412,7 +412,7 @@ public class EnglishController {
 
     /** _en_generate：非流式调用（90s 超时），错误语义与 Python 一致 */
     private static String enGenerate(List<Map<String, String>> messages) throws Exception {
-        return QwenClient.complete(AppConfig.qwenModel(), messages, AppConfig.qwenKey(), 90);
+        return LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
     }
 
     /** _en_conv_row */

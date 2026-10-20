@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.notelab.service.LlmGateway;
+
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.common.JsonUtil;
@@ -35,7 +37,6 @@ public class ChatController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { jsonError(response, 401, "请先登录"); return; }
-        String key = AppConfig.qwenKey();
         if (key.isEmpty()) { jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
         if (req.conversation_id == null) { jsonError(response, 422, "conversation_id 必填"); return; }
         Map<String, Object> conv = ConversationDao.getConversation(req.conversation_id, AuthUtil.userId(user));
@@ -60,7 +61,7 @@ public class ChatController {
         OutputStream out = response.getOutputStream();
         StringBuilder full = new StringBuilder();
         try {
-            String upstreamErr = QwenClient.streamChat(model, history, key, 120, delta -> {
+            String upstreamErr = LlmGateway.streamModel(model, history, 120, delta -> {
                 full.append(delta);
                 try {
                     SseUtil.send(out, Map.of("delta", delta));

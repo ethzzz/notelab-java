@@ -1,5 +1,9 @@
 package com.notelab.controller;
 
+import com.notelab.infra.LlmException;
+
+import com.notelab.service.LlmGateway;
+
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.ClientIp;
@@ -59,7 +63,6 @@ public class TrpgController {
     public ResponseEntity<?> generate(@RequestBody(required = false) ScenarioReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        String key = AppConfig.qwenKey();
         if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
         if (req == null || (isBlank(req.background) && isBlank(req.event) && isBlank(req.characters))) {
             return ResponseEntity.status(422).body(Map.of("error", "请至少填写背景、人物或核心事件之一"));
@@ -90,8 +93,7 @@ public class TrpgController {
         try {
             StringBuilder full = new StringBuilder();
             // 流式调用：token 持续到达避免上游空闲超时；关闭思考链提速；总超时 300s
-            String upstreamErr = QwenClient.streamChat(AppConfig.qwenModel(), TrpgService.buildGenMessages(cfg),
-                    key, 300, true, full::append);
+            String upstreamErr = LlmGateway.streamModel(AppConfig.qwenModel(), TrpgService.buildGenMessages(cfg), 300, true, full::append);
             if (upstreamErr != null) {
                 TrpgService.failTrpgGenTask(taskId, upstreamErr);
                 return;
@@ -103,7 +105,7 @@ public class TrpgController {
             long id = TrpgService.createTrpgScenario(userId, title, String.valueOf(cfg.getOrDefault("style", "")),
                     sc.path("intro").asText(""), JsonUtil.write(cfg), JsonUtil.write(sc));
             TrpgService.finishTrpgGenTask(taskId, id);
-        } catch (QwenClient.ModelHttpException e) {
+        } catch (LlmException e) {
             TrpgService.failTrpgGenTask(taskId, e.messageFull());
         } catch (java.net.http.HttpTimeoutException e) {
             TrpgService.failTrpgGenTask(taskId, "模型生成超时，请重试");

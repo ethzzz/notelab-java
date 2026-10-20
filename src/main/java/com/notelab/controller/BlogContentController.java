@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.notelab.service.LlmGateway;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
@@ -92,10 +94,9 @@ public class BlogContentController {
         List<Map<String, String>> messages = List.of(
                 Map.of("role", "system", "content", buildSystemPrompt(category, tags, persona, length)),
                 Map.of("role", "user", "content", prompt));
-        String key = QwenKeys.candidates().isEmpty() ? "" : QwenKeys.candidates().get(0);
         String markdown;
         try {
-            markdown = QwenClient.complete(AppConfig.qwenModel(), messages, key, 120);
+            markdown = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 120);
         } catch (Exception e) {
             log.warn("博客 AI 起草失败", e);
             return ResponseEntity.status(502).body(Map.of("error", "AI 生成失败：" + e.getMessage()));

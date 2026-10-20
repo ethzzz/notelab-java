@@ -1,5 +1,7 @@
 package com.notelab.service;
 
+import com.notelab.service.LlmGateway;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
@@ -86,18 +88,16 @@ public final class TranslateService {
      * 任何异常（超时、上游非 200、JSON 解析失败）统一抛 GradeException，交由 Controller 优雅降级。
      */
     public static Grade grade(String zh, String en, String ref) throws GradeException {
-        String key = AppConfig.qwenKey();
-        if (key.isEmpty() && AppConfig.qwenApiKeys().isEmpty()) throw new GradeException("未配置 QWEN_API_KEY");
+        if (!LlmGateway.available()) throw new GradeException("未配置 QWEN_API_KEY");
         String userPrompt = "中文原句：\n" + zh + "\n\n"
                 + "学生的英文译文：\n" + en + "\n\n"
                 + ((ref == null || ref.isBlank()) ? "参考译文：（无，请自行判断译法合理性）\n\n" : "参考译文（仅供对照，不是唯一标准）：\n" + ref + "\n\n")
                 + "请按系统提示的 JSON 结构输出批改结果：";
         String raw;
         try {
-            raw = QwenClient.complete(AppConfig.qwenModel(),
+            raw = LlmGateway.chatModel(AppConfig.qwenModel(),
                     List.of(Map.of("role", "system", "content", GRADE_SYSTEM),
-                            Map.of("role", "user", "content", userPrompt)),
-                    key, 90);
+                            Map.of("role", "user", "content", userPrompt)), 90);
         } catch (Exception e) {
             throw new GradeException("判分失败，请重试");
         }
@@ -172,8 +172,7 @@ public final class TranslateService {
      */
     public static List<Generated> generate(String scenario, String prompt, Map<Integer, Integer> counts)
             throws GenerateException {
-        String key = AppConfig.qwenKey();
-        if (key.isEmpty() && AppConfig.qwenApiKeys().isEmpty()) throw new GenerateException("未配置 QWEN_API_KEY");
+        if (!LlmGateway.available()) throw new GenerateException("未配置 QWEN_API_KEY");
         StringBuilder spec = new StringBuilder();
         for (Map.Entry<Integer, Integer> e : counts.entrySet()) {
             if (e.getValue() == null || e.getValue() <= 0) continue;
@@ -186,10 +185,9 @@ public final class TranslateService {
                 + "请按系统提示的 JSON 数组结构输出，数组元素顺序为 tier 从小到大，每个 tier 内按句子从易到难排列。";
         String raw;
         try {
-            raw = QwenClient.complete(AppConfig.qwenModel(),
+            raw = LlmGateway.chatModel(AppConfig.qwenModel(),
                     List.of(Map.of("role", "system", "content", GEN_SYSTEM),
-                            Map.of("role", "user", "content", userPrompt)),
-                    key, 120);
+                            Map.of("role", "user", "content", userPrompt)), 120);
         } catch (Exception e) {
             throw new GenerateException("生成失败，请重试");
         }
