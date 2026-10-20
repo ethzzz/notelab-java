@@ -28,10 +28,20 @@ die() { echo "错误：$*" >&2; exit 1; }
 # 把 "30m" / "2h" / "7d" 换算成「本地时间字符串」，供 awk 做前缀比较。
 # 注意：nginx 的 ts 与 Java 的日志都带本地时区偏移，取前 19 位比较即可。
 since_cutoff() {
-  local spec="${1:-1h}"
-  date -d "-${spec}" +%Y-%m-%dT%H:%M:%S 2>/dev/null \
-    || date -v-"${spec}" +%Y-%m-%dT%H:%M:%S 2>/dev/null \
-    || die "无法解析时间窗：$spec（示例：30m / 2h / 1d）"
+  local spec="${1:-1h}" n u
+  n="${spec%[!0-9]*}"          # 前导数字：30m -> 30
+  u="${spec#"$n"}"              # 单位：m/h/d/s
+  [ -n "$n" ] || die "时间窗格式应为 30m / 2h / 1d（收到：$spec）"
+  case "$u" in
+    m|min) u="minutes" ;;
+    h) u="hours" ;;
+    d) u="days" ;;
+    s) u="seconds" ;;
+    *) die "时间窗单位只支持 m / h / d / s（收到：$spec）" ;;
+  esac
+  date -d "-${n} ${u}" +%Y-%m-%dT%H:%M:%S 2>/dev/null \
+    || date -v-"${n}${u:0:1}" +%Y-%m-%dT%H:%M:%S 2>/dev/null \
+    || die "无法解析时间窗：$spec"
 }
 
 cmd_req() {
