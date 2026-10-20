@@ -140,9 +140,9 @@ public final class LlmProviders {
      * 平台与模型搬到 ui_config 之后，这里只剩"首次导入"的作用。
      */
     private static Provider legacyDefault() {
-        String baseUrl = firstNonEmpty("LLM_BASE_URL", "QWEN_BASE_URL");
+        String baseUrl = AppConfig.get("LLM_BASE_URL", "").trim();
         List<String> keys = keysOf("LLM_API_KEYS", "LLM_API_KEY");
-        if (keys.isEmpty()) keys = keysOf("QWEN_API_KEYS", "QWEN_API_KEY");
+        
         if (baseUrl.isEmpty() && keys.isEmpty()) return null;
         if (baseUrl.isEmpty()) baseUrl = "https://api.deepseek.com/v1";
         return new Provider("default", "默认平台", "openai", baseUrl, keys, true);

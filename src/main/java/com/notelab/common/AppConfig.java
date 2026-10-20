@@ -96,7 +96,7 @@ public final class AppConfig {
     // ==================================================================================
     // 大模型配置（2026-10-20 从「阿里云 MaaS」切到 DeepSeek 时统一了命名）
     //
-    // 变量名：优先 LLM_*，兼容旧的 QWEN_*（代码里曾到处是 qwen 前缀，历史包袱）。
+    // 变量名：LLM_*（2026-10-20 起不再兼容旧的 QWEN_*，那条兼容层正是"两套真相"的来源）。
     //   现网 .env 用 LLM_BASE_URL / LLM_MODEL / LLM_API_KEYS（与 ai-lab 的 LLM_* 对齐）。
     // ⚠️ 只改 .env 而代码还读旧名 = 服务会回落到「dashscope + qwen-plus + 默认 key」，
     //   2026-10-20 就这么踩过一次（改名的同一次部署必须带上这版代码）。
@@ -104,12 +104,12 @@ public final class AppConfig {
 
     /** 打哪家网关（OpenAI 兼容协议）。 */
     public static String llmBaseUrl() {
-        return firstOf("LLM_BASE_URL", "QWEN_BASE_URL", "https://api.deepseek.com/v1");
+        return get("LLM_BASE_URL", "https://api.deepseek.com/v1");
     }
 
     /** 默认模型。 */
     public static String llmModel() {
-        return firstOf("LLM_MODEL", "QWEN_MODEL", "deepseek-flash");
+        return get("LLM_MODEL", "deepseek-flash");
     }
 
     /**
@@ -124,13 +124,13 @@ public final class AppConfig {
      * 表现为「模型能用但模型列表永远是空的」。
      */
     public static String llmKey() {
-        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("QWEN_API_KEYS", "")}) {
+        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("LLM_DEEPSEEK_API_KEYS", "")}) {
             for (String k : csv.split(",")) {
                 String t = k.trim();
                 if (!t.isEmpty()) return t;
             }
         }
-        return firstOf("LLM_API_KEY", "QWEN_API_KEY", "").trim();
+        return get("LLM_API_KEY", "").trim();
     }
 
     /**
@@ -142,14 +142,14 @@ public final class AppConfig {
      */
     public static java.util.List<String> llmApiKeys() {
         java.util.List<String> keys = new java.util.ArrayList<>();
-        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("QWEN_API_KEYS", "")}) {
+        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("LLM_DEEPSEEK_API_KEYS", "")}) {
             for (String k : csv.split(",")) {
                 String t = k.trim();
                 if (!t.isEmpty() && !keys.contains(t)) keys.add(t);
             }
         }
         if (keys.isEmpty()) {
-            String single = firstOf("LLM_API_KEY", "QWEN_API_KEY", "").trim();
+            String single = get("LLM_API_KEY", "").trim();
             if (!single.isEmpty()) keys.add(single);
         }
         return keys;

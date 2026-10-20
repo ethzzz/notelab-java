@@ -87,7 +87,7 @@ public final class TranslateService {
      * 任何异常（超时、上游非 200、JSON 解析失败）统一抛 GradeException，交由 Controller 优雅降级。
      */
     public static Grade grade(String zh, String en, String ref) throws GradeException {
-        if (!LlmGateway.available()) throw new GradeException("未配置 QWEN_API_KEY");
+        if (!LlmGateway.available()) throw new GradeException("未配置大模型（见「系统管理 → 模型与平台」）");
         String userPrompt = "中文原句：\n" + zh + "\n\n"
                 + "学生的英文译文：\n" + en + "\n\n"
                 + ((ref == null || ref.isBlank()) ? "参考译文：（无，请自行判断译法合理性）\n\n" : "参考译文（仅供对照，不是唯一标准）：\n" + ref + "\n\n")
@@ -171,7 +171,7 @@ public final class TranslateService {
      */
     public static List<Generated> generate(String scenario, String prompt, Map<Integer, Integer> counts)
             throws GenerateException {
-        if (!LlmGateway.available()) throw new GenerateException("未配置 QWEN_API_KEY");
+        if (!LlmGateway.available()) throw new GenerateException("未配置大模型（见「系统管理 → 模型与平台」）");
         StringBuilder spec = new StringBuilder();
         for (Map.Entry<Integer, Integer> e : counts.entrySet()) {
             if (e.getValue() == null || e.getValue() <= 0) continue;
