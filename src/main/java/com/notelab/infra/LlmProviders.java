@@ -77,6 +77,17 @@ public final class LlmProviders {
         cache = null;
     }
 
+    /**
+     * 引导期用的「默认平台」名：优先名为 {@code default} 的平台（旧 env 走引导模式时的名字），
+     * 其次如果只配了一个平台就用它，否则 null（调用方据此报"未配置平台"）。
+     */
+    public static String defaultProviderName() {
+        Map<String, Provider> all = all();
+        if (all.containsKey("default")) return "default";
+        if (all.size() == 1) return all.keySet().iterator().next();
+        return null;
+    }
+
     // ==================================================================================
     // 解析
     // ==================================================================================
