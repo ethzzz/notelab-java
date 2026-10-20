@@ -1049,3 +1049,65 @@ ssh myapp "/root/Notelab/notelab-java/ops/sync-deploy.sh notelab-b"
 带 CR 的 bash 脚本一跑就 `$'\r': command not found`（本机 Git Bash 与服务器都一样）。
 所以加了 `.gitattributes`：`*.sh` 固定 `eol=lf`、`*.cmd`/`*.bat` 固定 `eol=crlf`（批处理的 label/goto 怕 LF-only）。
 验证：`git check-attr eol` → `sync-repo.sh: lf` / `sync-deploy.sh: lf` / `sync.cmd: crlf`。
+
+## 2026-10-20 · 大模型 provider 切到 DeepSeek + 用量账本与每日限额
+
+### 背景
+原 provider 是阿里云 token-plan 网关（\qwen3.8-max\），当天探测发现**整条链路已停**：
+key#1 401 \Invalid API-key\、key#2 403 \AccessDenied.Unpurchased\（密钥有效但没买该模型），
+网关只挂这一个模型（其它名字全 404）。线上 \/api/health/llm\ 报 \vailable:false\。
+于是整体切到 **DeepSeek**（\pi.deepseek.com/v1\、\deepseek-flash\），并把「用量可见 + 每日限额」做出来。
+
+### 一、切换（纯配置，代码侧本来就是 OpenAI 兼容协议）
+- \.env\ 改为 \LLM_BASE_URL / LLM_MODEL / LLM_API_KEYS\（与 ai-lab 的命名对齐）；
+  \AppConfig\ 新增 \llmBaseUrl/llmModel/llmKey/llmApiKeys\，取值顺序 **LLM_* → QWEN_* → 默认值**，
+  旧的 \qwen*\ 全部标 @Deprecated 并委托过去（35 处调用点零改动）。
+- **清掉 \/etc/environment\ 里的 \QWEN_API_KEY\**（历史遗留的阿里云死 key）。这条很关键，见下。
+- ai-lab 同步切（\LLM_BASE_URL/LLM_MODEL\ + 自己的 \QWEN_API_KEY\）。
+
+### 二、验证时挖出的两个真 bug
+1. **\/api/models\ 永远 401，但对话正常**：\AppConfig.qwenKey()\ 只读单值 \QWEN_API_KEY\，
+   而它还在 \/etc/environment\（进程环境变量优先级高于 \.env\），轮换却用 \.env\ 的 \QWEN_API_KEYS\
+   → 「对话用对的 key、拉模型列表用死 key」。修法：单值与列表两条路径统一口径（提交 \6bdeb86\）。
+2. **老会话一发送就 400**：\conversations.model\ 里 13 条 \qwen3.8-max\ + 1 条 \deepseek-v3.2\，
+   而聊天页选会话时**无条件采纳会话里存的模型**。三层修：前端 \pickModel()\ + 兜底 effect（\995b5ac\）、
+   数据迁移（14 条 → \deepseek-flash\/\deepseek-chat\，迁移前 mysqldump 到 \/root/backups/\）、
+   建表默认值（\fcc072\）。
+3. **改 .env 变量名必须先上代码**：本次曾先改 \.env\ 后改代码，服务当场回落到
+   「dashscope + qwen-plus + \/root/notelab/.env\ 的死 key」（健康检查 401，\key_count=1\ 就是线索）。
+   部署顺序：**先发布读新名的代码，再改 .env**。
+
+### 三、用量账本 + 每日限额（新功能）
+- 表 \llm_usage\：每次调用一行（模型 / key 掩码 / ok / HTTP 码 / prompt+completion+total tokens / 是否流式）。
+  provider 只给余额、没有按天用量接口，所以限额只能自己记账自己拦。**只存 key 掩码，不存明文。**
+- 记账与拦截都放在 \QwenClient\ 的两个出口（\complete\ / \doStreamChat\）—— 那是全站唯一出网点，
+  拦一次覆盖聊天 / 竞技场 / RAG / 抽取 / 工具箱 / TRPG / 翻译判分 / 博客 AI 起草。
+  ⚠️ 流式请求必须带 \stream_options.include_usage:true\，否则流式调用的 usage 拿不到
+  （聊天与 TRPG 全是流式，不补就是漏大头）。实测一条流式聊天记下 37+92=129 tokens。
+- \LlmUsageService\：\ssertWithinDaily()\（超限抛异常，消息写明已用/上限）、\summary(days)\、
+  限额读写（存 \ui_config.llm_quota\，整份替换，**0 = 该维度不限制**，默认 \enabled=false\）、
+  余额（\/user/balance\，去掉 \/v1\ 前缀，best-effort + 5 分钟缓存）。
+- \LlmUsageController\：\GET /api/admin/llm-usage?days=N\、\PUT /api/admin/llm-usage/limits\（仅超管）。
+- 后台页 \/admin/llm-usage\（notelab-b，⚙️ 系统管理 → 🔋 模型用量）：今天 tokens/请求/剩余/余额、
+  7/14/30 天窗口、按天表格、按模型与按 key、限额编辑、超限时红色横幅。
+- 常量四处登记：\MenuTree\（g_system）、\PageRoutes\、\RouteGroups\、\PermGuard.SUPER_ONLY_PAGES\。
+
+### 验收（真打生产）
+- \/api/health/llm?force=1\ → \{"available":true,"mode":"llm","key_count":1}\。
+- \/api/models\ → \["deepseek-flash","deepseek-v4-pro"]\（切 flash 前还会带上 \deepseek-chat\ 别名）。
+- **权威校验**：直连 API 请求 \deepseek-chat\，响应 \model\ 字段 = \deepseek-flash\ → 别名关系明确；
+  余额接口返回 80.79 CNY。
+  ⚠️ 期间一次 UI 测试里模型自称「我是 Qwen3.8」——那是**会话历史里的身份追问导致的编造**，
+  判断 provider 只能看响应 \model\ 字段，不能看模型自述。
+- 记账：一次流式聊天落一行 \deepseek-flash / sk-972f…1c97 / ok=1 / stream=1 / 129 tokens\；
+  \/api/admin/llm-usage\ 的 today/days/byModel/byKey 与账本一致。
+- 限额：设 \dailyTokens=1\（当天已用 129）→ 聊天页报
+  \请求模型出错：今日大模型额度已用完（tokens 129 / 上限 1），明天 0 点自动恢复…\；
+  **验证后已恢复为「不限制」**。
+- 文案：\QuotaExceededException.toString()\ 只返回 message（默认会带全限定类名，不该给用户看）。
+
+### 边界与后续
+- \LlmHealth\ 的探活自己发 HTTP（为了拿到错误体），**不经过 QwenClient**，所以不计入账本（每次几个 token，可忽略）。
+- \/etc/environment\ 里已无 \QWEN_API_KEY\：\un-codex-task.sh\（服务器 codex 派活）因此会直接报"未配置" ——
+  要恢复 codex 得单独给它一把 key，不要再把 key 塞回全局环境变量（那正是本次两个 bug 的根源）。
+- provider 侧无按天用量接口，账本的准确性取决于「所有调用都走 QwenClient」；新增出网点必须复用它。
