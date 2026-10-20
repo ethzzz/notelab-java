@@ -163,32 +163,6 @@ public final class AppConfig {
         return v.trim().isEmpty() ? def : v;
     }
 
-    // ---- 兼容旧调用点（qwen* 前缀）。新代码请直接用上面的 llm*() ----
-
-    /** @deprecated 用 {@link #llmBaseUrl()} */
-    @Deprecated
-    public static String qwenBaseUrl() {
-        return llmBaseUrl();
-    }
-
-    /** @deprecated 用 {@link #llmModel()} */
-    @Deprecated
-    public static String qwenModel() {
-        return llmModel();
-    }
-
-    /** @deprecated 用 {@link #llmKey()} */
-    @Deprecated
-    public static String qwenKey() {
-        return llmKey();
-    }
-
-    /** @deprecated 用 {@link #llmApiKeys()} */
-    @Deprecated
-    public static java.util.List<String> qwenApiKeys() {
-        return llmApiKeys();
-    }
-
     /**
      * 会话签名密钥（HMAC-SHA256）—— B 端 {@code notelab_session} 与 C 端 {@code notelab_c_session} 共用。
      *

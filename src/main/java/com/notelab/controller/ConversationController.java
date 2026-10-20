@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.notelab.service.LlmGateway;
+
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import jakarta.servlet.http.HttpServletRequest;
@@ -42,7 +44,7 @@ public class ConversationController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         String model = (req == null || req.model == null) ? "" : req.model.trim();
-        if (model.isEmpty()) model = AppConfig.qwenModel();
+        if (model.isEmpty()) model = LlmGateway.defaultModelId();
         long cid = ConversationDao.createConversation(AuthUtil.userId(user), "新对话", model);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", cid);

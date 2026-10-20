@@ -95,7 +95,7 @@ public class BlogContentController {
                 Map.of("role", "user", "content", prompt));
         String markdown;
         try {
-            markdown = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 120);
+            markdown = LlmGateway.chat("chat", messages, 120);
         } catch (Exception e) {
             log.warn("博客 AI 起草失败", e);
             return ResponseEntity.status(502).body(Map.of("error", "AI 生成失败：" + e.getMessage()));

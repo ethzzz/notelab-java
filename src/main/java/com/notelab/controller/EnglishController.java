@@ -197,7 +197,7 @@ public class EnglishController {
         EnStreamParser parser = new EnStreamParser(out, message);
         boolean ok = false;
         try {
-            String upstreamErr = LlmGateway.streamModel(AppConfig.qwenModel(),
+            String upstreamErr = LlmGateway.stream("chat",
                     List.of(Map.of("role", "system", "content", sysPrompt),
                             Map.of("role", "user", "content", userPrompt)), 90, parser::onDelta);
             if (upstreamErr != null) {
@@ -411,7 +411,7 @@ public class EnglishController {
 
     /** _en_generate：非流式调用（90s 超时），错误语义与 Python 一致 */
     private static String enGenerate(List<Map<String, String>> messages) throws Exception {
-        return LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
+        return LlmGateway.chat("chat", messages, 90);
     }
 
     /** _en_conv_row */

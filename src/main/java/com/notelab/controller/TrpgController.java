@@ -92,7 +92,7 @@ public class TrpgController {
         try {
             StringBuilder full = new StringBuilder();
             // 流式调用：token 持续到达避免上游空闲超时；关闭思考链提速；总超时 300s
-            String upstreamErr = LlmGateway.streamModel(AppConfig.qwenModel(), TrpgService.buildGenMessages(cfg), 300, true, full::append);
+            String upstreamErr = LlmGateway.stream("chat", TrpgService.buildGenMessages(cfg), 300, true, full::append);
             if (upstreamErr != null) {
                 TrpgService.failTrpgGenTask(taskId, upstreamErr);
                 return;

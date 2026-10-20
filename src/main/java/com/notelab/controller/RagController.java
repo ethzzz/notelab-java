@@ -94,7 +94,7 @@ public class RagController {
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", userPrompt));
         try {
-            String answer = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
+            String answer = LlmGateway.chat("chat", messages, 90);
             List<Map<String, Object>> citations = new ArrayList<>();
             for (Map<String, Object> h : hits) {
                 Map<String, Object> c = new LinkedHashMap<>();

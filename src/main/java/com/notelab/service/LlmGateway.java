@@ -164,6 +164,15 @@ public final class LlmGateway {
         return n;
     }
 
+    /** 已配置的 key 总数（所有启用平台求和）—— 健康检查面板用，只给数字 */
+    public static int keyCount() {
+        int n = 0;
+        for (LlmProviders.Provider p : LlmProviders.all().values()) {
+            if (p.enabled()) n += p.apiKeys().size();
+        }
+        return n;
+    }
+
     // ==================================================================================
     // 内部
     // ==================================================================================

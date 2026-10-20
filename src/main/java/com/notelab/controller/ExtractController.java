@@ -47,7 +47,7 @@ public class ExtractController {
                 Map.of("role", "system", "content", system),
                 Map.of("role", "user", "content", userPrompt));
         try {
-            String raw = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
+            String raw = LlmGateway.chat("chat", messages, 90);
             String s = raw.trim();
             int i = s.indexOf('{');
             int j = s.lastIndexOf('}');

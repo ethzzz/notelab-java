@@ -1,5 +1,7 @@
 package com.notelab.controller;
 
+import com.notelab.service.LlmGateway;
+
 import com.notelab.common.AppConfig;
 import com.notelab.common.ClientIp;
 import com.notelab.scheduler.TranslateScheduler;
@@ -422,7 +424,7 @@ public class TranslateAdminController {
         body.put("skipped", skipped);
         body.put("requested", total);
         body.put("sentences", inserted);
-        body.put("model", AppConfig.qwenModel());
+        body.put("model", LlmGateway.defaultModelId());
         if (inserted.size() < total) {
             body.put("warning", "模型实际产出 " + inserted.size() + " 句（请求 " + total + " 句），可再次生成补足");
         }

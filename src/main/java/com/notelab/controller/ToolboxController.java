@@ -57,7 +57,7 @@ public class ToolboxController {
                 Map.of("role", "system", "content", action.get("system")),
                 Map.of("role", "user", "content", text));
         try {
-            String result = LlmGateway.chatModel(AppConfig.qwenModel(), messages, 90);
+            String result = LlmGateway.chat("chat", messages, 90);
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("action", req.action);
             body.put("name", action.get("name"));

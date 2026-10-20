@@ -94,7 +94,7 @@ public final class TranslateService {
                 + "请按系统提示的 JSON 结构输出批改结果：";
         String raw;
         try {
-            raw = LlmGateway.chatModel(AppConfig.qwenModel(),
+            raw = LlmGateway.chat("chat",
                     List.of(Map.of("role", "system", "content", GRADE_SYSTEM),
                             Map.of("role", "user", "content", userPrompt)), 90);
         } catch (Exception e) {
@@ -111,7 +111,7 @@ public final class TranslateService {
             List<Map<String, Object>> errors = parseErrors(node.path("errors"));
             if (accurate) errors = List.of();
             return new Grade(accurate, score, JsonSanitizer.truncate(corrected, 500), explanation,
-                    JsonUtil.write(errors), errors, AppConfig.qwenModel());
+                    JsonUtil.write(errors), errors, LlmGateway.defaultModelId());
         } catch (Exception e) {
             throw new GradeException("判分失败，请重试");
         }
@@ -184,7 +184,7 @@ public final class TranslateService {
                 + "请按系统提示的 JSON 数组结构输出，数组元素顺序为 tier 从小到大，每个 tier 内按句子从易到难排列。";
         String raw;
         try {
-            raw = LlmGateway.chatModel(AppConfig.qwenModel(),
+            raw = LlmGateway.chat("chat",
                     List.of(Map.of("role", "system", "content", GEN_SYSTEM),
                             Map.of("role", "user", "content", userPrompt)), 120);
         } catch (Exception e) {
