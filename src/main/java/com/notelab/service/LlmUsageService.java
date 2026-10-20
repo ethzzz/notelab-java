@@ -69,6 +69,26 @@ public final class LlmUsageService {
         return key.substring(0, 7) + "…" + key.substring(key.length() - 4);
     }
 
+    /** 取数字：DB 聚合结果（Long/BigDecimal）与 ui_config 里的 JSON 值（Integer/String）都会遇到 */
+    private static long num(Object o) {
+        if (o instanceof Number n) return n.longValue();
+        if (o == null) return 0;
+        try {
+            return Long.parseLong(String.valueOf(o).trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** ui_config 里的布尔值可能是 true / "true" / 1 / "1"（历史数据几种都出现过） */
+    private static boolean truthy(Object o) {
+        if (o instanceof Boolean b) return b;
+        if (o instanceof Number n) return n.intValue() != 0;
+        if (o == null) return false;
+        String s = String.valueOf(o).trim();
+        return "true".equalsIgnoreCase(s) || "1".equals(s);
+    }
+
     // ==================================================================================
     // 限额
     // ==================================================================================
