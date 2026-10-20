@@ -101,6 +101,12 @@ public final class ModelRegistry {
         return out;
     }
 
+    /** 每个平台的可选模型清单（后台展示/编辑用；返回副本，调用方改不到缓存） */
+    public static Map<String, List<String>> catalog() {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        snapshot().catalog().forEach((k, v) -> out.put(k, new ArrayList<>(v)));
+        return out;
+    }
     /** 全部别名（后台展示用） */
     public static Map<String, Target> aliases() {
         return snapshot().aliases();

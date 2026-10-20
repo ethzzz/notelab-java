@@ -97,6 +97,8 @@ public final class PageRoutes {
             // 模型用量（超管专属：接口在受限前缀 /api/admin/llm-usage）。
             // ⚠️ 与 MenuTree.g_system 的 llm-usage 一一对应，且要进 PermGuard.SUPER_ONLY_PAGES。
             new String[]{"/llm-usage", "系统·模型用量"},
+            // 模型与平台（超管专属：接口在受限前缀 /api/admin/llm-platforms）
+            new String[]{"/llm-platforms", "系统·模型与平台"},
             // 博客管理 → 文章起草（B 端写入 ethzzz/blog 仓库的路线文章 posts，见 BlogContentController）
             new String[]{"/blog-gen", "博客·文章起草"},
             // 博客管理 → 文章记录（每篇 posts 的浏览数与改动记录；浏览数由博客侧匿名上报）

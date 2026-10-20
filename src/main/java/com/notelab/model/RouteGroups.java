@@ -70,6 +70,7 @@ public final class RouteGroups {
             Map.entry("/login-audit", List.of("admin/ops/login-audit")),
             // 模型用量：/api/admin/llm-usage（读账本 + 写每日限额），仅超管
             Map.entry("/llm-usage", List.of("admin/llm-usage")),
+            Map.entry("/llm-platforms", List.of("admin/llm-platforms")),
             Map.entry("/blog-gen", List.of("blog")),
             // 文章记录：读博客仓 posts 列表 + 浏览数统计，仍走同一套 /api/blog 接口
             Map.entry("/blog-articles", List.of("blog")),

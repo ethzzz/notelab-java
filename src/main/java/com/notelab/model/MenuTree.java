@@ -116,7 +116,9 @@ public final class MenuTree {
                     menu("login-audit", "登录审计", "🛡️", "/login-audit", true),
                     // 模型用量（2026-10-20 接 DeepSeek 时加）：大模型调用的 token/请求账本 + 每日限额。
                     // 接口在受限前缀 /api/admin/llm-usage → 仅超管；本页同时登记 PageRoutes 与 PermGuard.SUPER_ONLY_PAGES。
-                    menu("llm-usage", "模型用量", "🔋", "/llm-usage", true))),
+                    menu("llm-usage", "模型用量", "🔋", "/llm-usage", true),
+                    // 模型与平台：看平台（key 只显示掩码）、探测候选、改别名与可选清单（2026-10-20 加）
+                    menu("llm-platforms", "模型与平台", "🧩", "/llm-platforms", true))),
             // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
             group("g_blog", "博客管理", "📖", List.of(
                     // 文章起草：手动输入 / AI 起草**路线文章**（posts）后提交到博客仓库（BlogContentController）。
