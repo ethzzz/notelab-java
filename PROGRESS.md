@@ -1111,3 +1111,46 @@ key#1 401 \Invalid API-key\、key#2 403 \AccessDenied.Unpurchased\（密钥有�
 - \/etc/environment\ 里已无 \QWEN_API_KEY\：\un-codex-task.sh\（服务器 codex 派活）因此会直接报"未配置" ——
   要恢复 codex 得单独给它一把 key，不要再把 key 塞回全局环境变量（那正是本次两个 bug 的根源）。
 - provider 侧无按天用量接口，账本的准确性取决于「所有调用都走 QwenClient」；新增出网点必须复用它。
+
+## 2026-10-20 · 大模型层重构（平台/模型/密钥三者解耦，落地 ops/LLM-ARCHITECTURE.md）
+
+### 做了什么（新文件）
+- `infra/LlmProviders`：平台注册表，只从环境变量读 `LLM_PROVIDERS` + `LLM_<NAME>_{PROTOCOL,BASE_URL,API_KEYS,ENABLED,LABEL}`；
+  key 只在内存，对外只有 `maskedKey()`。没配 `LLM_PROVIDERS` 时走引导模式（旧的单平台变量）。
+- `infra/KeyRing`：**按平台隔离**的 key 轮换（provider→key→标记、provider→最近成功 key），判定补了 Anthropic 形状。
+- `infra/LlmTransport` + `OpenAiCompatTransport`：协议可插拔；OpenAI 兼容那一套（DeepSeek/OpenAI/Qwen）从旧 `QwenClient` 逐字搬迁；
+  `anthropic` 只留协议位，命中时明确报"实现未写"，不静默走兼容协议。
+- `infra/ModelRegistry`：别名 → (平台, 厂商模型名) + 每平台 catalog（allowlist）+ `resolveModelId` 校验点；读 `ui_config.llm_models`（60s 缓存）。
+- `service/LlmGateway`：唯一门面（`chat(别名)` / `chatModel(厂商名)` / `stream*` / `models()`），
+  内含 allowlist 本地拒绝、日限额、协议分派、错误归一（`ConfigException extends LlmException(400)`，
+  避免配置错误被误报成 504 超时）。
+- `controller/LlmPlatformsController` + 后台页 `/admin/llm-platforms`：平台只读（key 显示掩码+条数）、
+  探测候选、别名与可选清单可编辑（保存后立即生效）。
+
+### 删掉的东西（旧结构）
+`QwenClient`（含 11 个调用点用的旧签名）、`QwenKeys`、`AppConfig.qwen*`、`QWEN_*` 环境变量兼容、
+`ModelsController` 里"直连 provider 拉列表"的逻辑。旧的两条真相（单值 key vs 列表 key、旧模型名 vs 新模型名）
+正是 2026-10-20 两个事故的根因，所以这次不留兼容层。
+
+### 服务器侧改动（均已备份）
+- `.env`：`LLM_PROVIDERS=deepseek` + `LLM_DEEPSEEK_{PROTOCOL,BASE_URL,API_KEYS,LABEL}`；旧的单平台变量移除。
+- `ui_config.llm_models`：别名 chat→deepseek:flash、reasoning→deepseek:v4-pro、fast→deepseek:flash；
+  catalog `{deepseek:[deepseek-flash, deepseek-v4-pro]}`；`defaultAlias=chat`。
+- 14 条历史会话 `conversations.model` 从 `deepseek-chat` 迁到 `deepseek-flash`（不在 catalog 里的会被本地拒绝）。
+
+### 验收
+- `.sync/verify-llm-regression.js` **14/14**：health/models/账本、竞技场（多模型）、博客 AI 起草、
+  extract/toolbox/trpg/english 的路由与守卫、**allowlist 本地拒绝**（竞技场传 `qwen3.8-max` →
+  `模型不在可用清单里` 且响应里没有上游错误）。
+- 浏览器级：`/admin/chat` 流式正常；`/admin/llm-platforms` 渲染正常（截图 `.agent/tmp/shots/20261020-shot-llm-platforms.png`）。
+- 账本可分辨流式/非流式：`129/170/5353(非流式)/157/84(探活)/201` tokens。
+
+### 踩坑与边界（都是这次实际遇到的）
+1. **批量正则改 Java 有风险**：一次替换把 `String` 改成了 `ttring`，把 `ModelRegistry` 弄坏 →
+   从上一个提交 `git checkout <sha> -- <file>` 恢复后只重做一行。教训：**批量替换后必须立刻编译**，不要连改多个文件再一起构建。
+2. **`catch` 顺序**：`LlmException` 必须先于 `RuntimeException`；`IllegalArgumentException` 先于 `RuntimeException`；
+   原来 `catch (HttpTimeoutException)` 因"永不抛出"编译失败（超时已被 gateway 包成 ISE）。
+3. **`/api/chat` 忽略 body 里的 `model`**，用会话里存的那个 —— 换模型只能通过选/改会话。
+4. **translate 未纳入自动回归**：`/api/translate/*` 是 C 端会话（`CAuthUtil`），要 `account.json` 登录 C 端才能测；
+   它和判分共用 `LlmGateway.chat("chat")` 同一条路径，但这是"论证"而不是"实测"。
+5. 平台的 baseUrl/protocol/key **仍只在环境变量**：后台只读展示。要"后台配 key"得先做加密存储 + 只写不读 + 审计（架构文档 §7），未做。
