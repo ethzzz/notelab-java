@@ -107,10 +107,12 @@ public class TrpgController {
             TrpgService.finishTrpgGenTask(taskId, id);
         } catch (LlmException e) {
             TrpgService.failTrpgGenTask(taskId, e.messageFull());
-        } catch (RuntimeException e) {
-            TrpgService.failTrpgGenTask(taskId, "模型生成超时，请重试");
         } catch (IllegalArgumentException e) {
+            // ⚠️ 必须排在 RuntimeException 之前：它是 RuntimeException 的子类，放后面就永远进不来
             TrpgService.failTrpgGenTask(taskId, "模型输出解析失败：" + e.getMessage());
+        } catch (RuntimeException e) {
+            // 超时现在由 gateway 包成 IllegalStateException（cause 是 HttpTimeoutException）
+            TrpgService.failTrpgGenTask(taskId, "模型调用失败（可能超时），请重试：" + e.getMessage());
         } catch (Exception e) {
             TrpgService.failTrpgGenTask(taskId, "生成失败：" + e);
         }
