@@ -3,11 +3,12 @@
 """NoteLab 每日巡检采集器（纯只读，不做任何修改）。
 
 - 每日快检：服务健康、资源水位、错误日志、git 漂移/落后、备份新鲜度
+- 每日快检（2026-10-21 起）：额外做「错误按 rid 聚合 + 5xx 率」——从「有错误」升级为「哪个请求在错」
 - 每周日深检（或 --deep 强制）：依赖更新（npm/pip）、npm audit 安全漏洞
 - 输出：/root/ops/reports/YYYY-MM-DD.md，同时打印到 stdout（供 cron.log）
 - 由 Qoder 读取报告做 AI 研判：低风险项直接改+验证，高风险项列清单等人工拍板
 """
-import json, subprocess, os, sys, glob, datetime, socket
+import json, subprocess, os, sys, glob, datetime, socket, re
 
 OPS = "/root/ops"
 RDIR = os.path.join(OPS, "reports")
@@ -296,6 +297,114 @@ def check_deep():
     out()
 
 
+# ================= 7. 错误聚合（按 rid）与 5xx 率 =================
+NGINX_JSON = "/var/log/nginx/notelab.json.log"
+# 新日志格式：2026-10-21T00:07:55.268+08:00 INFO  [rid] logger - msg
+# 旧格式（logback 改造前）没有 [rid]，统一归到 (legacy)，不参与 rid 聚合
+NEW_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.+]+ \s*(?:INFO|WARN|ERROR|DEBUG)\s+\[([^\]]+)\] ")
+
+
+def _normalize_error(msg):
+    """抹掉可变部分，让同类错误能聚到一起（id/数字/长字符串）。"""
+    msg = re.sub(r"\b[0-9a-f]{8,}\b", "<id>", msg)
+    msg = re.sub(r"\b\d+\b", "<n>", msg)
+    msg = re.sub(r"'[^']{20,}'", "'<str>'", msg)
+    return msg.strip()[:110]
+
+
+def _nginx_stats(hours=24):
+    """返回 (总请求, 5xx 数, {path: 5xx 次数})；日志不存在时返回 None。"""
+    if not os.path.exists(NGINX_JSON):
+        return None
+    since = (datetime.datetime.now() - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    total = bad = 0
+    paths = {}
+    try:
+        with open(NGINX_JSON, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    d = json.loads(line)
+                except Exception:
+                    continue
+                if str(d.get("ts", ""))[:19] < since:
+                    continue
+                total += 1
+                try:
+                    st = int(d.get("status", 0))
+                except Exception:
+                    st = 0
+                if st >= 500:
+                    bad += 1
+                    p = str(d.get("uri", "")).split("?")[0]
+                    paths[p] = paths.get(p, 0) + 1
+    except Exception as e:
+        out(f"- ⚠️ 读取 nginx JSON 日志失败：{e}")
+        return None
+    return total, bad, paths
+
+
+def check_error_aggregation(hours=24):
+    out(f"## 7. 错误聚合（按 rid）与 5xx 率（最近 {hours}h）")
+    since = (datetime.datetime.now() - datetime.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    # ---- 7.1 应用 ERROR：按 rid 与错误类型聚合 ----
+    _, raw, _ = sh(f"grep -h ' ERROR ' {PM2LOG}/*.log 2>/dev/null | tail -n 5000", timeout=60)
+    by_rid, by_type = {}, {}
+    total = legacy = 0
+    for line in raw.splitlines():
+        ts = line[:19]
+        if ts < since:
+            continue
+        total += 1
+        m = NEW_LINE_RE.match(line)
+        if m:
+            rid = m.group(1)
+        else:
+            rid = "(legacy)"
+            legacy += 1
+        body_msg = line.split(" - ", 1)[1] if " - " in line else line
+        rec = by_rid.setdefault(rid, {"n": 0, "sample": body_msg[:160]})
+        rec["n"] += 1
+        k = _normalize_error(body_msg)
+        by_type[k] = by_type.get(k, 0) + 1
+
+    out(f"- 应用 ERROR：**{total}** 条，涉及 **{len(by_rid)}** 个 rid"
+        + (f"（其中 {legacy} 条为改造前的旧格式，无 rid）" if legacy else ""))
+    if total:
+        out("")
+        out("| rid | 次数 | 样本 |")
+        out("|---|---|---|")
+        for rid, rec in sorted(by_rid.items(), key=lambda kv: -kv[1]["n"])[:5]:
+            sample = rec["sample"].replace("|", "\\|")[:90]
+            out(f"| `{rid}` | {rec['n']} | {sample} |")
+        out("")
+        out("TOP 错误类型（已抹掉 id/数字）：")
+        for k, n in sorted(by_type.items(), key=lambda kv: -kv[1])[:5]:
+            out(f"- ×{n} `{k[:90]}`")
+        if total > 50:
+            warn("yellow", f"24h 内应用 ERROR {total} 条（{len(by_rid)} 个 rid），按 rid 排查：bash ops/logs.sh req <rid>")
+    out()
+
+    # ---- 7.2 nginx：5xx 率 ----
+    stats = _nginx_stats(hours)
+    if stats is None:
+        out("- nginx JSON 访问日志不存在，跳过 5xx 统计")
+    else:
+        tot, bad, paths = stats
+        rate = (bad / tot * 100) if tot else 0.0
+        out(f"- nginx：{hours}h 内请求 **{tot}**，5xx **{bad}**（{rate:.2f}%）")
+        if paths:
+            out("")
+            out("5xx 路径 TOP：")
+            for p, n in sorted(paths.items(), key=lambda kv: -kv[1])[:5]:
+                out(f"- ×{n} `{p}`")
+        if rate >= 5:
+            warn("red", f"5xx 率 {rate:.2f}%（{bad}/{tot}），优先看 nginx error.log 与上游状态")
+        elif rate >= 1 or bad >= 20:
+            warn("yellow", f"5xx 率 {rate:.2f}%（{bad}/{tot}），建议抽查 `bash ops/logs.sh 5xx`")
+    out()
+
+
 # ================= 主流程 =================
 def main():
     os.makedirs(RDIR, exist_ok=True)
@@ -313,6 +422,7 @@ def main():
     check_git()
     check_backup()
     check_deep()
+    check_error_aggregation()
 
     # 组装报告头 + 状态灯 + 告警汇总
     red = sum(1 for l, _ in warnings if l == "red")
