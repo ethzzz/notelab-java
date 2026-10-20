@@ -67,7 +67,7 @@ public class RagController {
     public ResponseEntity<Map<String, Object>> ask(@RequestBody RagAskReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
+        if (!LlmGateway.available()) return ResponseEntity.status(500).body(Map.of("error", "未配置大模型（见「系统管理 → 模型与平台」）"));
         String question = req.question == null ? "" : req.question.trim();
         if (question.isEmpty()) {
             return ResponseEntity.status(400).body(Map.of("error", "问题不能为空"));

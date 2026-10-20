@@ -40,7 +40,7 @@ public class ArenaController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { ChatController.jsonError(response, 401, "请先登录"); return; }
-        if (key.isEmpty()) { ChatController.jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
+        if (!LlmGateway.available()) { ChatController.jsonError(response, 500, "未配置大模型（见「系统管理 → 模型与平台」）"); return; }
         String message = req.message == null ? "" : req.message.trim();
         if (message.isEmpty()) { ChatController.jsonError(response, 400, "消息不能为空"); return; }
         List<String> models = new ArrayList<>();
@@ -88,7 +88,7 @@ public class ArenaController {
         }
     }
 
-    private static Map<String, Object> callOne(String model, String key, String message) {
+    private static Map<String, Object> callOne(String model, String message) {
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("model", model);
         try {

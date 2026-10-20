@@ -95,7 +95,7 @@ public class EnglishController {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
         if (!LlmGateway.available()) {
-            return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
+            return ResponseEntity.status(500).body(Map.of("error", "未配置大模型（见「系统管理 → 模型与平台」）"));
         }
         String scenario = (req != null && req.scenario != null && SCENARIO_MAP.containsKey(req.scenario))
                 ? req.scenario : "free";
@@ -165,7 +165,7 @@ public class EnglishController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { ChatController.jsonError(response, 401, "请先登录"); return; }
-        if (key.isEmpty()) { ChatController.jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
+        if (!LlmGateway.available()) { ChatController.jsonError(response, 500, "未配置大模型（见「系统管理 → 模型与平台」）"); return; }
         if (req.conversation_id == null) { ChatController.jsonError(response, 422, "conversation_id 必填"); return; }
         Map<String, Object> conv = EnglishDao.enGetConversation(req.conversation_id, AuthUtil.userId(user));
         if (conv == null) { ChatController.jsonError(response, 404, "会话不存在"); return; }

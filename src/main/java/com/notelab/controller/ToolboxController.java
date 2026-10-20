@@ -45,7 +45,7 @@ public class ToolboxController {
     public ResponseEntity<Map<String, Object>> toolbox(@RequestBody ToolboxReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
+        if (!LlmGateway.available()) return ResponseEntity.status(500).body(Map.of("error", "未配置大模型（见「系统管理 → 模型与平台」）"));
         Map<String, String> action = ACTIONS.get(req.action);
         if (action == null) {
             return ResponseEntity.status(400).body(Map.of("error", "未知动作：" + req.action));

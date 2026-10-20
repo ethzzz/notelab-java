@@ -37,7 +37,7 @@ public class ChatController {
             throws Exception {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) { jsonError(response, 401, "请先登录"); return; }
-        if (key.isEmpty()) { jsonError(response, 500, "未配置 QWEN_API_KEY"); return; }
+        if (!LlmGateway.available()) { jsonError(response, 500, "未配置大模型（见「系统管理 → 模型与平台」）"); return; }
         if (req.conversation_id == null) { jsonError(response, 422, "conversation_id 必填"); return; }
         Map<String, Object> conv = ConversationDao.getConversation(req.conversation_id, AuthUtil.userId(user));
         if (conv == null) { jsonError(response, 404, "会话不存在"); return; }

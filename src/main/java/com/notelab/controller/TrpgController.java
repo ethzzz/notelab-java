@@ -63,7 +63,7 @@ public class TrpgController {
     public ResponseEntity<?> generate(@RequestBody(required = false) ScenarioReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
+        if (!LlmGateway.available()) return ResponseEntity.status(500).body(Map.of("error", "未配置大模型（见「系统管理 → 模型与平台」）"));
         if (req == null || (isBlank(req.background) && isBlank(req.event) && isBlank(req.characters))) {
             return ResponseEntity.status(422).body(Map.of("error", "请至少填写背景、人物或核心事件之一"));
         }
@@ -81,7 +81,7 @@ public class TrpgController {
         cfg.put("scale", nz(req.scale));
         long taskId = TrpgService.createTrpgGenTask(AuthUtil.userId(user), JsonUtil.write(cfg));
         long userId = AuthUtil.userId(user);
-        GEN_POOL.submit(() -> runGenTask(taskId, userId, cfg, key));
+        GEN_POOL.submit(() -> runGenTask(taskId, userId, cfg));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("task_id", taskId);
         out.put("state", "running");
@@ -89,7 +89,7 @@ public class TrpgController {
     }
 
     /** 后台执行：调模型 → 解析修复 → 入库 → 更新任务状态；任何异常都落到任务 error 状态 */
-    private static void runGenTask(long taskId, long userId, Map<String, Object> cfg, String key) {
+    private static void runGenTask(long taskId, long userId, Map<String, Object> cfg) {
         try {
             StringBuilder full = new StringBuilder();
             // 流式调用：token 持续到达避免上游空闲超时；关闭思考链提速；总超时 300s

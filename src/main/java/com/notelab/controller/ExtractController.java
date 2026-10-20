@@ -34,7 +34,7 @@ public class ExtractController {
     public ResponseEntity<Map<String, Object>> extract(@RequestBody ExtractReq req, HttpServletRequest request) {
         Map<String, Object> user = AuthUtil.user(request);
         if (user == null) return AuthUtil.unauth();
-        if (key.isEmpty()) return ResponseEntity.status(500).body(Map.of("error", "未配置 QWEN_API_KEY"));
+        if (!LlmGateway.available()) return ResponseEntity.status(500).body(Map.of("error", "未配置大模型（见「系统管理 → 模型与平台」）"));
         String text = req.text == null ? "" : req.text.trim();
         String fields = req.fields == null ? "" : req.fields.trim();
         if (text.isEmpty() || fields.isEmpty()) {
