@@ -59,6 +59,8 @@ python3 ops/daily-iteration/daily-check.py --deep   # 手动跑一次全量巡�
 - `notelab-c` / `notelab-b` 的 `Server Reference ID did not match`（爬虫/扫描器乱 POST Server Action，外部噪音）。
   **2026-10-21 起已从告警计数与样本中剔除**，报告里会写「已排除 Server Action 噪音 N 条」；第 7 节仍会列出它，但标注为噪音。
 - Swap 长期 ~1980MB（Kokoro TTS 历史驻留；物理内存充足即非紧急）。
+- `notelab-c` 偶发 `Could not find a production build in '.next'`：部署窗口内 `.next` 正在被 `next build` 重写，
+  跑到一半的请求会命中缺文件。**部署结束后仍持续出现**才是真问题（产物缺失，需重建）。
 - 错误日志已改为**按较上次新增量**告警，只关注新增部分，历史累计不再重复报。
 
 ## 报告第 7 节：错误聚合与 5xx 率（2026-10-21 新增）

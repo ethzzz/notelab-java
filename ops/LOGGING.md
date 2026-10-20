@@ -90,6 +90,7 @@ bash ops/logs.sh err --since 10m
 | `[tts] Kokoro HTTP 401` | 2026-10-21 前 B 端进程缺 `KOKORO_API_KEY` | 已注入 pm2 env（`pm2 save` 已持久化），新日志不应再出现 |
 | `ClassNotFoundException`（关机期） | fat jar 关闭钩子 | 无害 |
 | `Failed to load static file for page: /500` | App Router 缺 `pages/500.html` 的框架噪音 | 可选：补 `app/global-error.tsx` 或忽略 |
+| `Could not find a production build in '.next'` | 部署窗口内 `.next` 正被重建 | 部署结束后仍持续出现 → 重建产物 |
 
 ## 6. 每日巡检第 7 节
 
