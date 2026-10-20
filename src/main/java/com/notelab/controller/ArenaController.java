@@ -97,9 +97,9 @@ public class ArenaController {
             r.put("content", content);
         } catch (LlmException e) {
             r.put("error", e.messageShort());
-        } catch (HttpTimeoutException e) {
-            r.put("error", String.valueOf(e.getMessage()));
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
+            // 超时现在由 gateway 包成 IllegalStateException（cause 是 HttpTimeoutException），
+            // 所以不再单独 catch HttpTimeoutException —— 那个 catch 会因"永不抛出"而编译失败。
             r.put("error", String.valueOf(e));
         }
         return r;
