@@ -663,6 +663,24 @@ final class DbSchema {
                 INDEX idx_conv (conversation_id),
                 CONSTRAINT fk_msg_conv FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
+            // 大模型用量账本（2026-10-20 接 DeepSeek 时加）：provider 只给"余额"、没有按天用量接口，
+            // 所以「每天最多用多少」这个限额只能靠自己的账本算。每次调用后把响应里的 usage 落一行。
+            // ⚠️ 只存 key 掩码（sk-972f7…1c97），不存明文 —— 否则这张表本身就是密钥泄露源。
+            """
+            CREATE TABLE IF NOT EXISTS llm_usage (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                at DATETIME(3) NOT NULL,
+                model VARCHAR(64) NOT NULL DEFAULT '',
+                key_mask VARCHAR(24) NOT NULL DEFAULT '',
+                ok TINYINT NOT NULL DEFAULT 1,
+                http_code INT NULL,
+                prompt_tokens INT NOT NULL DEFAULT 0,
+                completion_tokens INT NOT NULL DEFAULT 0,
+                total_tokens INT NOT NULL DEFAULT 0,
+                stream TINYINT NOT NULL DEFAULT 0,
+                INDEX idx_llm_usage_at (at),
+                INDEX idx_llm_usage_at_model (at, model)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     };
 
     private static final String[] ENGLISH_SCHEMA = {

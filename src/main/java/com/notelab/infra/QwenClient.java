@@ -15,14 +15,19 @@ import java.util.List;
 import java.util.Map;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
+import com.notelab.service.LlmUsageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 阿里云 token-plan 网关（OpenAI 兼容协议）调用封装。
+ * 大模型网关（OpenAI 兼容协议）调用封装。2026-10-20 起指向 DeepSeek（api.deepseek.com/v1）。
  * 超时/错误语义与 Python 版 httpx 调用一致。
  * 多 Key 轮换：某把 key 不可用时自动切换下一把（见 QwenKeys.unusableReason）——
  * 覆盖 401 key 无效 / 429 配额耗尽 / 403 无该模型权限三类，避免首把 key 失效就短路整条链路。
+ *
+ * <p><b>这里是全站唯一的出网点</b>，所以两件事都做在这里：
+ * ① 调用前 {@code LlmUsageService.assertWithinDaily()} 过日限额；
+ * ② 调用后把响应里的 usage 记进 {@code llm_usage}（成功失败都记）。
  */
 public final class QwenClient {
 
@@ -83,6 +88,7 @@ public final class QwenClient {
      *  入参 key 仅作首选：key 不可用（失效 / 欠费 / 无模型权限）时自动轮换到下一把候选 key。 */
     public static String complete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
             throws Exception {
+        LlmUsageService.assertWithinDaily();
         ModelHttpException last = null;
         List<String> tried = QwenKeys.candidates();
         for (String k : tried) {
@@ -115,9 +121,17 @@ public final class QwenClient {
                 .build();
         HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (resp.statusCode() != 200) {
+            // 失败的调用也记一行（tokens 为 0）：页面上的"失败数"才有来源
+            com.notelab.service.LlmUsageService.record(model, key, false, resp.statusCode(), 0, 0, 0, false);
             throw new ModelHttpException(resp.statusCode(), resp.body());
         }
         JsonNode json = JsonUtil.parse(resp.body());
+        // 记账：provider 在响应里回 usage（prompt/completion/total）；缺字段就按 0 记
+        JsonNode u = json.at("/usage");
+        com.notelab.service.LlmUsageService.record(model, key, true, 200,
+                u.path("prompt_tokens").asInt(0),
+                u.path("completion_tokens").asInt(0),
+                u.path("total_tokens").asInt(0), false);
         return json.at("/choices/0/message/content").asText("");
     }
 
@@ -140,6 +154,7 @@ public final class QwenClient {
      *  入参 key 仅作首选：仅当尚未向下游吐出任何内容时，key 不可用才轮换重试（避免重复输出）。 */
     public static String streamChat(String model, List<Map<String, String>> messages, String key,
                                     int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
+        LlmUsageService.assertWithinDaily();
         int[] emitted = {0};
         StreamHandler wrapped = d -> { emitted[0]++; handler.onDelta(d); };
         String lastErr = null;
@@ -193,6 +208,9 @@ public final class QwenClient {
         payload.put("model", model);
         payload.put("messages", messages);
         payload.put("stream", true);
+        // 让 provider 在最后一个 SSE 分片里带上 usage（OpenAI 兼容扩展）。不带的话流式调用的
+        // token 用量就完全拿不到 —— 而聊天/竞技场/TRPG 全是流式，那用量账本会漏掉大头。
+        payload.put("stream_options", Map.of("include_usage", true));
         if (disableThinking) payload.put("enable_thinking", false);
         HttpRequest req = base(chatUrl(), key, timeoutSec)
                 .POST(HttpRequest.BodyPublishers.ofString(JsonUtil.write(payload), StandardCharsets.UTF_8))
@@ -205,8 +223,10 @@ public final class QwenClient {
             } catch (Exception e) {
                 body = "";
             }
+            LlmUsageService.record(model, key, false, resp.statusCode(), 0, 0, 0, true);
             return "模型返回 HTTP " + resp.statusCode() + "：" + body.substring(0, Math.min(300, body.length()));
         }
+        int[] usage = {0, 0, 0};   // prompt / completion / total
         try (BufferedReader br = new BufferedReader(new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = br.readLine()) != null) {
@@ -220,11 +240,19 @@ public final class QwenClient {
                         String d = delta.asText();
                         if (!d.isEmpty()) handler.onDelta(d);
                     }
+                    // 最后一个分片只带 usage、choices 为空
+                    JsonNode u = node.at("/usage");
+                    if (!u.isMissingNode() && !u.isNull()) {
+                        usage[0] = u.path("prompt_tokens").asInt(0);
+                        usage[1] = u.path("completion_tokens").asInt(0);
+                        usage[2] = u.path("total_tokens").asInt(usage[0] + usage[1]);
+                    }
                 } catch (Exception ignored) {
                     // 与 Python 一致：解析失败的行直接跳过
                 }
             }
         }
+        LlmUsageService.record(model, key, true, 200, usage[0], usage[1], usage[2], true);
         return null;
     }
 }

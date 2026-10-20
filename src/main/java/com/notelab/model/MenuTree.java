@@ -113,7 +113,10 @@ public final class MenuTree {
                     menu("ops", "运维看板", "🩺", "/ops", true),
                     // 登录审计：每一次登录尝试（含失败）的留痕，用于事后回溯「有没有人在撞库 / 某个洞有没有被利用」。
                     // 接口在受限前缀 /api/admin/ops/login-audit，同样仅超管；路由与 PageRoutes 一一对应。
-                    menu("login-audit", "登录审计", "🛡️", "/login-audit", true))),
+                    menu("login-audit", "登录审计", "🛡️", "/login-audit", true),
+                    // 模型用量（2026-10-20 接 DeepSeek 时加）：大模型调用的 token/请求账本 + 每日限额。
+                    // 接口在受限前缀 /api/admin/llm-usage → 仅超管；本页同时登记 PageRoutes 与 PermGuard.SUPER_ONLY_PAGES。
+                    menu("llm-usage", "模型用量", "🔋", "/llm-usage", true))),
             // 博客管理：B 端写入「十年前端笔记」博客（GitHub: ethzzz/blog）。
             group("g_blog", "博客管理", "📖", List.of(
                     // 文章起草：手动输入 / AI 起草**路线文章**（posts）后提交到博客仓库（BlogContentController）。
