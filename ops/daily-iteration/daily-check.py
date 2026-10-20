@@ -385,6 +385,27 @@ def check_error_aggregation(hours=24):
             warn("yellow", f"24h 内应用 ERROR {total} 条（{len(by_rid)} 个 rid），按 rid 排查：bash ops/logs.sh req <rid>")
     out()
 
+    # ---- 7.1b 其它进程（Next/Python）的错误：没有时间戳，取最近 2000 行按类型聚合 ----
+    other = {}
+    for f in glob.glob(os.path.join(PM2LOG, "*-error.log")):
+        if f.endswith("notelab-java-error.log"):
+            continue
+        _, tail_raw, _ = sh(f"tail -n 2000 '{f}'", timeout=30)
+        for line in tail_raw.splitlines():
+            if not re.search(r"(Error|error|Exception|Traceback)", line):
+                continue
+            k = _normalize_error(line)
+            other[k] = other.get(k, 0) + 1
+    if other:
+        out(f"- 其它进程错误（各 error.log 最近 2000 行，无时间戳）：{len(other)} 类")
+        for k, n in sorted(other.items(), key=lambda kv: -kv[1])[:5]:
+            note = "（爬虫乱发 Server Action，非业务故障）" if "Server Reference ID" in k else ""
+            out(f"  - ×{n} `{k[:90]}`{note}")
+        top_k, top_n = max(other.items(), key=lambda kv: kv[1])
+        if top_n > 30 and "Server Reference ID" not in top_k:
+            warn("yellow", f"进程错误集中在 `{top_k[:60]}`（×{top_n}），建议排查")
+    out()
+
     # ---- 7.2 nginx：5xx 率 ----
     stats = _nginx_stats(hours)
     if stats is None:
