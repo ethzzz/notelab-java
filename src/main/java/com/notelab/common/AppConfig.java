@@ -93,51 +93,100 @@ public final class AppConfig {
         return def;
     }
 
-    public static String qwenBaseUrl() {
-        return get("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1");
+    // ==================================================================================
+    // 大模型配置（2026-10-20 从「阿里云 MaaS」切到 DeepSeek 时统一了命名）
+    //
+    // 变量名：优先 LLM_*，兼容旧的 QWEN_*（代码里曾到处是 qwen 前缀，历史包袱）。
+    //   现网 .env 用 LLM_BASE_URL / LLM_MODEL / LLM_API_KEYS（与 ai-lab 的 LLM_* 对齐）。
+    // ⚠️ 只改 .env 而代码还读旧名 = 服务会回落到「dashscope + qwen-plus + 默认 key」，
+    //   2026-10-20 就这么踩过一次（改名的同一次部署必须带上这版代码）。
+    // ==================================================================================
+
+    /** 打哪家网关（OpenAI 兼容协议）。 */
+    public static String llmBaseUrl() {
+        return firstOf("LLM_BASE_URL", "QWEN_BASE_URL", "https://api.deepseek.com/v1");
     }
 
-    public static String qwenModel() {
-        return get("QWEN_MODEL", "qwen-plus");
+    /** 默认模型。 */
+    public static String llmModel() {
+        return firstOf("LLM_MODEL", "QWEN_MODEL", "deepseek-flash");
     }
 
     /**
      * 首选 key —— **单值场景**（拉模型列表 {@code QwenClient.fetchModels}、健康探活）用它。
      *
-     * <p>⚠️ 必须与 {@link #qwenApiKeys()} **同一口径**：优先 {@code QWEN_API_KEYS} 的第一把，
-     * 只有它为空时才退到 {@code QWEN_API_KEY}。
+     * <p>与 {@link #llmApiKeys()} **同一口径**：先 LLM_API_KEYS、再 QWEN_API_KEYS，取第一把；
+     * 都为空才退到单值 LLM_API_KEY / QWEN_API_KEY。
      *
      * <p>2026-10-20 踩过的坑：这里原来只读 {@code QWEN_API_KEY}。而 {@code QWEN_API_KEY} 还留在
      * <b>/etc/environment</b>（历史遗留的阿里云死 key），进程环境变量优先级高于 `.env` ——
      * 于是「对话」用 `.env` 里的新 key 正常、`/api/models` 却拿死 key 报 401，
      * 表现为「模型能用但模型列表永远是空的」。
      */
-    public static String qwenKey() {
-        for (String k : get("QWEN_API_KEYS", "").split(",")) {
-            String t = k.trim();
-            if (!t.isEmpty()) return t;
+    public static String llmKey() {
+        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("QWEN_API_KEYS", "")}) {
+            for (String k : csv.split(",")) {
+                String t = k.trim();
+                if (!t.isEmpty()) return t;
+            }
         }
-        return get("QWEN_API_KEY", "").trim();
+        return firstOf("LLM_API_KEY", "QWEN_API_KEY", "").trim();
     }
 
     /**
-     * 候选 key 列表（QwenKeys 轮换用）：QWEN_API_KEYS 逗号分隔；未配置时退化为单把 QWEN_API_KEY。
-     * 建议写在 /root/Notelab/notelab-java/.env（仅 Java 生效，不影响 Python 版共用的 QWEN_API_KEY）。
+     * 候选 key 列表（QwenKeys 轮换用）：LLM_API_KEYS / QWEN_API_KEYS 逗号分隔；
+     * 都为空时退化为单值 LLM_API_KEY / QWEN_API_KEY。
      *
-     * <p>⚠️ 这里**直接读** QWEN_API_KEY 而不是调 {@link #qwenKey()}：后者会先看 QWEN_API_KEYS，
+     * <p>⚠️ 这里**直接读单值变量**而不是调 {@link #llmKey()}：后者会先看逗号列表，
      * 两个方法互相调用就成环了（而且会让"退化"分支永远不成立）。
      */
-    public static java.util.List<String> qwenApiKeys() {
+    public static java.util.List<String> llmApiKeys() {
         java.util.List<String> keys = new java.util.ArrayList<>();
-        for (String k : get("QWEN_API_KEYS", "").split(",")) {
-            String t = k.trim();
-            if (!t.isEmpty()) keys.add(t);
+        for (String csv : new String[]{get("LLM_API_KEYS", ""), get("QWEN_API_KEYS", "")}) {
+            for (String k : csv.split(",")) {
+                String t = k.trim();
+                if (!t.isEmpty() && !keys.contains(t)) keys.add(t);
+            }
         }
         if (keys.isEmpty()) {
-            String single = get("QWEN_API_KEY", "").trim();
+            String single = firstOf("LLM_API_KEY", "QWEN_API_KEY", "").trim();
             if (!single.isEmpty()) keys.add(single);
         }
         return keys;
+    }
+
+    /** 按顺序取第一个非空的配置值，全空则用默认值 */
+    private static String firstOf(String k1, String k2, String def) {
+        String v = get(k1, "");
+        if (!v.trim().isEmpty()) return v;
+        v = get(k2, "");
+        return v.trim().isEmpty() ? def : v;
+    }
+
+    // ---- 兼容旧调用点（qwen* 前缀）。新代码请直接用上面的 llm*() ----
+
+    /** @deprecated 用 {@link #llmBaseUrl()} */
+    @Deprecated
+    public static String qwenBaseUrl() {
+        return llmBaseUrl();
+    }
+
+    /** @deprecated 用 {@link #llmModel()} */
+    @Deprecated
+    public static String qwenModel() {
+        return llmModel();
+    }
+
+    /** @deprecated 用 {@link #llmKey()} */
+    @Deprecated
+    public static String qwenKey() {
+        return llmKey();
+    }
+
+    /** @deprecated 用 {@link #llmApiKeys()} */
+    @Deprecated
+    public static java.util.List<String> qwenApiKeys() {
+        return llmApiKeys();
     }
 
     /**
