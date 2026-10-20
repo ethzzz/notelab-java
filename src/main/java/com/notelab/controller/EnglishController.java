@@ -5,7 +5,6 @@ import com.notelab.service.LlmGateway;
 import com.notelab.common.AppConfig;
 import com.notelab.dao.Db;
 import com.notelab.common.JsonUtil;
-import com.notelab.infra.QwenClient;
 import com.notelab.common.SseUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;

@@ -7,7 +7,6 @@ import com.notelab.service.LlmGateway;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.JsonUtil;
-import com.notelab.infra.QwenClient;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;

@@ -5,7 +5,6 @@ import com.notelab.infra.LlmException;
 import com.notelab.service.LlmGateway;
 
 import com.notelab.common.AppConfig;
-import com.notelab.infra.QwenClient;
 import com.notelab.service.RagService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;

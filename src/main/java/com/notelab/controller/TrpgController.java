@@ -8,7 +8,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.notelab.common.AppConfig;
 import com.notelab.common.ClientIp;
 import com.notelab.common.JsonUtil;
-import com.notelab.infra.QwenClient;
 import com.notelab.service.RateLimit;
 import com.notelab.service.TrpgService;
 import jakarta.servlet.http.HttpServletRequest;
