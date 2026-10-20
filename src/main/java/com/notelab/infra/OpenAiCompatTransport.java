@@ -190,6 +190,26 @@ public final class OpenAiCompatTransport implements LlmTransport {
     // 工具
     // ==================================================================================
 
+    /**
+     * 拉该平台真实的模型清单（{@code GET /models}）—— **只用于后台诊断**：
+     * "这把 key 到底能用哪些模型"。调用方的可选清单来自 {@code ModelRegistry} 的 catalog，
+     * 不以 provider 的返回为准（DeepSeek 只列两个 id，探测结果不一定完整）。
+     */
+    public com.fasterxml.jackson.databind.JsonNode fetchModels(String provider) throws Exception {
+        LlmProviders.Provider p = LlmProviders.get(provider);
+        if (p == null) throw new IllegalStateException("平台未配置：" + provider);
+        String key = p.apiKeys().isEmpty() ? "" : p.apiKeys().get(0);
+        if (key.isEmpty()) throw new IllegalStateException("平台 " + provider + " 没有配置 API key");
+        String url = p.baseUrl().replaceAll("/+$", "") + "/models";
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(30))
+                .header("Authorization", "Bearer " + key)
+                .GET().build();
+        HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (resp.statusCode() != 200) throw new LlmException(resp.statusCode(), resp.body());
+        return JsonUtil.parse(resp.body());
+    }
+
     private static HttpRequest.Builder request(String url, String key, int timeoutSec) {
         return HttpRequest.newBuilder(URI.create(url))
                 .timeout(Duration.ofSeconds(timeoutSec))

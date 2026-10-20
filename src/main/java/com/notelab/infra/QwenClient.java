@@ -1,258 +1,87 @@
 package com.notelab.infra;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.service.LlmGateway;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import com.notelab.common.AppConfig;
-import com.notelab.common.JsonUtil;
-import com.notelab.service.LlmUsageService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
- * 大模型网关（OpenAI 兼容协议）调用封装。2026-10-20 起指向 DeepSeek（api.deepseek.com/v1）。
- * 超时/错误语义与 Python 版 httpx 调用一致。
- * 多 Key 轮换：某把 key 不可用时自动切换下一把（见 QwenKeys.unusableReason）——
- * 覆盖 401 key 无效 / 429 配额耗尽 / 403 无该模型权限三类，避免首把 key 失效就短路整条链路。
+ * 旧的大模型门面 —— 现在只是一个**薄壳**：把调用转发给 {@link LlmGateway}，一个 key 都不再碰。
  *
- * <p><b>这里是全站唯一的出网点</b>，所以两件事都做在这里：
- * ① 调用前 {@code LlmUsageService.assertWithinDaily()} 过日限额；
- * ② 调用后把响应里的 usage 记进 {@code llm_usage}（成功失败都记）。
+ * <p>为什么先留壳：11 个调用点里 5 处用 {@code catch (QwenClient.ModelHttpException e)} 做错误文案，
+ * 一次性改签名会让它们静默改变行为。所以分两步：
+ * <ol>
+ *   <li><b>本提交</b>：壳转发到 gateway（平台解析 / allowlist / 限额 / 记账 / 轮换全部走新链路），
+ *       入参里的 {@code key} 已经**被忽略**；</li>
+ *   <li>下一步：把调用点改成直接调 gateway、删掉 {@code String key = AppConfig.llmKey()} 与这些 catch，
+ *       然后删掉本类。</li>
+ * </ol>
+ *
+ * <p>{@link ModelHttpException} 现在继承 {@link LlmException}：5 处旧的 catch 继续有效，
+ * 而错误类型已经统一成新的（{@code messageFull()/messageShort()} 文案逐字不变）。
+ *
+ * @deprecated 用 {@link LlmGateway#chat(String, List)} / {@link LlmGateway#stream(String, List, boolean, LlmTransport.Handler)}
  */
+@Deprecated
 public final class QwenClient {
-
-    private static final Logger log = LoggerFactory.getLogger(QwenClient.class);
-
-    /** 上游非 200 响应（消息格式与 Python 版一致，分两种风格） */
-    public static final class ModelHttpException extends RuntimeException {
-        public final int status;
-        public final String body;
-
-        public ModelHttpException(int status, String body) {
-            this.status = status;
-            this.body = body == null ? "" : body;
-        }
-
-        /** chat/toolbox/rag/extract 风格：模型返回 HTTP {status}：{body[:300]}（全角冒号） */
-        public String messageFull() {
-            return "模型返回 HTTP " + status + "：" + body.substring(0, Math.min(300, body.length()));
-        }
-
-        /** arena / english 风格：HTTP {status}: {body[:200]}（半角冒号） */
-        public String messageShort() {
-            return "HTTP " + status + ": " + body.substring(0, Math.min(200, body.length()));
-        }
-    }
-
-    private static final HttpClient HTTP = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(30))
-            .build();
 
     private QwenClient() {}
 
-    private static HttpRequest.Builder base(String url, String key, int timeoutSec) {
-        return HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(timeoutSec))
-                .header("Authorization", "Bearer " + key)
-                .header("Content-Type", "application/json");
-    }
-
-    private static String chatUrl() {
-        return AppConfig.qwenBaseUrl() + "/chat/completions";
-    }
-
-    /** GET /models（30s 超时），返回解析后的 JSON；非 2xx 抛异常（与 Python 行为一致：异常 → 降级） */
-    public static JsonNode fetchModels(String key) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(AppConfig.qwenBaseUrl() + "/models"))
-                .timeout(Duration.ofSeconds(30))
-                .header("Authorization", "Bearer " + key)
-                .GET().build();
-        HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (resp.statusCode() != 200) {
-            throw new RuntimeException("HTTP " + resp.statusCode());
+    /** @deprecated 用 {@link LlmException} */
+    @Deprecated
+    public static final class ModelHttpException extends LlmException {
+        public ModelHttpException(int status, String body) {
+            super(status, body);
         }
-        return JsonUtil.parse(resp.body());
     }
 
-    /** 非流式 chat completion，返回 content；非 200 抛 ModelHttpException，超时抛 HttpTimeoutException。
-     *  入参 key 仅作首选：key 不可用（失效 / 欠费 / 无模型权限）时自动轮换到下一把候选 key。 */
+    /** @deprecated 用 {@link LlmGateway#chatModel(String, List, int)} */
+    @Deprecated
     public static String complete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
             throws Exception {
-        LlmUsageService.assertWithinDaily();
-        ModelHttpException last = null;
-        List<String> tried = QwenKeys.candidates();
-        for (String k : tried) {
-            try {
-                String r = doComplete(model, messages, k, timeoutSec);
-                QwenKeys.markWorking(k);
-                return r;
-            } catch (ModelHttpException e) {
-                String reason = QwenKeys.unusableReason(e.status, e.body);
-                if (reason != null) {
-                    QwenKeys.markUnusable(k, reason);
-                    last = e;
-                    continue;
-                }
-                throw e;
-            }
+        try {
+            return LlmGateway.chatModel(model, messages, timeoutSec);
+        } catch (LlmException e) {
+            throw new ModelHttpException(e.status, e.body);
+        } catch (LlmGateway.ConfigException e) {
+            throw new ModelHttpException(400, e.getMessage() == null ? "" : e.getMessage());
         }
-        if (last != null) {
-            log.warn("Qwen 非流式调用失败：{} 把候选 key 全部不可用，最后错误 HTTP {}（model={}）",
-                    tried.size(), last.status, model);
-        }
-        throw last != null ? last : new ModelHttpException(429, "no usable qwen api key");
     }
 
-    private static String doComplete(String model, List<Map<String, String>> messages, String key, int timeoutSec)
-            throws Exception {
-        Map<String, Object> payload = Map.of("model", model, "messages", messages, "stream", false);
-        HttpRequest req = base(chatUrl(), key, timeoutSec)
-                .POST(HttpRequest.BodyPublishers.ofString(JsonUtil.write(payload), StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<String> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (resp.statusCode() != 200) {
-            // 失败的调用也记一行（tokens 为 0）：页面上的"失败数"才有来源
-            com.notelab.service.LlmUsageService.record(model, key, false, resp.statusCode(), 0, 0, 0, false);
-            throw new ModelHttpException(resp.statusCode(), resp.body());
-        }
-        JsonNode json = JsonUtil.parse(resp.body());
-        // 记账：provider 在响应里回 usage（prompt/completion/total）；缺字段就按 0 记
-        JsonNode u = json.at("/usage");
-        com.notelab.service.LlmUsageService.record(model, key, true, 200,
-                u.path("prompt_tokens").asInt(0),
-                u.path("completion_tokens").asInt(0),
-                u.path("total_tokens").asInt(0), false);
-        return json.at("/choices/0/message/content").asText("");
-    }
-
-    /** 流式结果回调 */
+    /** @deprecated 用 {@link LlmTransport.Handler} */
+    @Deprecated
     public interface StreamHandler {
         void onDelta(String delta);
     }
 
-    /**
-     * 流式 chat completion。
-     * 返回 null 表示正常读完（或正常结束）；返回字符串表示上游非 200 的错误描述（对应 Python 的 error 事件）。
-     * 超时抛 java.net.http.HttpTimeoutException，其他异常抛 IOException 等，由调用方映射为 error 事件。
-     */
+    /** @deprecated 用 {@link LlmGateway#streamModel(String, List, boolean, LlmTransport.Handler)} */
+    @Deprecated
     public static String streamChat(String model, List<Map<String, String>> messages, String key,
                                     int timeoutSec, StreamHandler handler) throws Exception {
         return streamChat(model, messages, key, timeoutSec, false, handler);
     }
 
-    /** 流式 chat completion（disableThinking=true 时关闭 qwen3 思考链，结构化长输出场景显著提速）。
-     *  入参 key 仅作首选：仅当尚未向下游吐出任何内容时，key 不可用才轮换重试（避免重复输出）。 */
+    /** @deprecated 同上（disableThinking 由 transport 按协议自行表达） */
+    @Deprecated
     public static String streamChat(String model, List<Map<String, String>> messages, String key,
                                     int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
-        LlmUsageService.assertWithinDaily();
-        int[] emitted = {0};
-        StreamHandler wrapped = d -> { emitted[0]++; handler.onDelta(d); };
-        String lastErr = null;
-        List<String> tried = QwenKeys.candidates();
-        for (String k : tried) {
-            emitted[0] = 0;
-            String err = doStreamChat(model, messages, k, timeoutSec, disableThinking, wrapped);
-            if (err == null) {
-                QwenKeys.markWorking(k);
-                return null;
-            }
-            if (emitted[0] == 0) {
-                int status = statusOf(err);
-                String body = bodyOf(err);
-                String reason = QwenKeys.unusableReason(status, body);
-                if (reason != null) {
-                    QwenKeys.markUnusable(k, reason);
-                    lastErr = err;
-                    continue;
-                }
-            }
-            return err;
-        }
-        if (lastErr != null) {
-            log.warn("Qwen 流式调用失败：{} 把候选 key 全部不可用，最后错误：{}", tried.size(), lastErr);
-        }
-        return lastErr;
-    }
-
-    /** 从 doStreamChat 的错误串（"模型返回 HTTP {status}：{body}"，全角冒号）提取状态码 */
-    private static int statusOf(String err) {
         try {
-            int s = err.indexOf("HTTP ") + 5;
-            int e = err.indexOf('\uff1a', s);
-            if (s < 5 || e < 0) return 0;
-            return Integer.parseInt(err.substring(s, e).trim());
-        } catch (Exception ex) {
-            return 0;
+            return LlmGateway.streamModel(model, messages, disableThinking, handler::onDelta);
+        } catch (LlmException e) {
+            throw new ModelHttpException(e.status, e.body);
+        } catch (LlmGateway.ConfigException e) {
+            throw new ModelHttpException(400, e.getMessage() == null ? "" : e.getMessage());
         }
     }
 
-    /** 从 doStreamChat 的错误串提取响应体部分 */
-    private static String bodyOf(String err) {
-        int i = err.indexOf('\uff1a');
-        return i >= 0 ? err.substring(i + 1) : "";
-    }
-
-    private static String doStreamChat(String model, List<Map<String, String>> messages, String key,
-                                       int timeoutSec, boolean disableThinking, StreamHandler handler) throws Exception {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
-        payload.put("messages", messages);
-        payload.put("stream", true);
-        // 让 provider 在最后一个 SSE 分片里带上 usage（OpenAI 兼容扩展）。不带的话流式调用的
-        // token 用量就完全拿不到 —— 而聊天/竞技场/TRPG 全是流式，那用量账本会漏掉大头。
-        payload.put("stream_options", Map.of("include_usage", true));
-        if (disableThinking) payload.put("enable_thinking", false);
-        HttpRequest req = base(chatUrl(), key, timeoutSec)
-                .POST(HttpRequest.BodyPublishers.ofString(JsonUtil.write(payload), StandardCharsets.UTF_8))
-                .build();
-        HttpResponse<java.io.InputStream> resp = HTTP.send(req, HttpResponse.BodyHandlers.ofInputStream());
-        if (resp.statusCode() != 200) {
-            String body;
-            try (var is = resp.body()) {
-                body = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                body = "";
-            }
-            LlmUsageService.record(model, key, false, resp.statusCode(), 0, 0, 0, true);
-            return "模型返回 HTTP " + resp.statusCode() + "：" + body.substring(0, Math.min(300, body.length()));
-        }
-        int[] usage = {0, 0, 0};   // prompt / completion / total
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(resp.body(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (!line.startsWith("data:")) continue;
-                String data = line.substring(5).trim();
-                if (data.equals("[DONE]")) break;
-                try {
-                    JsonNode node = JsonUtil.parse(data);
-                    JsonNode delta = node.at("/choices/0/delta/content");
-                    if (!delta.isMissingNode() && !delta.isNull()) {
-                        String d = delta.asText();
-                        if (!d.isEmpty()) handler.onDelta(d);
-                    }
-                    // 最后一个分片只带 usage、choices 为空
-                    JsonNode u = node.at("/usage");
-                    if (!u.isMissingNode() && !u.isNull()) {
-                        usage[0] = u.path("prompt_tokens").asInt(0);
-                        usage[1] = u.path("completion_tokens").asInt(0);
-                        usage[2] = u.path("total_tokens").asInt(usage[0] + usage[1]);
-                    }
-                } catch (Exception ignored) {
-                    // 与 Python 一致：解析失败的行直接跳过
-                }
-            }
-        }
-        LlmUsageService.record(model, key, true, 200, usage[0], usage[1], usage[2], true);
-        return null;
+    /**
+     * 拉某个平台的真实模型清单（诊断用：后台"从平台拉取候选"按钮）。
+     *
+     * @deprecated 诊断属于 provider 层：用 {@link OpenAiCompatTransport#fetchModels(String)}
+     */
+    @Deprecated
+    public static JsonNode fetchModels(String provider) throws Exception {
+        return OpenAiCompatTransport.INSTANCE.fetchModels(provider);
     }
 }
