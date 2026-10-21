@@ -93,7 +93,14 @@ public class AuthController {
     @PostMapping("/auth/external-login")
     public ResponseEntity<Map<String, Object>> externalLogin(HttpServletRequest request,
                                                              HttpServletResponse response) {
-        if (!"1".equals(AppConfig.get("EXTERNAL_LOGIN_ENABLED", "1"))) {
+        // ⚠️ 默认**关闭**（2026-10-21 由默认开启改为默认关闭）。
+        // 这个接口是匿名可调的，一调就从 ROLE_EXTERNAL 池里随机挑一个**真实账号**发出会话 ——
+        // 而 external 角色历史上持有 94 条权限码，含 POST /api/notes、GET /api/notes/export-all、
+        // PUT|DELETE /api/docs/{id}、DELETE /api/canvas/orphans。
+        // 也就是说：任何人不登录就能拿到「读写全部笔记与文档」的身份，且审计日志分不清是谁。
+        // 演示站真的需要时，显式配 EXTERNAL_LOGIN_ENABLED=1 打开，**同时**把 external 角色的
+        // 写权限收回（只留只读）—— 两道防线缺一不可。
+        if (!"1".equals(AppConfig.get("EXTERNAL_LOGIN_ENABLED", "0"))) {
             return ResponseEntity.status(403).body(Map.of("error", "外部登录入口已关闭"));
         }
         // ① 全站每日总量：键里带日期（自然日对齐），TTL 只做 Redis 清理，跨天自动换新键

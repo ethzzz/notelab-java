@@ -24,7 +24,7 @@ public final class CUserDao {
     private CUserDao() {}
 
     /** c_users 全列序 */
-    private static final String[] ALL_COLS = {"id", "username", "password_hash", "nickname", "group_code", "status", "created_at"};
+    private static final String[] ALL_COLS = {"id", "username", "password_hash", "nickname", "group_code", "status", "created_at", "session_version"};
     /** 列表/管理接口投影列序（不含 password_hash） */
     private static final String[] LIST_COLS = {"id", "username", "nickname", "group_code", "status", "created_at"};
     /** c_user_groups 列序 */
@@ -56,6 +56,18 @@ public final class CUserDao {
 
     public static Map<String, Object> getCUserById(long id) {
         return RowUtil.row(DaoSupport.cUser().selectById(id), ALL_COLS);
+    }
+
+    /** 会话版本：token 里带它，与库中值不一致即视为已失效；行不存在按 0 处理 */
+    public static int sessionVersion(long id) {
+        Map<String, Object> r = Db.queryOne("SELECT session_version FROM c_users WHERE id = ?", id);
+        if (r == null || r.get("session_version") == null) return 0;
+        return ((Number) r.get("session_version")).intValue();
+    }
+
+    /** 让该 C 端用户之前签发的所有 token 立即失效（改密码后必须调用） */
+    public static void bumpSessionVersion(long id) {
+        Db.exec("UPDATE c_users SET session_version = session_version + 1 WHERE id = ?", id);
     }
 
     /** 分页 + 可选关键字（用户名/昵称模糊）与用户组筛选；列序同 LIST_COLS */
@@ -94,10 +106,18 @@ public final class CUserDao {
                 .set(status != null, CUser::getStatus, status));
     }
 
+    /**
+     * 改密码 + **立刻撤销该用户所有已签发的会话**。
+     *
+     * <p>两件事必须在同一处完成：密码一改，之前发出去的 token 就不该再有任何效力
+     * （否则「改了密码却发现别人的浏览器还能用」）。放在最底层 DAO 里，
+     * 是让「用户自己改」和「管理员重置」两条路径自动都带上，不依赖调用方记得。
+     */
     public static void setCUserPassword(long id, String passwordHash) {
         DaoSupport.cUser().update(Wrappers.lambdaUpdate(CUser.class)
                 .eq(CUser::getId, id)
                 .set(CUser::getPasswordHash, passwordHash));
+        bumpSessionVersion(id);
     }
 
     public static void deleteCUser(long id) {

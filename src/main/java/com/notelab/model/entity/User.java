@@ -17,6 +17,8 @@ public class User {
     private String email;
     private String role;
     private LocalDateTime createdAt;
+    /** 会话版本：改密码时 +1，之前签发的 token 立即失效（见 Session.parseToken） */
+    private Integer sessionVersion;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

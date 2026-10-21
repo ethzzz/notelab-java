@@ -190,6 +190,20 @@ build_and_restart() {  # $1=仓名 $2=变更文件清单
         pm2_restart notelab-collab "http://127.0.0.1:3030/health" 20
       fi ;;
     notelab-java)
+      # ① 鉴权覆盖率闸门（2026-10-21 加）：拦「新增接口忘了判会话」。
+      #    ApiPermInterceptor 对**匿名**与**C 端会话**访问非 /api/c/** 的路径一律放行
+      #    （CPermGuard 对非 C 前缀直接 return null），正确性完全靠每个 Controller 自己调
+      #    AuthUtil.user / CAuthUtil.user 判空。漏一个，那个接口就直接对全网开放，
+      #    而且运行时没有任何报错 —— 这类洞只能在构建期兜。
+      #    必须放在 pm2 stop **之前**：检查不过就别把服务停了。
+      if [ "$DRY_RUN" = 1 ]; then
+        log "  [dry-run] 跳过鉴权覆盖率检查"
+      else
+        log "  鉴权覆盖率检查…"
+        if ! /usr/bin/node "$REPO_ROOT/notelab-java/ops/check-auth-coverage.mjs"; then
+          die "$repo 鉴权覆盖率检查未通过（见上方清单），已中止部署；服务未停"
+        fi
+      fi
       # ⚠️ 必须**先停进程再构建**（2026-10-10 血的教训）：
       #   Spring Boot fat jar 里的类由 LaunchedURLClassLoader **惰性加载**，mvn package
       #   重写 target/notelab-java.jar 的瞬间，仍在运行的旧进程就开始

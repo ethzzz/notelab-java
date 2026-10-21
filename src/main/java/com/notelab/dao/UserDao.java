@@ -17,7 +17,7 @@ public final class UserDao {
     private UserDao() {}
 
     /** 原 SELECT * 列序（现网 users 表列序：email/role 为后置补列） */
-    private static final String[] ALL_COLS = {"id", "username", "password_hash", "created_at", "email", "role"};
+    private static final String[] ALL_COLS = {"id", "username", "password_hash", "created_at", "email", "role", "session_version"};
     /** 原列表/分页 SQL 投影列序（不含 password_hash） */
     private static final String[] LIST_COLS = {"id", "username", "email", "role", "created_at"};
 
@@ -46,6 +46,26 @@ public final class UserDao {
 
     public static Map<String, Object> getUserById(long id) {
         return RowUtil.row(DaoSupport.user().selectById(id), ALL_COLS);
+    }
+
+    /**
+     * 会话版本：token 里带它，与库中值不一致即视为已失效。
+     * 行不存在时返回 0 —— 与「旧 token 没有版本号、按 0 处理」保持一致，避免上线即踢人。
+     */
+    public static int sessionVersion(long id) {
+        Map<String, Object> r = Db.queryOne("SELECT session_version FROM users WHERE id = ?", id);
+        if (r == null || r.get("session_version") == null) return 0;
+        return ((Number) r.get("session_version")).intValue();
+    }
+
+    /**
+     * 让该用户**之前签发的所有 token** 立即失效。
+     *
+     * <p>改密码 / 管理员重置密码 / 强制下线都必须调它 —— 这是会话撤销的唯一手段。
+     * 没有它的话，token 一旦泄露（截图、日志、共享电脑）只能等 30 天自然过期。
+     */
+    public static void bumpSessionVersion(long id) {
+        Db.exec("UPDATE users SET session_version = session_version + 1 WHERE id = ?", id);
     }
 
     public static List<Map<String, Object>> listUsersForPerm() {
@@ -115,10 +135,12 @@ public final class UserDao {
                 .set(User::getRole, role));
     }
 
+    /** 改密码 + 立刻撤销该用户所有已签发的会话（理由见 CUserDao.setCUserPassword） */
     public static void setUserPassword(long uid, String passwordHash) {
         DaoSupport.user().update(Wrappers.lambdaUpdate(User.class)
                 .eq(User::getId, uid)
                 .set(User::getPasswordHash, passwordHash));
+        bumpSessionVersion(uid);
     }
 
     public static long countSuperAdmins() {

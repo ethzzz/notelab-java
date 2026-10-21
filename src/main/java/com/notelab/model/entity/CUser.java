@@ -18,6 +18,8 @@ public class CUser {
     private String groupCode;
     private String status;
     private LocalDateTime createdAt;
+    /** 会话版本：改密码时 +1，之前签发的 token 立即失效（见 Session.parseCToken） */
+    private Integer sessionVersion;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

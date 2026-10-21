@@ -111,7 +111,14 @@ public final class PermGuard {
             // 草稿预览：博客的 SSR 进程**匿名**来取（它没有 B 端会话），所以只能靠「不可猜的 token + 30 分钟 TTL」
             // 授权 —— 见 BlogPreviewService。⚠️ 加了这一条，POST /api/blog/preview 也不再被门禁拦，
             // 那个接口在 Controller 里自带登录判断（AuthUtil），安全边界没有变。
-            "/api/blog/preview"
+            "/api/blog/preview",
+            // ---- C 端「公开只读内容」（2026-10-21 补）----
+            // 这些原本只靠 CPermGuard 的 fail-open 兜着：C 端用户一旦被分进某个用户组并配了权限码，
+            // 就会被按组校验，而「给谁看背景图 / 已发布的游戏内容」根本不是一种权限 —— 语义上必须放行。
+            "/api/c/config",            // 外壳首屏配置（背景图等），登录前就要用，只读
+            "/api/c/spire/content",     // 爬塔已发布内容快照（匿名也要能玩）
+            "/api/c/loot/content",      // 摸金已发布内容快照
+            "/api/c/game/access"        // 哪些游戏需要登录：游戏页据此决定挂不挂登录墙
     );
 
     /** 该 api 路径是否是公开端点（精确等于该前缀，或位于其下） */

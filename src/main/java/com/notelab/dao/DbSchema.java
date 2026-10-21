@@ -166,6 +166,17 @@ final class DbSchema {
         if (roleCol == null) {
             Db.exec("ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'");
         }
+        // ---- 会话版本（2026-10-21）：让「改密码」能立刻踢掉旧会话 ----
+        // 之前 token 只有 uid.exp，改密码后旧 token 仍能用满 30 天（无撤销手段）。
+        // 现在 token 里带版本号，与库中 session_version 比对；改密码时 +1 即作废之前所有 token。
+        // ⚠️ 默认 0，且**旧 token（无版本号）按 0 处理** —— 所以这次上线不会把任何在线用户踢下线，
+        //    只有「他改过密码」或「管理员重置了他的密码」之后，旧会话才失效。
+        if (Db.queryOne("SHOW COLUMNS FROM users LIKE 'session_version'") == null) {
+            Db.exec("ALTER TABLE users ADD COLUMN session_version INT NOT NULL DEFAULT 0");
+        }
+        if (Db.queryOne("SHOW COLUMNS FROM c_users LIKE 'session_version'") == null) {
+            Db.exec("ALTER TABLE c_users ADD COLUMN session_version INT NOT NULL DEFAULT 0");
+        }
         Db.exec("""
             CREATE TABLE IF NOT EXISTS perm_routes (
                 code VARCHAR(120) PRIMARY KEY,
