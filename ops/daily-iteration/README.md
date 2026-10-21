@@ -71,6 +71,31 @@ python3 ops/daily-iteration/daily-check.py --deep   # 手动跑一次全量巡�
   占比 ≥1% 记 🟡，≥5% 记 🔴。日志不存在时显式跳过，不误报。
 - 依赖：nginx JSON 日志由 `ops/nginx-notelab.conf` 里的 `log_format notelab_json` 产出；没有它时本节只显示应用侧错误。
 
+## 告警推送 `notify.py`（2026-10-21 新增）
+
+只推**值得打断你**的告警，避免每天被 🟡 轰炸：
+
+| 条件 | 是否推送 |
+|---|---|
+| 🔴（严重 > 0） | ✅ 立即 |
+| 🟡 连续 ≥ `streak_days` 天（默认 3） | ✅ |
+| 🟡 未达连续天数 / 🟢 | ❌ 只记 `alerts.log` |
+| 报告文件缺失（巡检挂了） | ✅ 按 🔴 处理 |
+| 同一天同样内容 | ❌ 去重（防 cron 重跑重复发） |
+
+```bash
+cp ops/daily-iteration/notify.conf.example /root/ops/notify.conf
+chmod 600 /root/ops/notify.conf     # 含密钥，别提交
+vi /root/ops/notify.conf            # 选一个渠道：telegram / smtp / webhook
+python3 ops/daily-iteration/notify.py --test     # 发一条测试消息
+python3 ops/daily-iteration/notify.py --dry-run  # 只看决策，不发
+```
+
+- cron：`35 7 * * *`（daily-check 之后 5 分钟），由 `install-cron.sh` 统一安装；
+- 状态：`/root/ops/.alertstate.json`（连续天数 + 已发送指纹）；
+- 审计：`/root/ops/alerts.log`（无论有没有配渠道都会记一行）；
+- 三个渠道可同时配（都会发）；都不配时静默跳过，不会报错。
+
 ## 安全纪律
 - `setup-mybackup.sh` 不回显任何密码值；密码只写入 `/root/.my.cnf`(600)，不上命令行、不进 git。
 - 巡检器 `daily-check.py` 纯只读，不做任何修改；`git` 操作仅 `fetch`（读落后），不 commit/push。
