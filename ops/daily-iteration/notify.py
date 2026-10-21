@@ -215,8 +215,13 @@ def deliver(conf, subject, text):
     return sent
 
 
-def append_alert_log(status, reason, sent):
-    line = f"{datetime.datetime.now().isoformat(timespec='seconds')}\t{status}\t{reason}\tchannels={','.join(sent) or 'none'}\n"
+def append_alert_log(status, reason, sent, detail=""):
+    """审计行：一行一条，含状态、触发原因、渠道、告警明细（明细压成单行）。"""
+    flat = " / ".join(x.replace("\n", " ") for x in detail.splitlines() if x.strip())[:400] if detail else ""
+    line = (
+        f"{datetime.datetime.now().isoformat(timespec='seconds')}\t{status}\t{reason}\t"
+        f"channels={','.join(sent) or 'none'}\t{flat}\n"
+    )
     try:
         with open(ALERT_LOG, "a", encoding="utf-8") as f:
             f.write(line)
@@ -268,7 +273,7 @@ def main():
     keys = (st.get("sent_keys", []) + [f"{today}:{report['lamp']}:{dg}"])[-20:]
     st.update({"date": today, "status": report["lamp"], "yellow_streak": streak, "sent_keys": keys})
     save_state(st)
-    append_alert_log(report["lamp"], reason, sent)
+    append_alert_log(report["lamp"], reason, sent, text)
     print(f"[notify] 已发送：{sent or '无渠道配置（仅记录 alerts.log）'}")
     return 0
 
