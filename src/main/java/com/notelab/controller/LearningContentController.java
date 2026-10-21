@@ -49,7 +49,12 @@ import java.util.Set;
 @RequestMapping("/api/learning")
 public class LearningContentController {
 
-    private static final int MAX_LEARNING_CHARS = 1_000_000;
+    /**
+     * 整包上限。2026-10-21 从 1MB 提到 2MB：课程从 88 节扩到 108 节、每节补到 2.4k+ 中文字后，
+     * 紧凑 JSON 已到 1.26M 字符（约 2.1MB UTF-8）。ui_config 是 mediumtext（16MB），空间不是瓶颈；
+     * 这里只是防误贴整份日志的闸门，别为了「看起来小」去截断正文。
+     */
+    private static final int MAX_LEARNING_CHARS = 2_000_000;
     static final int MAX_TRACKS = 30;
     static final int MAX_STAGES = 12;
     static final int MAX_LESSONS = 200;
