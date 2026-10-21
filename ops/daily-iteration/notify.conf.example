@@ -1,0 +1,36 @@
+# NoteLab 巡检告警渠道配置模板
+#
+# 用法：
+#   cp /root/Notelab/notelab-java/ops/daily-iteration/notify.conf.example /root/ops/notify.conf
+#   chmod 600 /root/ops/notify.conf
+#   vi /root/ops/notify.conf          # 填渠道
+#   python3 /root/Notelab/notelab-java/ops/daily-iteration/notify.py --test
+#
+# ⚠️ 这个文件含密钥，**不要提交进 git**（/root/ops 不在任何仓库里）。
+#    三个渠道可以都配（会都发），也可以只配一个；都不配时只写 /root/ops/alerts.log。
+
+# ---- 推送阈值 ----
+# 🟡 连续多少天推送（默认 3）。🔴 永远立即推送，不受此限制。
+streak_days=3
+
+# ---- 渠道 1：Telegram ----
+# 找 @BotFather 建 bot 拿 token；chat_id 可通过 /getUpdates 或把 bot 拉进群后取负数 id
+telegram_bot_token=
+telegram_chat_id=
+
+# ---- 渠道 2：SMTP 邮件（不需要本机装 MTA）----
+# 常见：QQ 邮箱 smtp.qq.com:465（用授权码）、163 smtp.163.com:465、Gmail smtp.gmail.com:465
+smtp_host=
+smtp_port=465
+smtp_ssl=true
+smtp_user=
+smtp_pass=
+smtp_from=
+smtp_to=
+
+# ---- 渠道 3：通用 webhook（企业微信 / 钉钉 / Slack / 自建）----
+# webhook_type: generic | wecom | dingtalk | slack
+# 企业微信机器人：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
+# 钉钉机器人：https://oapi.dingtalk.com/robot/send?access_token=xxx
+webhook_url=
+webhook_type=generic
