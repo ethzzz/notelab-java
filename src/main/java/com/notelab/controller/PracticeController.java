@@ -904,17 +904,21 @@ public class PracticeController {
     }
 
     /**
-     * 在博客仓的文章目录里找该模块该篇章的路线文章，返回 slug（去 .md）；找不到返回空串。
+     * 在博客仓的文章目录里找该模块该篇章的路线文章，返回 slug（去掉 .md / .mdx）；找不到返回空串。
      *
      * <p>⚠️ 只**读**这个 clone（发布链路已不再往里写）—— 它现在的角色是「线路文章清单」的权威副本，
      * 用来把 module + 篇章号推导成 relatedPost。
+     *
+     * <p>⚠️ 两种后缀都要认：博客的路线文章 2026-10-20 起统一是 {@code .mdx}（为了能嵌组件），
+     * 只认 {@code .md} 会让所有解答的 relatedPost 都是空串 —— 聚合页全落到「独立分组」，
+     * 且不报错，只有肉眼看页面才会发现。
      */
     private static String findRelatedPost(String module, String chapter2) {
         String prefix = module + "-roadmap-" + chapter2 + "-";
         for (String name : BlogRepoService.listNames(POSTS_DIR)) {
-            if (name.startsWith(prefix) && name.endsWith(".md")) {
-                return name.substring(0, name.length() - 3);
-            }
+            if (!name.startsWith(prefix)) continue;
+            if (name.endsWith(".md")) return name.substring(0, name.length() - 3);
+            if (name.endsWith(".mdx")) return name.substring(0, name.length() - 4);
         }
         return "";
     }
