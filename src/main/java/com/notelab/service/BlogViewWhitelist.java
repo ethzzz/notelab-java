@@ -17,8 +17,8 @@ import java.util.Set;
  *
  * <p>两边的来源不同、更新频率也不同：
  * <ul>
- *   <li><b>posts</b>：博客仓 {@code src/content/posts/*.md} 的文件名。只有构建/发布文章才会变，
- *       所以扫目录 + 5 分钟缓存足够。</li>
+ *   <li><b>posts</b>：博客仓 {@code src/content/posts/*.md} / {@code *.mdx} 的文件名。只有构建/发布文章才会变，
+ *       所以扫目录 + 5 分钟缓存足够。两种后缀都要认：2026-10 起博客全量改用 MDX。</li>
  *   <li><b>solutions</b>：MySQL 的 {@code practice_record.published_slug}（{@code <> ''} 即已发布，
  *       与公开接口同一个判据）。发布/下线是**秒级**动作，等 5 分钟缓存过期就等于
  *       「刚发的题解前 5 分钟没人读得进统计」→ 所以发布/下线后要主动 {@link #invalidateSolutions()}。</li>
@@ -62,7 +62,7 @@ public final class BlogViewWhitelist {
         solutionSlugsAt = 0;
     }
 
-    // ---------------- posts：博客仓里的 md 文件名 ----------------
+    // ---------------- posts：博客仓里的 md/mdx 文件名 ----------------
 
     private static Set<String> posts() {
         long now = System.currentTimeMillis();
@@ -70,7 +70,8 @@ public final class BlogViewWhitelist {
         try {
             Set<String> s = new HashSet<>();
             for (String n : BlogRepoService.listNames("src/content/posts")) {
-                if (n.endsWith(".md")) s.add(n.substring(0, n.length() - 3));
+                if (n.endsWith(".mdx")) s.add(n.substring(0, n.length() - 4));
+                else if (n.endsWith(".md")) s.add(n.substring(0, n.length() - 3));
             }
             if (!s.isEmpty()) {
                 postSlugs = Set.copyOf(s);
