@@ -1163,3 +1163,9 @@ key#1 401 \Invalid API-key\、key#2 403 \AccessDenied.Unpurchased\（密钥有�
   我没有为了测而上传测试文档：`uploads` 是文件目录，传了就得手动删，不值得。
 - 最终回归：**17/17 全绿**（health/models/账本 + 竞技场 + 博客 AI + extract/toolbox/trpg/english 路由与守卫 +
   allowlist 本地拒绝 + C 端 translate 判分）。
+## 2026-10-22 博客浏览数白名单兼容 MDX
+
+- **问题**：文章页 `POST /api/blog/public/view` 返回 404 `{"error":"博客上没有这篇内容"}`。
+- **根因**：`BlogViewWhitelist.posts()` 只收集 `.md`；博客仓已全量转 `.mdx`（服务器 228 篇 mdx / 0 篇 md），白名单为空。
+- **修复**：扫描 `src/content/posts` 时同时接受 `.mdx`（去 4 字符后缀）与 `.md`（去 3 字符后缀）。
+- **验收**：生产环境 `POST /api/blog/public/view`（slug=`nextjs-roadmap-04-data-fetching-caching`）→ 200 `{"views":1}`；浏览器进入文章页 POST 200、浏览数正常显示。
