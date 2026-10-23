@@ -44,6 +44,8 @@ public final class ApiModules {
             Map.entry("analytics", "埋点分析接口"),
             Map.entry("arch", "架构守护接口"),
             Map.entry("blog", "博客接口"),
+            // 社区运营接口（PRD-P9 M2）：/api/community-admin/**，B 端管理 C 端社区内容
+            Map.entry("community-admin", "社区运营接口"),
             // ---- 会话基础（它们都是 PermGuard.SESSION_ENDPOINTS，登记时会被跳过，留着以防万一）----
             Map.entry("auth", "认证"),
             Map.entry("login", "登录"),

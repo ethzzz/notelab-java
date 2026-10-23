@@ -129,6 +129,11 @@ public final class MenuTree {
                     // 部署状态：博客是静态站，写进仓库后要构建一次才上线 —— 这一页看进度/结果/失败原因
                     // （后台触发的服务器本地构建，见 BlogDeployService；单开一页是用户 2026-10-16 定的）。
                     menu("blog-deploy", "部署状态", "🚀", "/blog-deploy", true))),
+            // 社区管理（PRD-P9 M2，2026-10-23）：C 端 /community 的内容供给主要来自**管理员**而不是用户
+            // （C 端只有 5 个账号），所以「后台能写主题 / 管板块 / 把博客导成讨论区」比用户侧互动更早需要。
+            // ⚠️ 路由 /community-admin 必须同步登记 PageRoutes，否则叶子被 RBAC 过滤 → 谁都看不到。
+            group("g_community", "社区管理", "💬", List.of(
+                    menu("community-admin", "社区运营", "💬", "/community-admin", true))),
             // 练习解答：一条记录 = 一道练习题解，配好发布信息后出现在博客的**解答页**
             // （内容存 MySQL、发布即生效、不写博客仓，见 PracticeController）。
             // ⚠️ 2026-10-16 从「博客管理」挪出来单独成组：原来叫「博客文章生成」、与「文章起草」并排，

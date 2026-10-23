@@ -76,6 +76,8 @@ public final class RouteGroups {
             Map.entry("/blog-articles", List.of("blog")),
             // 部署状态：/api/blog/deploy*（同一套 /api/blog 接口的第三类用途）
             Map.entry("/blog-deploy", List.of("blog")),
+            // 社区运营（PRD-P9 M2）：板块 CRUD、官方发帖/编辑、置顶精华锁帖、导入博客种子帖
+            Map.entry("/community-admin", List.of("community-admin")),
             // 低代码平台：设计稿（ui_config.lowcode）与表单运行时提交记录（lowcode_records）都在这里
             Map.entry("/lowcode", List.of("lowcode"))
     );

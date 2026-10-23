@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -273,6 +274,162 @@ public final class CommunityDao {
         Map<String, Object> r = Db.queryOne(
                 "SELECT id FROM cm_comments WHERE id=? AND post_id=?", commentId, postId);
         return r != null;
+    }
+
+    // ================= 管理端（B 端 /api/community-admin） =================
+    //
+    // ⚠️ 与上面的 C 端读方法**刻意分开**：管理端要看见全部状态（含种子帖、隐藏、已删），
+    // 而且不受 VISIBLE 规则约束。合并成一个方法再加 `boolean admin` 参数会让
+    // 「这条 SQL 到底给谁看」变成运行时才知道，是最容易漏权限的写法。
+
+    /** 板块列表（管理用）：含归档，帖子数按「未删」统计 */
+    public static List<Map<String, Object>> listBoardsForAdmin() {
+        return Db.queryAll("""
+                SELECT b.id, b.slug, b.name, b.description, b.icon, b.sort_no, b.status, b.created_at,
+                       (SELECT COUNT(*) FROM cm_posts p
+                         WHERE p.board_id = b.id AND p.status <> 'deleted') AS post_count
+                  FROM cm_boards b
+                 ORDER BY b.sort_no, b.id""");
+    }
+
+    public static long createBoard(String slug, String name, String description, String icon, int sortNo) {
+        return Db.execInsert(
+                "INSERT INTO cm_boards (slug,name,description,icon,sort_no) VALUES (?,?,?,?,?)",
+                slug, name, description, icon, sortNo);
+    }
+
+    /** 板块部分更新：null = 不改。slug 允许改（会改 C 端 URL），由 Controller 提示风险 */
+    public static void updateBoard(long id, String slug, String name, String description,
+                                   String icon, Integer sortNo, String status) {
+        Db.exec("""
+                UPDATE cm_boards SET
+                  slug        = COALESCE(?, slug),
+                  name        = COALESCE(?, name),
+                  description = COALESCE(?, description),
+                  icon        = COALESCE(?, icon),
+                  sort_no     = COALESCE(?, sort_no),
+                  status      = COALESCE(?, status)
+                WHERE id = ?""", slug, name, description, icon, sortNo, status, id);
+    }
+
+    public static int deleteBoard(long id) {
+        return Db.execCount("DELETE FROM cm_boards WHERE id = ?", id);
+    }
+
+    /** 板块下未删除的帖子数（删板块前的拦截依据：有帖子就不许删，避免内容变孤儿） */
+    public static long countPostsInBoard(long boardId) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM cm_posts WHERE board_id = ? AND status <> 'deleted'", boardId);
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    /**
+     * 管理端帖子列表：**不套 VISIBLE**，含种子帖与已删/已隐藏；支持关键词与状态筛选。
+     *
+     * @param status 空 = 全部；否则精确匹配（normal/closed/hidden/deleted）
+     */
+    public static List<Map<String, Object>> adminListPosts(long boardId, String q, String status,
+                                                           int limit, long offset) {
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (boardId > 0) { where.append(" AND p.board_id = ?"); args.add(boardId); }
+        if (status != null && !status.isBlank()) { where.append(" AND p.status = ?"); args.add(status); }
+        if (q != null && !q.isBlank()) {
+            where.append(" AND (p.title LIKE ? OR p.content_text LIKE ?)");
+            args.add("%" + q.trim() + "%");
+            args.add("%" + q.trim() + "%");
+        }
+        String sql = """
+                SELECT p.id, p.board_id, p.title, p.status, p.author_id, p.link_type, p.link_key,
+                       p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
+                       p.last_reply_at, p.created_at, p.updated_at,
+                       %s, b.name AS board_name, b.slug AS board_slug
+                  FROM cm_posts p
+                  JOIN cm_boards b ON b.id = p.board_id
+                  LEFT JOIN c_users u ON u.id = p.author_id
+                """ .formatted(AUTHOR_NAME) + where + " ORDER BY p.is_pinned DESC, p.id DESC LIMIT ? OFFSET ?";
+        args.add(limit);
+        args.add(offset);
+        return Db.queryAll(sql, args.toArray());
+    }
+
+    public static long adminCountPosts(long boardId, String q, String status) {
+        StringBuilder where = new StringBuilder(" WHERE 1=1");
+        List<Object> args = new ArrayList<>();
+        if (boardId > 0) { where.append(" AND p.board_id = ?"); args.add(boardId); }
+        if (status != null && !status.isBlank()) { where.append(" AND p.status = ?"); args.add(status); }
+        if (q != null && !q.isBlank()) {
+            where.append(" AND (p.title LIKE ? OR p.content_text LIKE ?)");
+            args.add("%" + q.trim() + "%");
+            args.add("%" + q.trim() + "%");
+        }
+        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p" + where, args.toArray());
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    /** 管理端详情：任何状态都能读（含正文），用于编辑与排障 */
+    public static Map<String, Object> adminGetPost(long id) {
+        return Db.queryOne("""
+                SELECT p.id, p.board_id, p.author_id, p.title, p.content_md, p.content_text,
+                       p.link_type, p.link_key, p.status, p.is_pinned, p.is_featured,
+                       p.view_count, p.comment_count, p.like_count, p.created_at, p.updated_at,
+                       %s, b.name AS board_name, b.slug AS board_slug
+                  FROM cm_posts p
+                  JOIN cm_boards b ON b.id = p.board_id
+                  LEFT JOIN c_users u ON u.id = p.author_id
+                 WHERE p.id = ?""".formatted(AUTHOR_NAME), id);
+    }
+
+    /** 管理端编辑：标题/正文/板块（link_* 不允许改，改了会让「讨论入口」指向另一条内容） */
+    public static void adminUpdatePost(long id, long boardId, String title, String contentMd, String contentText) {
+        Db.exec("UPDATE cm_posts SET board_id=?, title=?, content_md=?, content_text=? WHERE id=?",
+                boardId, title, contentMd, contentText, id);
+    }
+
+    /**
+     * 置顶 / 精华 / 锁帖。三个参数为 null 表示「不改」。
+     *
+     * <p>⚠️ 锁帖写的是 {@code status}：closed 与 normal 互转。这个接口**不碰** hidden/deleted
+     * —— 否则「取消锁帖」会把一条被折叠的帖子悄悄恢复正常，审核痕迹就丢了。
+     */
+    public static void setPostFlags(long id, Integer pinned, Integer featured, Boolean closed) {
+        if (pinned != null || featured != null) {
+            Db.exec("UPDATE cm_posts SET is_pinned=COALESCE(?,is_pinned), is_featured=COALESCE(?,is_featured) WHERE id=?",
+                    pinned, featured, id);
+        }
+        if (closed != null) {
+            Db.exec("UPDATE cm_posts SET status=? WHERE id=? AND status IN ('normal','closed')",
+                    closed ? "closed" : "normal", id);
+        }
+    }
+
+    /** 管理员软删（不限作者）。与 C 端 `softDeletePost` 的区别只有「不校验 author_id」。 */
+    public static int adminSoftDeletePost(long id) {
+        return Db.execCount("UPDATE cm_posts SET status='deleted' WHERE id=? AND status<>'deleted'", id);
+    }
+
+    /** 已存在的种子帖 link_key 集合（导入前一次性取，避免逐条查库） */
+    public static java.util.Set<String> seedKeys() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (Map<String, Object> r : Db.queryAll(
+                "SELECT link_key FROM cm_posts WHERE link_type='blog' AND status<>'deleted'")) {
+            Object k = r.get("link_key");
+            if (k != null) out.add(String.valueOf(k));
+        }
+        return out;
+    }
+
+    /** 插入一条种子帖（官方身份 author_id=0，正文留空，等真人来讨论） */
+    public static void insertSeedPost(long boardId, String title, String linkKey) {
+        Db.exec("""
+                INSERT INTO cm_posts (board_id, author_id, title, content_md, content_text, link_type, link_key)
+                VALUES (?, 0, ?, '', '', 'blog', ?)""", boardId, title, linkKey);
+    }
+
+    /** 删除「没有任何回复的系统种子帖」（导入前重置用；有回复的保留，否则会丢真实讨论） */
+    public static int deleteEmptySeedPosts() {
+        return Db.execCount(
+                "DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0");
     }
 
     // ================= 内部工具 =================

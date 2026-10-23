@@ -105,6 +105,11 @@ public final class PageRoutes {
             new String[]{"/blog-articles", "博客·文章记录"},
             // 博客管理 → 部署状态（后台触发的服务器本地构建：进度、结果、失败日志尾部）
             new String[]{"/blog-deploy", "博客·部署状态"},
+            // 社区管理 → 社区运营（PRD-P9 M2：板块 CRUD / 官方发帖与编辑 / 置顶精华锁帖 / 导入博客种子帖）。
+            // ⚠️ 与 MenuTree.g_community 的 community-admin 一一对应，只加一处会分别表现为
+            //    「超管能看普通角色看不了」或「谁都看不见」（见根 AGENTS.md）。
+            // 接口在 /api/community-admin/**，模块键 community-admin（ApiModules.LABELS 已登记中文名）。
+            new String[]{"/community-admin", "社区·社区运营"},
             // 路径不含 /admin 前缀：PAGE_ROUTES 与前端 router.pathname 比对，
             // 而 B 端 basePath（/admin）由 Next 自己拼，写进去会永远匹配不上 → 页面被守卫拦掉
             new String[]{"/game-access", "游戏登录管理"}
