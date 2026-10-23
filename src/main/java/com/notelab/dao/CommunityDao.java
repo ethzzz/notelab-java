@@ -559,9 +559,13 @@ public final class CommunityDao {
     /**
      * 搜索标题 + 正文纯文本（{@code content_text} 是发帖时算好的去标记文本）。
      *
-     * <p>用 LIKE 而不是 FULLTEXT：234 条主题下 LIKE 已经够快，而 MySQL 的 ngram 分词器
-     * 对中文短语的召回需要调参（默认 token 长度 2，短词搜不到），为一个 5 人站的搜索
-     * 引这套调参不值。跌到 1000 条以上再换。
+     * <p>用 LIKE 而不是 FULLTEXT：主题数量还很小，LIKE 已经够快，而 MySQL 的 ngram 分词器
+     * 对中文短语的召回需要调参（默认 token 长度 2，短词搜不到），为这个规模的查询引调参不值。
+     *
+     * <p>⚠️ **刻意不套 {@link #VISIBLE}**（与信息流相反）：文章讨论区因为没有回复而不进信息流，
+     * 但它**是真实可达的内容**（从文章页可以进来）。搜索的语义是「找到我知道存在的东西」，
+     * 用户搜「Java」很可能就是想找某篇文章的讨论区去发起讨论 —— 过滤掉它等于告诉用户"没这篇"。
+     * 代价是搜索结果里会出现一批空讨论区，所以下面按「有回复的排前面」排序。
      */
     public static List<Map<String, Object>> searchPosts(String q, int limit, long offset) {
         String kw = "%" + q.trim() + "%";
@@ -573,15 +577,17 @@ public final class CommunityDao {
                   FROM cm_posts p
                   JOIN cm_boards b ON b.id = p.board_id
                   LEFT JOIN c_users u ON u.id = p.author_id
-                 WHERE %s AND (p.title LIKE ? OR p.content_text LIKE ?)
-                %s
-                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME, VISIBLE, ORDER_LATEST), kw, kw, limit, offset);
+                 WHERE p.status = 'normal' AND (p.title LIKE ? OR p.content_text LIKE ?)
+                 ORDER BY (p.comment_count > 0) DESC, p.is_pinned DESC,
+                          COALESCE(p.last_reply_at, p.created_at) DESC, p.id DESC
+                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME), kw, kw, limit, offset);
     }
 
+    /** 计数口径必须与 {@link #searchPosts} 一致（同样不套 VISIBLE），否则分页总数与结果对不上 */
     public static long countSearch(String q) {
         String kw = "%" + q.trim() + "%";
         Map<String, Object> r = Db.queryOne(
-                "SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE
+                "SELECT COUNT(*) AS n FROM cm_posts p WHERE p.status = 'normal'"
                 + " AND (p.title LIKE ? OR p.content_text LIKE ?)", kw, kw);
         return r == null ? 0 : ((Number) r.get("n")).longValue();
     }
