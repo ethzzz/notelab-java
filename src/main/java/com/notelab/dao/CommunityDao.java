@@ -38,16 +38,23 @@ public final class CommunityDao {
             + "ELSE COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') END AS author_name";
 
     /**
-     * 列表可见性：**没有回复的系统种子帖不进列表**。
+     * 列表可见性：**「文章讨论区」这种空壳不进列表，除非已经有人讨论**。
      *
-     * <p>为什么：M1 会把 146 篇博客导入成「文章讨论区」，它们的正文为空、回复为 0。
-     * 若全量铺进列表，社区首页会变成 146 行「0 回复」的空壳，比空列表更劝退。
-     * 规则：用户自己发的帖子（含用户发起的关联帖）照常显示；
-     * 系统种子帖只有在**被讨论过**（comment_count > 0）时才浮到列表里。
-     * 它仍然可以通过文章页的「讨论」入口进入（反查走 {@link #getPostByLink}，不受此限）。
+     * <p>为什么：M1 会把博客文章导入成「讨论区」（{@code author_id=0, link_type='blog'}），
+     * 它们正文为空、回复为 0。若全量铺进列表，社区首页会变成几百行「0 回复」的空壳，
+     * 比空列表更劝退。
+     *
+     * <p>⚠️ 判定依据是**内容类型**，不是作者：
+     * <ul>
+     *   <li>用户发的帖（{@code author_id<>0}）→ 显示；</li>
+     *   <li>管理员主动发布的官方主题（{@code link_type='none'}）→ **显示**；</li>
+     *   <li>文章讨论区（{@code link_type='blog'}）→ 只有被回复过才显示。</li>
+     * </ul>
+     * 第一版只写了 {@code author_id<>0 OR comment_count>0}，结果把管理员发的官方主题也一起藏了
+     * （2026-10-23 M2 验收第 9 项发现）—— 官方内容恰恰是最该露出来的。
      */
     private static final String VISIBLE =
-            "p.status = 'normal' AND (p.author_id <> 0 OR p.comment_count > 0)";
+            "p.status = 'normal' AND (p.author_id <> 0 OR p.link_type = 'none' OR p.comment_count > 0)";
 
     /** 列表排序键：置顶永远第一，其次按最后回复时间（无回复回落发帖时间） */
     private static final String ORDER_LATEST =
