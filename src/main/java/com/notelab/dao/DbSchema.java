@@ -121,6 +121,22 @@ final class DbSchema {
                 muted_until DATETIME    NULL,
                 updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // 举报（PRD-P9 M4）：一人对同一目标只能报一次（唯一键），避免刷举报把队列打满
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_reports (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                target_type VARCHAR(16)  NOT NULL,
+                target_id   INT          NOT NULL,
+                reporter_id INT          NOT NULL,
+                reason      VARCHAR(32)  NOT NULL,
+                detail      VARCHAR(500) NOT NULL DEFAULT '',
+                status      VARCHAR(16)  NOT NULL DEFAULT 'pending',
+                handled_by  INT          NOT NULL DEFAULT 0,
+                handled_at  DATETIME     NULL,
+                created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_status (status, created_at),
+                UNIQUE KEY uk_reporter (reporter_id, target_type, target_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /**

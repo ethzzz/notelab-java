@@ -261,6 +261,61 @@ public class CommunityController {
         return ResponseEntity.ok(body);
     }
 
+    // ================= 举报（M4） =================
+
+    /** 举报理由白名单：只认这四类，避免前端塞任意字符串（管理端队列要按它分类统计） */
+    private static final Set<String> REPORT_REASONS = Set.of("spam", "abuse", "illegal", "other");
+
+    public static class ReportReq {
+        public String target_type;
+        public Integer target_id;
+        public String reason;
+        public String detail;
+    }
+
+    /**
+     * 举报一条主题或回复。
+     *
+     * <p>⚠️ **同一人对同一目标只能报一次**（库里有唯一键，{@code INSERT IGNORE} 返回 0 即重复）：
+     * 否则一个人连点就能把管理端队列刷满。
+     * <p>⚠️ 举报**不改变内容状态** —— 是否折叠由管理员判断。自动隐藏等于把审核权交给举报者。
+     */
+    @PostMapping("/reports")
+    public ResponseEntity<Map<String, Object>> report(@RequestBody(required = false) ReportReq req,
+                                                      HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        if (req == null || req.target_id == null) return badField("缺少 target_type / target_id");
+        String type = req.target_type == null ? "" : req.target_type.trim();
+        if (!"post".equals(type) && !"comment".equals(type)) return badField("target_type 只能是 post / comment");
+        String reason = req.reason == null ? "other" : req.reason.trim();
+        if (!REPORT_REASONS.contains(reason)) return badField("reason 只能是 spam / abuse / illegal / other");
+        String detail = req.detail == null ? "" : req.detail.trim();
+        if (charLen(detail) > 500) return badField("补充说明最长 500 个字符");
+
+        long uid = CAuthUtil.userId(user);
+        if (!RateLimit.rateOk("cm-report:" + uid, 10, 86400)) {
+            return ResponseEntity.status(429).body(Map.of("error", "举报过于频繁"));
+        }
+        long tid = req.target_id.longValue();
+        // 目标存在性 + 不能举报自己
+        long targetAuthor;
+        if ("post".equals(type)) {
+            Map<String, Object> p = CommunityDao.getPost(tid);
+            if (p == null) return notFound();
+            targetAuthor = ((Number) p.get("author_id")).longValue();
+        } else {
+            Map<String, Object> c = CommunityDao.commentBrief(tid);
+            if (c == null) return notFound();
+            targetAuthor = ((Number) c.get("author_id")).longValue();
+        }
+        if (targetAuthor == uid) return badField("不能举报自己的内容");
+
+        int n = CommunityDao.createReport(uid, type, tid, reason, detail);
+        if (n == 0) return ResponseEntity.status(409).body(Map.of("error", "你已经举报过这条内容"));
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
     /**
      * 按站内对象反查讨论帖（给博客/游戏/工具页挂「💬 讨论 (N)」用）。
      * 没有讨论帖时返回 {@code {"post_id":0}} 而不是 404 —— 前端要拿它决定显示「发起讨论」。
@@ -296,6 +351,11 @@ public class CommunityController {
         long uid = CAuthUtil.userId(user);
         if (!RateLimit.rateOk("cm-post:" + uid, 5, 3600)) {
             return ResponseEntity.status(429).body(Map.of("error", "发帖过于频繁，请稍后再试"));
+        }
+        // 禁言（M4）：按人按时间的判定，到期自动失效，不需要定时任务
+        String muted = CommunityDao.mutedUntil(uid);
+        if (muted != null) {
+            return ResponseEntity.status(403).body(Map.of("error", "你已被禁言，解除时间 " + muted));
         }
         if (req == null) return ResponseEntity.status(400).body(Map.of("error", "缺少请求体"));
 
@@ -363,6 +423,10 @@ public class CommunityController {
         long uid = CAuthUtil.userId(user);
         if (!RateLimit.rateOk("cm-cmt:" + uid, 20, 3600)) {
             return ResponseEntity.status(429).body(Map.of("error", "回复过于频繁，请稍后再试"));
+        }
+        String muted = CommunityDao.mutedUntil(uid);
+        if (muted != null) {
+            return ResponseEntity.status(403).body(Map.of("error", "你已被禁言，解除时间 " + muted));
         }
         if (req == null) return ResponseEntity.status(400).body(Map.of("error", "缺少请求体"));
         String md = req.content_md == null ? "" : req.content_md.trim();

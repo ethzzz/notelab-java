@@ -250,6 +250,99 @@ public class CommunityAdminController {
         return ResponseEntity.ok(Map.of("ok", true));
     }
 
+    // ================= 治理（M4） =================
+
+    public static class HideReq {
+        public Boolean hidden;
+    }
+
+    public static class HandleReportReq {
+        public String status;
+    }
+
+    public static class MuteReq {
+        /** 禁言天数；0 或 null = 解除禁言 */
+        public Integer days;
+    }
+
+    /** 举报队列（默认 pending） */
+    @GetMapping("/reports")
+    public ResponseEntity<Map<String, Object>> reports(@RequestParam(required = false) String status,
+                                                       @RequestParam(defaultValue = "20") int limit,
+                                                       @RequestParam(defaultValue = "0") long offset,
+                                                       HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        int size = Math.min(Math.max(limit, 1), 100);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", CommunityDao.listReports(status, size, Math.max(offset, 0)));
+        body.put("total", CommunityDao.countReports(status));
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 处理举报：{@code accepted}（举报成立，通常会同时折叠内容）/ {@code rejected}。
+     *
+     * <p>⚠️ 只改举报单的状态，**不自动折叠内容** —— 处理动作要显式（`/posts/{id}/hidden`），
+     * 否则「误点接受」会连带把正常内容藏起来，且没人知道是哪一步做的。
+     */
+    @PostMapping("/reports/{id}/handle")
+    public ResponseEntity<Map<String, Object>> handleReport(@PathVariable long id,
+                                                            @RequestBody(required = false) HandleReportReq req,
+                                                            HttpServletRequest request) {
+        Map<String, Object> admin = AuthUtil.user(request);
+        if (admin == null) return AuthUtil.unauth();
+        if (req == null || req.status == null) return bad("缺少 status");
+        if (!"accepted".equals(req.status) && !"rejected".equals(req.status)) {
+            return bad("status 只能是 accepted / rejected");
+        }
+        CommunityDao.handleReport(id, req.status, AuthUtil.userId(admin));
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** 折叠/恢复一条主题。折叠后 C 端 404（等同于不存在），但数据保留、可在后台恢复。 */
+    @PostMapping("/posts/{id}/hidden")
+    public ResponseEntity<Map<String, Object>> hidePost(@PathVariable long id,
+                                                        @RequestBody(required = false) HideReq req,
+                                                        HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        if (req == null || req.hidden == null) return bad("缺少 hidden");
+        CommunityDao.setPostHidden(id, req.hidden);
+        return ResponseEntity.ok(Map.of("ok", true, "hidden", req.hidden));
+    }
+
+    /** 折叠/恢复一条回复。折叠后 C 端显示「该回复已被折叠」，楼层保留（不串楼）。 */
+    @PostMapping("/comments/{id}/hidden")
+    public ResponseEntity<Map<String, Object>> hideComment(@PathVariable long id,
+                                                           @RequestBody(required = false) HideReq req,
+                                                           HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        if (req == null || req.hidden == null) return bad("缺少 hidden");
+        CommunityDao.setCommentHidden(id, req.hidden);
+        return ResponseEntity.ok(Map.of("ok", true, "hidden", req.hidden));
+    }
+
+    /**
+     * 禁言 C 端用户 {@code days} 天（0 = 解除）。
+     *
+     * <p>⚠️ 禁言写在 {@code cm_user_profile.muted_until}，判定用 {@code > NOW()} ——
+     * 到期自动失效，**不需要定时任务解禁**（定时任务挂了就会永久禁言，这是最不该引入的故障面）。
+     */
+    @PostMapping("/users/{id}/mute")
+    public ResponseEntity<Map<String, Object>> mute(@PathVariable long id,
+                                                    @RequestBody(required = false) MuteReq req,
+                                                    HttpServletRequest request) {
+        if (AuthUtil.user(request) == null) return AuthUtil.unauth();
+        int days = req == null || req.days == null ? 0 : req.days;
+        if (days < 0 || days > 3650) return bad("days 必须在 0-3650 之间");
+        if (days == 0) {
+            CommunityDao.muteUser(id, null);
+            return ResponseEntity.ok(Map.of("ok", true, "muted_until", ""));
+        }
+        // 由数据库算时间，避免 JVM 时区与 MySQL 时区不一致
+        String until = CommunityDao.muteUserForDays(id, days);
+        return ResponseEntity.ok(Map.of("ok", true, "muted_until", until));
+    }
+
     // ================= 内容导入 =================
 
     /**

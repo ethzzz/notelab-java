@@ -788,6 +788,110 @@ public final class CommunityDao {
         return r == null ? 0 : ((Number) r.get("n")).longValue();
     }
 
+    // ================= 治理（M4：举报 / 折叠 / 禁言） =================
+
+    /** 举报（同一人对同一目标只能一次：撞唯一键返回 0，由 Controller 转 409） */
+    public static int createReport(long reporterId, String targetType, long targetId, String reason, String detail) {
+        return Db.execCount("""
+                INSERT IGNORE INTO cm_reports (target_type, target_id, reporter_id, reason, detail)
+                VALUES (?,?,?,?,?)""", targetType, targetId, reporterId, reason, detail);
+    }
+
+    /** 举报队列（管理端）：默认只看 pending，可按状态筛 */
+    public static List<Map<String, Object>> listReports(String status, int limit, long offset) {
+        String where = (status == null || status.isBlank()) ? "" : " WHERE r.status = ?";
+        String sql = """
+                SELECT r.id, r.target_type, r.target_id, r.reason, r.detail, r.status,
+                       r.handled_by, r.handled_at, r.created_at,
+                       COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS reporter_name,
+                       p.title AS post_title,
+                       c.content_text AS comment_text
+                  FROM cm_reports r
+                  LEFT JOIN c_users u ON u.id = r.reporter_id
+                  LEFT JOIN cm_posts p ON p.id = r.target_id AND r.target_type = 'post'
+                  LEFT JOIN cm_comments c ON c.id = r.target_id AND r.target_type = 'comment'
+                """ + where + " ORDER BY r.id DESC LIMIT ? OFFSET ?";
+        return (status == null || status.isBlank())
+                ? Db.queryAll(sql, limit, offset)
+                : Db.queryAll(sql, status, limit, offset);
+    }
+
+    public static long countReports(String status) {
+        Map<String, Object> r = (status == null || status.isBlank())
+                ? Db.queryOne("SELECT COUNT(*) AS n FROM cm_reports")
+                : Db.queryOne("SELECT COUNT(*) AS n FROM cm_reports WHERE status=?", status);
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    /** 处理举报：accepted / rejected */
+    public static void handleReport(long id, String status, long handlerId) {
+        Db.exec("""
+                UPDATE cm_reports SET status=?, handled_by=?, handled_at=NOW()
+                 WHERE id=? AND status='pending'""", status, handlerId, id);
+    }
+
+    /** 折叠 / 恢复（M4）。折叠=hidden：内容不展示但仍留在库里，审核可回溯。 */
+    public static void setPostHidden(long id, boolean hidden) {
+        Db.exec("UPDATE cm_posts SET status=? WHERE id=? AND status IN ('normal','hidden','closed')",
+                hidden ? "hidden" : "normal", id);
+    }
+
+    public static void setCommentHidden(long id, boolean hidden) {
+        Db.exec("UPDATE cm_comments SET status=? WHERE id=? AND status IN ('normal','hidden')",
+                hidden ? "hidden" : "normal", id);
+    }
+
+    /**
+     * 禁言到某个时间点（null = 解除）。
+     *
+     * <p>⚠️ 禁言是**按人**而不是按用户组：这正是没有走权限码的原因（见 CPermGuard.C_MEMBER_PREFIXES）。
+     */
+    public static void muteUser(long userId, String until) {
+        Db.exec("""
+                INSERT INTO cm_user_profile (user_id, bio, avatar_url, muted_until) VALUES (?, '', '', ?)
+                ON DUPLICATE KEY UPDATE muted_until = VALUES(muted_until)""", userId, until);
+    }
+
+    /**
+     * 禁言 N 天，返回到期时间字符串（空串 = 已解除）。
+     *
+     * <p>⚠️ 到期时间由 **MySQL 的 {@code DATE_ADD(NOW(), ...)}** 算，不在 JVM 里算：
+     * JVM 时区与 MySQL 时区不一致时，两边各算一次会差几小时，而判定用的是 MySQL 的 NOW()，
+     * 于是「禁言 1 天」可能变成 0.8 天或 1.2 天 —— 这种偏差在日志里永远看不出来。
+     */
+    public static String muteUserForDays(long userId, int days) {
+        Db.exec("""
+                INSERT INTO cm_user_profile (user_id, bio, avatar_url, muted_until)
+                VALUES (?, '', '', DATE_ADD(NOW(), INTERVAL ? DAY))
+                ON DUPLICATE KEY UPDATE muted_until = VALUES(muted_until)""", userId, days);
+        Map<String, Object> r = Db.queryOne(
+                "SELECT muted_until FROM cm_user_profile WHERE user_id=?", userId);
+        if (r == null || r.get("muted_until") == null) return "";
+        return String.valueOf(r.get("muted_until"));
+    }
+
+    /**
+     * 是否处于禁言期。返回解除时间字符串（给前端提示）；未禁言返回 null。
+     *
+     * <p>⚠️ 用 {@code muted_until > NOW()} 判定，**不需要定时任务**去"解除禁言" ——
+     * 到期自然失效。定时任务只会引入"任务挂了禁言永不解除"的故障面。
+     */
+    public static String mutedUntil(long userId) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT muted_until FROM cm_user_profile WHERE user_id=? AND muted_until > NOW()", userId);
+        if (r == null || r.get("muted_until") == null) return null;
+        return String.valueOf(r.get("muted_until"));
+    }
+
+    /** 管理端用：某条回复的正文摘要（举报队列里要能看到被举报的是什么） */
+    public static Map<String, Object> commentBrief(long id) {
+        return Db.queryOne("""
+                SELECT c.id, c.post_id, c.author_id, c.content_text, c.status,
+                       COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS author_name
+                  FROM cm_comments c LEFT JOIN c_users u ON u.id = c.author_id
+                 WHERE c.id = ?""", id);
+    }
+
     // ================= 内部工具 =================
 
     private static void rollbackQuietly(Connection c) {
