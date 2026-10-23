@@ -408,15 +408,28 @@ public final class CommunityDao {
         return Db.execCount("UPDATE cm_posts SET status='deleted' WHERE id=? AND status<>'deleted'", id);
     }
 
-    /** 已存在的种子帖 link_key 集合（导入前一次性取，避免逐条查库） */
-    public static java.util.Set<String> seedKeys() {
-        java.util.Set<String> out = new java.util.HashSet<>();
+    /**
+     * 已存在的种子帖：link_key → 当前标题（导入时据此区分「跳过」与「标题需同步」）。
+     *
+     * <p>⚠️ **刻意不过滤 status**：管理员软删过的讨论区也要算「存在」，
+     * 否则每次导入都会把被删掉的讨论区重新建出来 —— 管理员删了它是有意的。
+     */
+    public static Map<String, String> seedTitles() {
+        Map<String, String> out = new java.util.HashMap<>();
         for (Map<String, Object> r : Db.queryAll(
-                "SELECT link_key FROM cm_posts WHERE link_type='blog' AND status<>'deleted'")) {
+                "SELECT link_key, title FROM cm_posts WHERE link_type='blog'")) {
             Object k = r.get("link_key");
-            if (k != null) out.add(String.valueOf(k));
+            if (k == null) continue;
+            out.put(String.valueOf(k), String.valueOf(r.get("title")));
         }
         return out;
+    }
+
+    /** 文章改了标题 → 同步种子帖标题。只动系统种子帖（用户自己发的关联帖标题是他们写的，不该被覆盖）。 */
+    public static int updateSeedTitle(String linkKey, String title) {
+        return Db.execCount(
+                "UPDATE cm_posts SET title=? WHERE author_id=0 AND link_type='blog' AND link_key=?",
+                title, linkKey);
     }
 
     /** 插入一条种子帖（官方身份 author_id=0，正文留空，等真人来讨论） */
@@ -426,10 +439,28 @@ public final class CommunityDao {
                 VALUES (?, 0, ?, '', '', 'blog', ?)""", boardId, title, linkKey);
     }
 
-    /** 删除「没有任何回复的系统种子帖」（导入前重置用；有回复的保留，否则会丢真实讨论） */
-    public static int deleteEmptySeedPosts() {
+    /**
+     * 删除「没有回复、且对应文章已不在 RSS 里」的系统种子帖。
+     *
+     * <p>⚠️ **不能简单写成「删掉所有空种子帖再重插」** —— 那样每次导入都会重建全部行，
+     * 帖子 id 全变，用户已经打开的 {@code /community/p/<id>} 链接、以及别人分享的链接立刻失效。
+     * 「幂等」不只是"最终状态一致"，还包括**不破坏稳定标识**。
+     * 所以这里保留仍在 RSS 里的 key，只清理文章已被删掉的那些。
+     */
+    public static int deleteEmptySeedPostsExcept(java.util.Set<String> keepKeys) {
+        if (keepKeys == null || keepKeys.isEmpty()) {
+            return Db.execCount("DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0");
+        }
+        StringBuilder ph = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        for (String k : keepKeys) {
+            if (ph.length() > 0) ph.append(',');
+            ph.append('?');
+            args.add(k);
+        }
         return Db.execCount(
-                "DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0");
+                "DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0 "
+                + "AND link_key NOT IN (" + ph + ")", args.toArray());
     }
 
     // ================= 内部工具 =================

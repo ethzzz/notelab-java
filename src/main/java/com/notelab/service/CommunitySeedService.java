@@ -77,27 +77,43 @@ public final class CommunitySeedService {
             return out;
         }
 
-        // 先清空「无回复的种子帖」，再把缺失的补回来 —— 顺序不能反（反了会重复插入）
-        int deleted = CommunityDao.deleteEmptySeedPosts();
-        Set<String> existing = CommunityDao.seedKeys();
+        // 顺序：先取已有 key→标题，再清理「文章已不在 RSS 里」的空种子，最后补插/同步标题。
+        // ⚠️ 不能写成「先删全部空种子再重插」—— 那会重建所有行、帖子 id 全变，
+        //    用户收藏的 /community/p/<id> 立刻失效（见 CommunityDao.deleteEmptySeedPostsExcept 注释）。
+        Map<String, String> existing = CommunityDao.seedTitles();
+        Set<String> rssKeys = new HashSet<>();
+        for (String[] it : items) rssKeys.add(it[1]);
+        int deleted = CommunityDao.deleteEmptySeedPostsExcept(rssKeys);
 
-        int inserted = 0, skipped = 0;
+        int inserted = 0, skipped = 0, renamed = 0;
         for (String[] it : items) {
             String title = it[0];
             String key = it[1];
-            if (existing.contains(key)) { skipped++; continue; }
+            String cur = existing.get(key);
+            if (cur != null) {
+                // 文章改了标题：同步种子帖标题，否则讨论区还顶着旧标题
+                if (!cur.equals(title)) {
+                    CommunityDao.updateSeedTitle(key, title);
+                    renamed++;
+                } else {
+                    skipped++;
+                }
+                continue;
+            }
             CommunityDao.insertSeedPost(boardId, title, key);
-            existing.add(key);   // 同一份 RSS 里理论上不重复，但重复插入会变成两个讨论区
+            existing.put(key, title);   // 同一份 RSS 里理论上不重复，但重复插入会变成两个讨论区
             inserted++;
         }
 
         out.put("ok", true);
         out.put("total", items.size());
         out.put("inserted", inserted);
+        out.put("renamed", renamed);
         out.put("deleted", deleted);
         out.put("skipped", skipped);
         out.put("file", RSS_PATH);
-        out.put("message", "导入完成：新增 " + inserted + "，已存在 " + skipped + "，清理空种子 " + deleted);
+        out.put("message", "导入完成：新增 " + inserted + "，同步标题 " + renamed
+                + "，已存在 " + skipped + "，清理失效种子 " + deleted);
         return out;
     }
 
