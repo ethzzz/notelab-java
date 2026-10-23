@@ -294,6 +294,12 @@ public final class CommunityDao {
         return r != null;
     }
 
+    /** 被回复楼层的作者 id（通知用）；楼层不存在返回 null */
+    public static Long commentAuthor(long commentId) {
+        Map<String, Object> r = Db.queryOne("SELECT author_id FROM cm_comments WHERE id=?", commentId);
+        return r == null ? null : ((Number) r.get("author_id")).longValue();
+    }
+
     // ================= 管理端（B 端 /api/community-admin） =================
     //
     // ⚠️ 与上面的 C 端读方法**刻意分开**：管理端要看见全部状态（含种子帖、隐藏、已删），
@@ -479,6 +485,105 @@ public final class CommunityDao {
         return Db.execCount(
                 "DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0 "
                 + "AND link_key NOT IN (" + ph + ")", args.toArray());
+    }
+
+    // ================= 通知（M3） =================
+
+    /**
+     * 写一条通知。
+     *
+     * <p>⚠️ 调用方负责三件事（放这里会变成"三个 if 散落各处"）：
+     * ① 不给自己发；② 不给 author_id=0（官方/种子帖没有真人收件人）发；
+     * ③ 同一动作的多条候选收件人要先去重。
+     */
+    public static long createNotification(long userId, String kind, long actorId,
+                                          long postId, long commentId, String excerpt) {
+        return Db.execInsert("""
+                INSERT INTO cm_notifications (user_id, kind, actor_id, post_id, comment_id, excerpt)
+                VALUES (?,?,?,?,?,?)""", userId, kind, actorId, postId, commentId, excerpt);
+    }
+
+    /** 我的通知（含 actor 名与帖子标题；帖子被删时 post_title 为 null，前端仍可点进去看 404） */
+    public static List<Map<String, Object>> listNotifications(long userId, int limit, long offset) {
+        return Db.queryAll("""
+                SELECT n.id, n.kind, n.actor_id, n.post_id, n.comment_id, n.excerpt,
+                       n.is_read, n.created_at,
+                       COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS actor_name,
+                       p.title AS post_title
+                  FROM cm_notifications n
+                  LEFT JOIN c_users u ON u.id = n.actor_id
+                  LEFT JOIN cm_posts p ON p.id = n.post_id
+                 WHERE n.user_id = ?
+                 ORDER BY n.created_at DESC, n.id DESC
+                 LIMIT ? OFFSET ?""", userId, limit, offset);
+    }
+
+    public static long countNotifications(long userId) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM cm_notifications WHERE user_id = ?", userId);
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    /** 未读数（Shell 红点用，30s 轮询一次；走 idx_user_unread 覆盖索引） */
+    public static int countUnreadNotifications(long userId) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM cm_notifications WHERE user_id = ? AND is_read = 0", userId);
+        return r == null ? 0 : ((Number) r.get("n")).intValue();
+    }
+
+    /**
+     * 标记已读。{@code ids} 为空表示「全部标为已读」。
+     *
+     * <p>⚠️ 两个分支都必须带 {@code user_id = ?} —— 否则传别人的通知 id 就能改别人的已读态。
+     */
+    public static int markNotificationsRead(long userId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Db.execCount(
+                    "UPDATE cm_notifications SET is_read=1 WHERE user_id=? AND is_read=0", userId);
+        }
+        StringBuilder ph = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        args.add(userId);
+        for (Long id : ids) {
+            if (ph.length() > 0) ph.append(',');
+            ph.append('?');
+            args.add(id);
+        }
+        return Db.execCount(
+                "UPDATE cm_notifications SET is_read=1 WHERE user_id=? AND id IN (" + ph + ")",
+                args.toArray());
+    }
+
+    // ================= 搜索（M3） =================
+
+    /**
+     * 搜索标题 + 正文纯文本（{@code content_text} 是发帖时算好的去标记文本）。
+     *
+     * <p>用 LIKE 而不是 FULLTEXT：234 条主题下 LIKE 已经够快，而 MySQL 的 ngram 分词器
+     * 对中文短语的召回需要调参（默认 token 长度 2，短词搜不到），为一个 5 人站的搜索
+     * 引这套调参不值。跌到 1000 条以上再换。
+     */
+    public static List<Map<String, Object>> searchPosts(String q, int limit, long offset) {
+        String kw = "%" + q.trim() + "%";
+        return Db.queryAll("""
+                SELECT p.id, p.board_id, p.title, p.link_type, p.link_key, p.status,
+                       p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
+                       p.last_reply_at, p.created_at,
+                       p.author_id, %s, b.slug AS board_slug, b.name AS board_name
+                  FROM cm_posts p
+                  JOIN cm_boards b ON b.id = p.board_id
+                  LEFT JOIN c_users u ON u.id = p.author_id
+                 WHERE %s AND (p.title LIKE ? OR p.content_text LIKE ?)
+                %s
+                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME, VISIBLE, ORDER_LATEST), kw, kw, limit, offset);
+    }
+
+    public static long countSearch(String q) {
+        String kw = "%" + q.trim() + "%";
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE
+                + " AND (p.title LIKE ? OR p.content_text LIKE ?)", kw, kw);
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
     }
 
     // ================= 内部工具 =================

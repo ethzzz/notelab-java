@@ -258,10 +258,129 @@ public class CommunityController {
             return badField("被回复的楼层不属于本帖");
         }
         long cid = CommunityDao.createComment(id, uid, parentId, md, stripMarkdown(md));
+        notifyReply(post, parentId, uid, id, cid, md);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", cid);
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 回复后发通知（PRD-P9 M3）。
+     *
+     * <p>收件人候选：楼主 + 被回复楼层的作者。三条过滤：
+     * ① **不通知自己**（自己回复自己的帖子是最常见的通知噪音源）；
+     * ② **不通知 {@code author_id=0}**（官方/种子帖没有真人收件人，往 uid=0 写通知等于丢弃）；
+     * ③ 候选用 {@link java.util.LinkedHashSet} 去重 —— 回复楼主自己的楼层时两个候选是同一个人，
+     *    不去重会收到两条一模一样的提醒。
+     *
+     * <p>通知写失败**不影响回复成功**：回复已经落库，少一条提醒是可接受的降级；
+     * 反过来（因为通知失败而回滚回复）才是真正的数据损失。
+     */
+    private static void notifyReply(Map<String, Object> post, long parentId, long actorId,
+                                    long postId, long commentId, String md) {
+        try {
+            java.util.Set<Long> targets = new java.util.LinkedHashSet<>();
+            long postAuthor = ((Number) post.get("author_id")).longValue();
+            if (postAuthor > 0) targets.add(postAuthor);
+            if (parentId > 0) {
+                Long parentAuthor = CommunityDao.commentAuthor(parentId);
+                if (parentAuthor != null && parentAuthor > 0) targets.add(parentAuthor);
+            }
+            targets.remove(actorId);
+            if (targets.isEmpty()) return;
+
+            String excerpt = clampText(stripMarkdown(md), 80);
+            for (long t : targets) {
+                CommunityDao.createNotification(t, "reply", actorId, postId, commentId, excerpt);
+            }
+        } catch (RuntimeException e) {
+            // 只记日志，不影响已成功的回复
+            org.slf4j.LoggerFactory.getLogger(CommunityController.class)
+                    .warn("社区通知写入失败 post={} comment={}", postId, commentId, e);
+        }
+    }
+
+    // ================= 通知（M3） =================
+
+    /** 我的通知（分页，新→旧） */
+    @GetMapping("/notifications")
+    public ResponseEntity<Map<String, Object>> notifications(@RequestParam(defaultValue = "1") int page,
+                                                             @RequestParam(defaultValue = "20") int size,
+                                                             HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        long uid = CAuthUtil.userId(user);
+        int limit = clampSize(size);
+        int p = page < 1 ? 1 : page;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", CommunityDao.listNotifications(uid, limit, (long) (p - 1) * limit));
+        body.put("total", CommunityDao.countNotifications(uid));
+        body.put("unread", CommunityDao.countUnreadNotifications(uid));
+        body.put("page", p);
+        body.put("size", limit);
+        return ResponseEntity.ok(body);
+    }
+
+    /** 未读数（Shell 红点，30s 轮询；只回一个整数，响应体很小） */
+    @GetMapping("/notifications/unread-count")
+    public ResponseEntity<Map<String, Object>> unreadCount(HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        return ResponseEntity.ok(Map.of("unread", CommunityDao.countUnreadNotifications(CAuthUtil.userId(user))));
+    }
+
+    /**
+     * 标记已读。{@code {"ids":[1,2]}} 只标这几条；缺省或空数组 = **全部标为已读**。
+     *
+     * <p>DAO 侧两个分支都带 {@code user_id} 条件，传别人的通知 id 也改不动。
+     */
+    @PostMapping("/notifications/read")
+    public ResponseEntity<Map<String, Object>> markRead(@RequestBody(required = false) ReadReq req,
+                                                       HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        int n = CommunityDao.markNotificationsRead(CAuthUtil.userId(user),
+                req == null ? null : req.ids);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("updated", n);
+        body.put("unread", CommunityDao.countUnreadNotifications(CAuthUtil.userId(user)));
+        return ResponseEntity.ok(body);
+    }
+
+    public static class ReadReq {
+        public List<Long> ids;
+    }
+
+    // ================= 搜索（M3） =================
+
+    /** 搜索标题与正文（LIKE；见 CommunityDao.countSearch 的取舍说明） */
+    @GetMapping("/search")
+    public ResponseEntity<Map<String, Object>> search(@RequestParam(required = false) String q,
+                                                      @RequestParam(defaultValue = "1") int page,
+                                                      @RequestParam(defaultValue = "20") int size,
+                                                      HttpServletRequest request) {
+        if (CAuthUtil.user(request) == null) return CAuthUtil.unauth();
+        String kw = q == null ? "" : q.trim();
+        if (kw.isEmpty()) return badField("请输入搜索词");
+        int limit = clampSize(size);
+        int p = page < 1 ? 1 : page;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("posts", CommunityDao.searchPosts(kw, limit, (long) (p - 1) * limit));
+        body.put("total", CommunityDao.countSearch(kw));
+        body.put("page", p);
+        body.put("size", limit);
+        body.put("q", kw);
+        return ResponseEntity.ok(body);
+    }
+
+    /** 按 code point 截断（emoji 不被切成半个） */
+    private static String clampText(String s, int max) {
+        if (s == null) return "";
+        int n = s.codePointCount(0, s.length());
+        if (n <= max) return s;
+        return s.substring(0, s.offsetByCodePoints(0, max)) + "…";
     }
 
     /** 软删回复（仅作者本人），同事务回落帖子 comment_count。 */

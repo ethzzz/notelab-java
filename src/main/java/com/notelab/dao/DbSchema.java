@@ -19,6 +19,7 @@ final class DbSchema {
         analyticsSchema();
         loginAuditSchema();
         communitySchema();
+        communityNotificationSchema();
     }
 
     /**
@@ -87,6 +88,32 @@ final class DbSchema {
                 KEY idx_author (author_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         seedCommunityBoards();
+    }
+
+    /**
+     * 社区通知（PRD-P9 M3）：cm_notifications。
+     *
+     * <p>⚠️ {@code excerpt} 是**冗余快照**，不是从 cm_comments 关联出来的：
+     * 通知要长期可读，而被引用的回复可能被删（软删后内容不再展示）。
+     * 存一份 80 字摘要，通知列表就不必 JOIN 评论表，也不会因为原帖被删而变成空白。
+     *
+     * <p>⚠️ 没有外键：用户/帖子/回复任一被删，通知仍应保留（否则"有人回复过你"的事实会凭空消失）。
+     */
+    private static void communityNotificationSchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_notifications (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                user_id    INT          NOT NULL,
+                kind       VARCHAR(20)  NOT NULL,
+                actor_id   INT          NOT NULL DEFAULT 0,
+                post_id    INT          NOT NULL DEFAULT 0,
+                comment_id INT          NOT NULL DEFAULT 0,
+                excerpt    VARCHAR(200) NOT NULL DEFAULT '',
+                is_read    TINYINT      NOT NULL DEFAULT 0,
+                created_at DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_user_unread (user_id, is_read, created_at),
+                KEY idx_user_created (user_id, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /**
