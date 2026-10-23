@@ -62,14 +62,20 @@ public final class CommunityDao {
 
     // ================= 板块 =================
 
-    /** 板块列表（含有效帖子数）；归档板块也返回，前端置灰 */
+    /**
+     * 板块列表（含**与列表同口径**的帖子数）。
+     *
+     * <p>⚠️ 这里的 post_count 必须用 {@link #VISIBLE}，不能用「未删除」：
+     * 否则会出现「板块上写 234 个主题、点进去只有 1 条」——用户会以为内容丢了。
+     * 管理端要的是另一个数（含种子与隐藏），见 {@link #listBoardsForAdmin()}。
+     */
     public static List<Map<String, Object>> listBoards() {
         return Db.queryAll("""
                 SELECT b.id, b.slug, b.name, b.description, b.icon, b.sort_no, b.status,
                        (SELECT COUNT(*) FROM cm_posts p
-                         WHERE p.board_id = b.id AND p.status = 'normal') AS post_count
+                         WHERE p.board_id = b.id AND %s) AS post_count
                   FROM cm_boards b
-                 ORDER BY b.sort_no, b.id""");
+                 ORDER BY b.sort_no, b.id""".formatted(VISIBLE));
     }
 
     public static Map<String, Object> getBoardBySlug(String slug) {
