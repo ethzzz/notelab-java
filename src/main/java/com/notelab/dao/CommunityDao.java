@@ -172,10 +172,15 @@ public final class CommunityDao {
      * 直接过滤掉会让楼中楼的 parent_id 指向空气，看起来像串楼。
      */
     public static List<Map<String, Object>> listComments(long postId, int limit, long offset) {
+        // ⚠️ 这里**不能复用 {@link #AUTHOR_NAME}**：那个常量带 `p.` 前缀（帖子表的别名），
+        //    而本查询的评论表别名是 `c` —— 直接拼进去会得到
+        //    "Unknown column 'p.author_id' in 'field list'"，接口 500。
+        //    2026-10-23 M2 给 AUTHOR_NAME 加 CASE 时就这么打坏过一次（M1 能跑、M2 报 500）。
+        //    评论作者不可能是 0（系统身份不发回复），所以不需要 NoteLab 的分支。
         return Db.queryAll("""
                 SELECT c.id, c.post_id, c.author_id, c.parent_id, c.content_md, c.status,
                        c.like_count, c.created_at,
-                       %s,
+                       COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS author_name,
                        pc.author_id AS parent_author_id,
                        COALESCE(NULLIF(pu.nickname, ''), pu.username, '已注销') AS parent_author_name
                   FROM cm_comments c
@@ -184,7 +189,7 @@ public final class CommunityDao {
                   LEFT JOIN c_users pu ON pu.id = pc.author_id
                  WHERE c.post_id = ?
                  ORDER BY c.created_at, c.id
-                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME), postId, limit, offset);
+                 LIMIT ? OFFSET ?""", postId, limit, offset);
     }
 
     public static long countComments(long postId) {
