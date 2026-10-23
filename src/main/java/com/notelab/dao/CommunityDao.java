@@ -26,9 +26,27 @@ public final class CommunityDao {
 
     private CommunityDao() {}
 
-    /** 作者显示名：昵称优先，回落用户名，账号已删则「已注销」（LEFT JOIN 后可能为 null） */
+    /**
+     * 作者显示名：昵称优先，回落用户名，账号已删则「已注销」。
+     *
+     * <p>⚠️ {@code author_id = 0} 是**系统种子账号**（M1 从博客导入的「文章讨论区」）：
+     * 它的作者不是任何人，显示成「已注销」会让人以为作者跑路了，所以单独给个 NoteLab。
+     */
     private static final String AUTHOR_NAME =
-            "COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS author_name";
+            "CASE WHEN p.author_id = 0 THEN 'NoteLab' "
+            + "ELSE COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') END AS author_name";
+
+    /**
+     * 列表可见性：**没有回复的系统种子帖不进列表**。
+     *
+     * <p>为什么：M1 会把 146 篇博客导入成「文章讨论区」，它们的正文为空、回复为 0。
+     * 若全量铺进列表，社区首页会变成 146 行「0 回复」的空壳，比空列表更劝退。
+     * 规则：用户自己发的帖子（含用户发起的关联帖）照常显示；
+     * 系统种子帖只有在**被讨论过**（comment_count > 0）时才浮到列表里。
+     * 它仍然可以通过文章页的「讨论」入口进入（反查走 {@link #getPostByLink}，不受此限）。
+     */
+    private static final String VISIBLE =
+            "p.status = 'normal' AND (p.author_id <> 0 OR p.comment_count > 0)";
 
     /** 列表排序键：置顶永远第一，其次按最后回复时间（无回复回落发帖时间） */
     private static final String ORDER_LATEST =
@@ -61,7 +79,7 @@ public final class CommunityDao {
      * 现在加进来会让人误以为已按热度排好 —— 参数先不暴露，Controller 只认 latest。
      */
     public static List<Map<String, Object>> listPosts(long boardId, int limit, long offset) {
-        String where = "p.status = 'normal'" + (boardId > 0 ? " AND p.board_id = ?" : "");
+        String where = VISIBLE + (boardId > 0 ? " AND p.board_id = ?" : "");
         String sql = """
                 SELECT p.id, p.board_id, p.title, p.link_type, p.link_key, p.status,
                        p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
@@ -79,9 +97,10 @@ public final class CommunityDao {
     }
 
     public static long countPosts(long boardId) {
+        // ⚠️ 必须与 listPosts 的 VISIBLE 完全一致，否则「共 N 个主题」与实际能翻到的条数不符
         Map<String, Object> r = boardId > 0
-                ? Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts WHERE status='normal' AND board_id=?", boardId)
-                : Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts WHERE status='normal'");
+                ? Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE + " AND p.board_id = ?", boardId)
+                : Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE);
         return r == null ? 0 : ((Number) r.get("n")).longValue();
     }
 
