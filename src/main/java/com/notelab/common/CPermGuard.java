@@ -64,6 +64,29 @@ public final class CPermGuard {
      */
     private static final List<String> C_SELF_PREFIXES = List.of("/api/c/me/");
 
+    /**
+     * C 端「**全体会员功能**」端点前缀（PRD-P9 社区）：登录即可用，不查用户组授权。
+     *
+     * <p>为什么不用「部署后去后台给每个组勾选」：
+     * <ol>
+     *   <li>社区是一级模块、接口有十几个，每次新增都要给每个 C 端用户组勾一次；漏一个就是那个组
+     *       全员不可用，而报错是 403（像"没权限"）不是 401（像"没登录"），排查成本极高。
+     *       这与 PRD-P5 撞过的坑完全同构。</li>
+     *   <li>语义上不该有这道门：「某些用户组不许看帖/发帖」不是合理的配置维度。
+     *       要限制某人**发帖**，正确手段是按人禁言（{@code cm_user_profile.muted_until}）；
+     *       要封号，手段是 {@code c_users.status='disabled'}（登录就被 CAuthController 拦住）。
+     *       两者都比按用户组关接口更精确。</li>
+     * </ol>
+     *
+     * <p>⚠️ 代价（明确接受）：后台**无法**通过用户组关停社区功能。若将来真有「仅付费用户可发帖」
+     * 这类需求，应当把它做成业务判定（读某个 config 或按人授予资格），而不是把这行删掉改回权限码
+     * —— 删掉这行的后果是既有用户组全部 403。
+     *
+     * <p>⚠️ 判定必须在 {@code hits} **之前**返回（与 {@link #C_SELF_PREFIXES} 同一位置）：
+     * 这些路径也是被 SpringMVC 采集登记进 perm_routes 的，走到下面就会因为「组里没这个码」而 403。
+     */
+    private static final List<String> C_MEMBER_PREFIXES = List.of("/api/c/community/");
+
     private static final AntPathMatcher MATCHER = new AntPathMatcher();
 
     /** 已登记的 C 端 api 路径 pattern（含 {var}），启动时由 PermService 刷新 */
@@ -123,6 +146,12 @@ public final class CPermGuard {
         // ⚠️ 必须在 hits 判定**之前**返回 —— 这些路径也是被 SpringMVC 采集登记过的，
         //    走到下面就会因为「组里没这个码」而 403。
         for (String pre : C_SELF_PREFIXES) {
+            if (clean.startsWith(pre)) return null;
+        }
+
+        // 「全体会员功能」（社区，PRD-P9）：同 C_SELF_PREFIXES，登录即可用，不查用户组授权。
+        // ⚠️ 同样必须在 hits 判定**之前** —— 这些路径已被采集登记，走到下面必然 403。
+        for (String pre : C_MEMBER_PREFIXES) {
             if (clean.startsWith(pre)) return null;
         }
 

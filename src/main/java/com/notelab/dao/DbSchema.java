@@ -18,6 +18,96 @@ final class DbSchema {
         translateSchema();
         analyticsSchema();
         loginAuditSchema();
+        communitySchema();
+    }
+
+    /**
+     * C 端社区（PRD-P9 M1）：cm_boards / cm_posts / cm_comments。
+     *
+     * <p>⚠️ **不建 cm_users** —— 社区的用户就是 {@code c_users}，本模块只在内容表里存
+     * {@code author_id}（= c_users.id）。这是与 PRD-L1 那个独立练兵项目最大的区别。
+     *
+     * <p>⚠️ **三张表都不加外键**：{@code c_users} 是认证表，挂 FK 后删用户会级联删内容
+     * （评论区会断楼），而且社区内容需要留证。作者被删/被禁用时保留内容、显示为「已注销」，
+     * 由应用层处理 —— 这比数据库级联更难写错。
+     *
+     * <p>⚠️ **软删是唯一删除方式**（{@code status='deleted'}）：楼层上下文不能断，
+     * 且举报处理需要留证。查询侧必须显式带 {@code status}，别再写裸 SELECT *。
+     */
+    private static void communitySchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_boards (
+                id          INT AUTO_INCREMENT PRIMARY KEY,
+                slug        VARCHAR(50)  NOT NULL UNIQUE,
+                name        VARCHAR(50)  NOT NULL,
+                description VARCHAR(200) NOT NULL DEFAULT '',
+                icon        VARCHAR(20)  NOT NULL DEFAULT '',
+                sort_no     INT          NOT NULL DEFAULT 0,
+                status      VARCHAR(16)  NOT NULL DEFAULT 'active',
+                created_at  DATETIME     DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_posts (
+                id             INT AUTO_INCREMENT PRIMARY KEY,
+                board_id       INT           NOT NULL,
+                author_id      INT           NOT NULL,
+                title          VARCHAR(120)  NOT NULL,
+                content_md     MEDIUMTEXT    NOT NULL,
+                content_text   MEDIUMTEXT    NOT NULL,
+                link_type      VARCHAR(16)   NOT NULL DEFAULT 'none',
+                link_key       VARCHAR(200)  NOT NULL DEFAULT '',
+                status         VARCHAR(16)   NOT NULL DEFAULT 'normal',
+                is_pinned      TINYINT       NOT NULL DEFAULT 0,
+                is_featured    TINYINT       NOT NULL DEFAULT 0,
+                view_count     INT           NOT NULL DEFAULT 0,
+                comment_count  INT           NOT NULL DEFAULT 0,
+                like_count     INT           NOT NULL DEFAULT 0,
+                last_reply_at  DATETIME      NULL,
+                last_reply_uid INT           NOT NULL DEFAULT 0,
+                created_at     DATETIME      DEFAULT CURRENT_TIMESTAMP,
+                updated_at     DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                KEY idx_board_created (board_id, created_at),
+                KEY idx_created (created_at),
+                KEY idx_last_reply (last_reply_at),
+                KEY idx_author (author_id),
+                KEY idx_link (link_type, link_key)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_comments (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                post_id      INT          NOT NULL,
+                author_id    INT          NOT NULL,
+                parent_id    INT          NOT NULL DEFAULT 0,
+                content_md   MEDIUMTEXT   NOT NULL,
+                content_text MEDIUMTEXT   NOT NULL,
+                status       VARCHAR(16)  NOT NULL DEFAULT 'normal',
+                like_count   INT          NOT NULL DEFAULT 0,
+                created_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                KEY idx_post_created (post_id, created_at),
+                KEY idx_author (author_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        seedCommunityBoards();
+    }
+
+    /**
+     * 板块 seed（幂等）：只在该表为空时写入，重启不会重复插入、也不会覆盖人工改过的名字。
+     *
+     * <p>为什么 M1 用常量板块而不是立刻做后台管理：三个板块足够跑通链路，
+     * 而后台板块管理要多一轮「跨仓登记（MenuTree/PageRoutes/RouteGroups）」，
+     * 与「先让社区能用」的目标不成比例。M4 再进后台（PRD-P9 §10.1 Q4）。
+     */
+    private static void seedCommunityBoards() {
+        Map<String, Object> row = Db.queryOne("SELECT COUNT(*) AS n FROM cm_boards");
+        long n = row == null ? 0 : ((Number) row.get("n")).longValue();
+        if (n > 0) return;
+        Object[][] boards = {
+                {"general", "综合讨论", "想到什么聊什么", "💬", 10},
+                {"games", "游戏", "爬塔 / 摸金 / 地牢 / 跑团", "🎮", 20},
+                {"dev", "开发", "代码、部署、踩坑记录", "🛠️", 30},
+        };
+        for (Object[] b : boards) {
+            Db.exec("INSERT INTO cm_boards (slug,name,description,icon,sort_no) VALUES (?,?,?,?,?)", b);
+        }
     }
 
     /**
