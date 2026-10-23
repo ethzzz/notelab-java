@@ -119,7 +119,12 @@ public class CommunityController {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("post", row);
-        body.put("can_edit", CAuthUtil.userId(user) == ((Number) row.get("author_id")).longValue());
+        long uid = CAuthUtil.userId(user);
+        body.put("can_edit", uid == ((Number) row.get("author_id")).longValue());
+        // M2b：把「我有没有点过赞/收藏」回填给详情页 —— 列表不填（一页 20 条要多 20 次查询），
+        // 点赞交互只做在详情页。
+        body.put("liked", CommunityDao.isReacted(uid, "post", id, "like"));
+        body.put("bookmarked", CommunityDao.isReacted(uid, "post", id, "bookmark"));
         return ResponseEntity.ok(body);
     }
 
@@ -134,11 +139,125 @@ public class CommunityController {
         if (post == null || !"normal".equals(String.valueOf(post.get("status")))) return notFound();
         int limit = clampSize(size);
         int p = page < 1 ? 1 : page;
+        long uid = CAuthUtil.userId(CAuthUtil.user(request));
+        List<Map<String, Object>> rows = CommunityDao.listComments(id, limit, (long) (p - 1) * limit);
+        // 批量回填「我点赞了哪些回复」：一页最多 50 条，逐条查就是 50 次往返
+        List<Long> ids = new java.util.ArrayList<>(rows.size());
+        for (Map<String, Object> r : rows) ids.add(((Number) r.get("id")).longValue());
+        java.util.Set<Long> liked = CommunityDao.reactedIds(uid, "comment", "like", ids);
+        for (Map<String, Object> r : rows) {
+            r.put("liked", liked.contains(((Number) r.get("id")).longValue()));
+        }
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("comments", CommunityDao.listComments(id, limit, (long) (p - 1) * limit));
+        body.put("comments", rows);
         body.put("total", CommunityDao.countComments(id));
         body.put("page", p);
         body.put("size", limit);
+        return ResponseEntity.ok(body);
+    }
+
+    // ================= 互动（M2b：点赞 / 收藏 / 用户资料） =================
+
+    public static class ReactionReq {
+        public String target_type;
+        public Integer target_id;
+        public String kind;
+    }
+
+    /**
+     * 点赞 / 收藏切换（同一个端点，靠 {@code kind} 区分）。
+     *
+     * <p>幂等由 {@code cm_reactions} 的主键保证：同一用户对同一目标重复点只会有 1 行。
+     * 返回 {@code {active, count}} —— 前端据此把按钮画成实心/空心，不需要再查一次。
+     */
+    @PostMapping("/reactions")
+    public ResponseEntity<Map<String, Object>> react(@RequestBody(required = false) ReactionReq req,
+                                                    HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        if (req == null || req.target_id == null) return badField("缺少 target_type / target_id");
+        String type = req.target_type == null ? "" : req.target_type.trim();
+        if (!"post".equals(type) && !"comment".equals(type)) return badField("target_type 只能是 post / comment");
+        String kind = req.kind == null || req.kind.isBlank() ? "like" : req.kind.trim();
+        if (!"like".equals(kind) && !"bookmark".equals(kind)) return badField("kind 只能是 like / bookmark");
+        if (!RateLimit.rateOk("cm-react:" + CAuthUtil.userId(user), 120, 60)) {
+            return ResponseEntity.status(429).body(Map.of("error", "操作过于频繁"));
+        }
+
+        long tid = req.target_id.longValue();
+        // 目标必须存在：否则会给一条不存在的 id 累加计数，且永远查不出来
+        if ("post".equals(type)) {
+            Map<String, Object> p = CommunityDao.getPost(tid);
+            if (p == null) return notFound();
+        } else {
+            // 回复是否存在：commentAuthor 返回 null 即不存在（它本来就是通知要用的同一查询）
+            if (CommunityDao.commentAuthor(tid) == null) return notFound();
+        }
+
+        Map<String, Object> r = CommunityDao.toggleReaction(CAuthUtil.userId(user), type, tid, kind);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("ok", true);
+        body.put("active", r.get("active"));
+        body.put("count", r.get("count"));
+        return ResponseEntity.ok(body);
+    }
+
+    /** 我的收藏（帖子） */
+    @GetMapping("/me/bookmarks")
+    public ResponseEntity<Map<String, Object>> myBookmarks(@RequestParam(defaultValue = "1") int page,
+                                                           @RequestParam(defaultValue = "20") int size,
+                                                           HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        long uid = CAuthUtil.userId(user);
+        int limit = clampSize(size);
+        int p = page < 1 ? 1 : page;
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("items", CommunityDao.listBookmarks(uid, limit, (long) (p - 1) * limit));
+        body.put("total", CommunityDao.countBookmarks(uid));
+        body.put("page", p);
+        body.put("size", limit);
+        return ResponseEntity.ok(body);
+    }
+
+    public static class CommunityProfileReq {
+        public String bio;
+        public String avatar_url;
+    }
+
+    /**
+     * 保存我的社区资料（bio / 头像 URL）。
+     *
+     * <p>⚠️ 头像**只接受 http(s) 或空串**：这是会写进 {@code <img src>} 的字段。
+     * 虽然 React 设 src 不会执行脚本，但 `javascript:` 在这个位置毫无意义、只会是脏数据，
+     * 在入口拒掉比在渲染侧再防一层更省心。
+     */
+    @PutMapping("/me/profile")
+    public ResponseEntity<Map<String, Object>> saveMyProfile(@RequestBody(required = false) CommunityProfileReq req,
+                                                             HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        if (req == null) return badField("缺少请求体");
+        String bio = req.bio == null ? "" : req.bio.trim();
+        String avatar = req.avatar_url == null ? "" : req.avatar_url.trim();
+        if (charLen(bio) > 200) return badField("简介最长 200 个字符");
+        if (charLen(avatar) > 300) return badField("头像地址最长 300 个字符");
+        if (!avatar.isEmpty() && !avatar.matches("(?i)^https?://.+")) {
+            return badField("头像地址必须以 http:// 或 https:// 开头");
+        }
+        CommunityDao.saveProfile(CAuthUtil.userId(user), bio, avatar);
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    /** 用户公开资料 + 最近主题 */
+    @GetMapping("/users/{id}")
+    public ResponseEntity<Map<String, Object>> userProfile(@PathVariable long id, HttpServletRequest request) {
+        if (CAuthUtil.user(request) == null) return CAuthUtil.unauth();
+        Map<String, Object> u = CommunityDao.userPublic(id);
+        if (u == null) return notFound();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("user", u);
+        body.put("posts", CommunityDao.listPostsByAuthor(id, 10));
         return ResponseEntity.ok(body);
     }
 

@@ -5,6 +5,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -485,6 +486,201 @@ public final class CommunityDao {
         return Db.execCount(
                 "DELETE FROM cm_posts WHERE author_id=0 AND link_type='blog' AND comment_count=0 "
                 + "AND link_key NOT IN (" + ph + ")", args.toArray());
+    }
+
+    // ================= 互动（M2b：点赞 / 收藏 / 社区资料） =================
+
+    /** 目标类型 → 表名。**只在这两个常量之间选**，不拼用户输入（拼表名是最典型的注入面）。 */
+    private static String reactionTable(String targetType) {
+        return "comment".equals(targetType) ? "cm_comments" : "cm_posts";
+    }
+
+    /**
+     * 切换点赞/收藏，返回 {@code {active, count}}。
+     *
+     * <p>三步都在一个事务里：删（或插）反应行 → 更新目标表的冗余计数 → 读回计数。
+     *
+     * <p>⚠️ 计数只由 {@code kind='like'} 驱动；收藏不进 {@code like_count}
+     * （收藏是私人的，不该出现在公开的热度里）。
+     * <p>⚠️ 用 {@code INSERT IGNORE} 而不是普通 INSERT：同一用户双击/并发提交时，
+     * 第二个请求会撞主键 —— 普通 INSERT 会抛异常把整个事务回滚，用户看到"操作失败"；
+     * IGNORE 则返回 0 行受影响，据此**不再重复加计数**。
+     */
+    public static Map<String, Object> toggleReaction(long userId, String targetType, long targetId, String kind) {
+        String table = reactionTable(targetType);
+        Connection c = null;
+        try {
+            c = Db.conn();
+            c.setAutoCommit(false);
+
+            boolean active;
+            try (PreparedStatement ps = c.prepareStatement(
+                    "DELETE FROM cm_reactions WHERE user_id=? AND target_type=? AND target_id=? AND kind=?")) {
+                ps.setLong(1, userId);
+                ps.setString(2, targetType);
+                ps.setLong(3, targetId);
+                ps.setString(4, kind);
+                active = ps.executeUpdate() == 0;   // 没删到 = 原本没有，要走新增
+            }
+
+            int delta = 0;
+            if (active) {
+                int ins;
+                try (PreparedStatement ps = c.prepareStatement(
+                        "INSERT IGNORE INTO cm_reactions (user_id, target_type, target_id, kind) VALUES (?,?,?,?)")) {
+                    ps.setLong(1, userId);
+                    ps.setString(2, targetType);
+                    ps.setLong(3, targetId);
+                    ps.setString(4, kind);
+                    ins = ps.executeUpdate();
+                }
+                if (ins == 1) delta = 1;   // 并发下本来就是「已点赞」→ 不动计数
+            } else {
+                delta = -1;
+            }
+
+            if ("like".equals(kind) && delta != 0) {
+                try (PreparedStatement ps = c.prepareStatement(
+                        "UPDATE " + table + " SET like_count = GREATEST(like_count + ?, 0) WHERE id=?")) {
+                    ps.setInt(1, delta);
+                    ps.setLong(2, targetId);
+                    ps.executeUpdate();
+                }
+            }
+
+            long count;
+            try (PreparedStatement ps = c.prepareStatement("SELECT like_count FROM " + table + " WHERE id=?")) {
+                ps.setLong(1, targetId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    count = rs.next() ? rs.getLong(1) : 0L;
+                }
+            }
+
+            c.commit();
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("active", active);
+            out.put("count", count);
+            return out;
+        } catch (SQLException e) {
+            rollbackQuietly(c);
+            throw new RuntimeException(e);
+        } finally {
+            closeQuietly(c);
+        }
+    }
+
+    /** 当前用户对某个目标是否已点赞/收藏 */
+    public static boolean isReacted(long userId, String targetType, long targetId, String kind) {
+        return Db.queryOne(
+                "SELECT 1 AS x FROM cm_reactions WHERE user_id=? AND target_type=? AND target_id=? AND kind=?",
+                userId, targetType, targetId, kind) != null;
+    }
+
+    /**
+     * 批量查「这批目标里我点赞了哪些」。
+     *
+     * <p>为什么必须批量：回复列表一页 50 条，逐条查就是 50 次往返。做成一次 IN 查询，
+     * 前端拿到 id 集合直接标实心。
+     */
+    public static java.util.Set<Long> reactedIds(long userId, String targetType, String kind, List<Long> ids) {
+        java.util.Set<Long> out = new java.util.HashSet<>();
+        if (ids == null || ids.isEmpty()) return out;
+        StringBuilder ph = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        args.add(userId);
+        args.add(targetType);
+        args.add(kind);
+        for (Long id : ids) {
+            if (ph.length() > 0) ph.append(',');
+            ph.append('?');
+            args.add(id);
+        }
+        for (Map<String, Object> r : Db.queryAll(
+                "SELECT target_id FROM cm_reactions WHERE user_id=? AND target_type=? AND kind=? AND target_id IN (" + ph + ")",
+                args.toArray())) {
+            out.add(((Number) r.get("target_id")).longValue());
+        }
+        return out;
+    }
+
+    /** 我的收藏（按收藏时间倒序；已删除/隐藏的帖子不出现） */
+    public static List<Map<String, Object>> listBookmarks(long userId, int limit, long offset) {
+        return Db.queryAll("""
+                SELECT p.id, p.board_id, p.title, p.link_type, p.link_key, p.status,
+                       p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
+                       p.last_reply_at, p.created_at,
+                       p.author_id, %s, b.slug AS board_slug, b.name AS board_name,
+                       r.created_at AS bookmarked_at
+                  FROM cm_reactions r
+                  JOIN cm_posts p ON p.id = r.target_id
+                  JOIN cm_boards b ON b.id = p.board_id
+                  LEFT JOIN c_users u ON u.id = p.author_id
+                 WHERE r.user_id = ? AND r.target_type = 'post' AND r.kind = 'bookmark'
+                   AND p.status = 'normal'
+                 ORDER BY r.created_at DESC
+                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME), userId, limit, offset);
+    }
+
+    public static long countBookmarks(long userId) {
+        Map<String, Object> r = Db.queryOne(
+                "SELECT COUNT(*) AS n FROM cm_reactions r JOIN cm_posts p ON p.id=r.target_id "
+                + "WHERE r.user_id=? AND r.target_type='post' AND r.kind='bookmark' AND p.status='normal'", userId);
+        return r == null ? 0 : ((Number) r.get("n")).longValue();
+    }
+
+    /** 社区资料（可能为 null：用户从没进过社区设置页） */
+    public static Map<String, Object> getProfile(long userId) {
+        return Db.queryOne(
+                "SELECT user_id, bio, avatar_url, muted_until FROM cm_user_profile WHERE user_id=?", userId);
+    }
+
+    /** 保存社区资料（没有则建行）。空串是合法值 = 清空。 */
+    public static void saveProfile(long userId, String bio, String avatarUrl) {
+        Db.exec("""
+                INSERT INTO cm_user_profile (user_id, bio, avatar_url) VALUES (?,?,?)
+                ON DUPLICATE KEY UPDATE bio=VALUES(bio), avatar_url=VALUES(avatar_url)""",
+                userId, bio, avatarUrl);
+    }
+
+    /**
+     * 用户公开资料页的数据。
+     *
+     * <p>三个统计**实时 COUNT**，不做冗余列：5 个用户的规模下，这三次子查询走
+     * {@code idx_author} 是微秒级；存冗余列反而要维护、会漂移（见 PRD-P9 §4.9）。
+     */
+    public static Map<String, Object> userPublic(long userId) {
+        return Db.queryOne("""
+                SELECT u.id, u.username,
+                       COALESCE(NULLIF(u.nickname, ''), u.username) AS nickname,
+                       u.created_at,
+                       COALESCE(pf.bio, '') AS bio,
+                       COALESCE(pf.avatar_url, '') AS avatar_url,
+                       (SELECT COUNT(*) FROM cm_posts x WHERE x.author_id=u.id AND x.status='normal') AS post_count,
+                       (SELECT COUNT(*) FROM cm_comments y WHERE y.author_id=u.id AND y.status<>'deleted') AS comment_count,
+                       (SELECT COALESCE(SUM(z.like_count),0) FROM cm_posts z WHERE z.author_id=u.id AND z.status='normal') AS like_received
+                  FROM c_users u
+                  LEFT JOIN cm_user_profile pf ON pf.user_id = u.id
+                 WHERE u.id = ? AND u.status = 'active'""", userId);
+    }
+
+    /**
+     * 某用户的公开主题。
+     *
+     * <p>⚠️ **不套 {@link #VISIBLE}**：那条规则的作用是「别人发起的 0 回复讨论区不占信息流」，
+     * 而这里查的是**这个人自己发的东西**——他自己发起的讨论（即使没人回）应该出现在他的主页上。
+     */
+    public static List<Map<String, Object>> listPostsByAuthor(long userId, int limit) {
+        return Db.queryAll("""
+                SELECT p.id, p.board_id, p.title, p.link_type, p.link_key, p.status,
+                       p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
+                       p.last_reply_at, p.created_at,
+                       p.author_id, %s, b.slug AS board_slug, b.name AS board_name
+                  FROM cm_posts p
+                  JOIN cm_boards b ON b.id = p.board_id
+                  LEFT JOIN c_users u ON u.id = p.author_id
+                 WHERE p.status = 'normal' AND p.author_id = ?
+                %s
+                 LIMIT ?""".formatted(AUTHOR_NAME, ORDER_LATEST), userId, limit);
     }
 
     // ================= 通知（M3） =================

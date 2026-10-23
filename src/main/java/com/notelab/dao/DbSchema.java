@@ -20,6 +20,7 @@ final class DbSchema {
         loginAuditSchema();
         communitySchema();
         communityNotificationSchema();
+        communityReactionSchema();
     }
 
     /**
@@ -88,6 +89,38 @@ final class DbSchema {
                 KEY idx_author (author_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         seedCommunityBoards();
+    }
+
+    /**
+     * 社区互动（PRD-P9 M2b）：cm_reactions 点赞/收藏合一 + cm_user_profile 身份扩展。
+     *
+     * <p>⚠️ {@code cm_reactions} 的**主键就是幂等键**（user_id, target_type, target_id, kind）：
+     * 重复点赞会撞主键，天然去重，不需要"先查后写"也不需要额外唯一索引。
+     *
+     * <p>⚠️ **不建 cm_users 副本**：用户仍是 c_users，这里只放社区特有的附加信息。
+     * 也**不存** post_count / like_received 之类的聚合列 —— 5 个用户的规模下实时 COUNT 足够快，
+     * 冗余计数只会引入漂移（真要缓存，等主题数破万再说，见 PRD-P9 §4.9）。
+     */
+    private static void communityReactionSchema() {
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_reactions (
+                user_id     INT         NOT NULL,
+                target_type VARCHAR(16) NOT NULL,
+                target_id   INT         NOT NULL,
+                kind        VARCHAR(16) NOT NULL,
+                created_at  DATETIME    DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, target_type, target_id, kind),
+                KEY idx_target (target_type, target_id, kind),
+                KEY idx_user_kind (user_id, kind)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        Db.exec("""
+            CREATE TABLE IF NOT EXISTS cm_user_profile (
+                user_id    INT          PRIMARY KEY,
+                bio        VARCHAR(200) NOT NULL DEFAULT '',
+                avatar_url VARCHAR(300) NOT NULL DEFAULT '',
+                muted_until DATETIME    NULL,
+                updated_at DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
     }
 
     /**
