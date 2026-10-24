@@ -8,9 +8,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * C 端社区（PRD-P9 M1）：{@code /api/c/community} 下的板块 / 帖子 / 回复。
@@ -75,10 +78,13 @@ public class CommunityController {
      */
     @GetMapping("/posts")
     public ResponseEntity<Map<String, Object>> posts(@RequestParam(required = false) String board,
+                                                     @RequestParam(defaultValue = "all") String filter,
+                                                     @RequestParam(defaultValue = "latest") String sort,
                                                      @RequestParam(defaultValue = "1") int page,
                                                      @RequestParam(defaultValue = "20") int size,
                                                      HttpServletRequest request) {
-        if (CAuthUtil.user(request) == null) return CAuthUtil.unauth();
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
         int limit = clampSize(size);
         int p = page < 1 ? 1 : page;
         long offset = (long) (p - 1) * limit;
@@ -89,11 +95,18 @@ public class CommunityController {
             if (b == null) return ResponseEntity.status(404).body(Map.of("error", "板块不存在"));
             boardId = ((Number) b.get("id")).longValue();
         }
+        // 白名单收敛：非法值直接当归一化处理，不报错 —— 这类参数是 UI 驱动的，
+        // 因为一个拼错就返回 400 只会让页面白屏
+        String f = ("featured".equals(filter) || "mine".equals(filter)) ? filter : "all";
+        String s = "new".equals(sort) ? "new" : "latest";
+        long viewer = CAuthUtil.userId(user);
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("posts", CommunityDao.listPosts(boardId, limit, offset));
-        body.put("total", CommunityDao.countPosts(boardId));
+        body.put("posts", CommunityDao.listPosts(boardId, f, viewer, s, limit, offset));
+        body.put("total", CommunityDao.countPosts(boardId, f, viewer));
         body.put("page", p);
         body.put("size", limit);
+        body.put("filter", f);
+        body.put("sort", s);
         return ResponseEntity.ok(body);
     }
 
@@ -395,6 +408,8 @@ public class CommunityController {
 
         long id = CommunityDao.createPost(((Number) board.get("id")).longValue(), uid, title,
                 md, stripMarkdown(md), linkType, linkKey);
+        // 主题正文里也可能 @ 人（例如「@某某 你看这个」）。commentId=0 = 不是回复触发的提及
+        notifyMentions(md, uid, id, 0, Set.of());
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", id);
@@ -441,12 +456,48 @@ public class CommunityController {
             return badField("被回复的楼层不属于本帖");
         }
         long cid = CommunityDao.createComment(id, uid, parentId, md, stripMarkdown(md));
-        notifyReply(post, parentId, uid, id, cid, md);
+        Set<Long> notified = notifyReply(post, parentId, uid, id, cid, md);
+        notifyMentions(md, uid, id, cid, notified);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
         body.put("id", cid);
         return ResponseEntity.ok(body);
     }
+
+    /**
+     * @提及解析（M5-lite，2026-10-24）：从正文里找 {@code @昵称}，给被提到的人发通知。
+     *
+     * <p>限制：只认「无空格、2-20 个中英文/数字/下划线/短横线」的名字 —— 昵称里有空格的人
+     * 无法被 @（正文按空格断词，`@张 三` 会被当成叫「张」）。这是没有富文本提及组件时的
+     * 必要取舍；要支持任意昵称得在编辑器层做选择器，成本高一个量级。
+     *
+     * <p>⚠️ {@code skip} 里是**已经收到回复通知的人**：回复楼主同时又 @ 他，只该收一条。
+     */
+    private static void notifyMentions(String md, long actorId, long postId, long commentId, Set<Long> skip) {
+        if (md == null || md.indexOf('@') < 0) return;
+        try {
+            Set<String> names = new LinkedHashSet<>();
+            Matcher m = MENTION_RE.matcher(md);
+            while (m.find()) names.add(m.group(1));
+            if (names.isEmpty()) return;
+
+            String excerpt = clampText(stripMarkdown(md), 80);
+            Set<Long> sent = new LinkedHashSet<>(skip);
+            for (String name : names) {
+                Long uid = CommunityDao.findUserIdByName(name);
+                if (uid == null || uid <= 0 || uid == actorId) continue;
+                if (!sent.add(uid)) continue;   // 同一条回复里 @ 两次同一个人，只发一条
+                CommunityDao.createNotification(uid, "mention", actorId, postId, commentId, excerpt);
+            }
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(CommunityController.class)
+                    .warn("社区 @提及 解析失败 post={} comment={}", postId, commentId, e);
+        }
+    }
+
+    /** 提及正则：中英文/数字/下划线/短横线，2-20 个字符（与 c_users 的昵称长度上限对齐） */
+    private static final Pattern MENTION_RE =
+            Pattern.compile("@([A-Za-z0-9_\\-\\u4e00-\\u9fa5]{2,20})");
 
     /**
      * 回复后发通知（PRD-P9 M3）。
@@ -460,10 +511,10 @@ public class CommunityController {
      * <p>通知写失败**不影响回复成功**：回复已经落库，少一条提醒是可接受的降级；
      * 反过来（因为通知失败而回滚回复）才是真正的数据损失。
      */
-    private static void notifyReply(Map<String, Object> post, long parentId, long actorId,
-                                    long postId, long commentId, String md) {
+    private static Set<Long> notifyReply(Map<String, Object> post, long parentId, long actorId,
+                                         long postId, long commentId, String md) {
+        Set<Long> targets = new LinkedHashSet<>();
         try {
-            java.util.Set<Long> targets = new java.util.LinkedHashSet<>();
             long postAuthor = ((Number) post.get("author_id")).longValue();
             if (postAuthor > 0) targets.add(postAuthor);
             if (parentId > 0) {
@@ -471,7 +522,7 @@ public class CommunityController {
                 if (parentAuthor != null && parentAuthor > 0) targets.add(parentAuthor);
             }
             targets.remove(actorId);
-            if (targets.isEmpty()) return;
+            if (targets.isEmpty()) return targets;
 
             String excerpt = clampText(stripMarkdown(md), 80);
             for (long t : targets) {
@@ -482,6 +533,92 @@ public class CommunityController {
             org.slf4j.LoggerFactory.getLogger(CommunityController.class)
                     .warn("社区通知写入失败 post={} comment={}", postId, commentId, e);
         }
+        // 返回「已通知到的人」，供 @提及 去重（回复楼主又 @ 他，不该收两条）
+        return targets;
+    }
+
+    // ================= 编辑（M5-lite，2026-10-24） =================
+    //
+    // M1 时是「不可编辑」，理由是编辑会让讨论失去上下文。实际用下来写错一个字只能删了重发，
+    // 删掉的帖子底下别人的回复也一起消失 —— 代价更大。现在允许作者改，但**留痕**（edited_at），
+    // 页面显示「已编辑」。这不是防滥用（没有版本历史），只是让读者知道内容变过。
+
+    /**
+     * 编辑自己的主题。
+     *
+     * <p>⚠️ 权限判定只有一条：{@code author_id} 必须等于当前用户（DAO 的 UPDATE 里也带了这条件）。
+     * 管理员改内容走 B 端的 {@code /api/community-admin/posts/{id}}，不共用这个端点 ——
+     * 两条路径的校验完全不同，混在一起最容易被绕过。
+     */
+    @PutMapping("/posts/{id}")
+    public ResponseEntity<Map<String, Object>> editPost(@PathVariable long id,
+                                                        @RequestBody(required = false) CreatePostReq req,
+                                                        HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        if (req == null) return badField("缺少请求体");
+        long uid = CAuthUtil.userId(user);
+
+        Map<String, Object> cur = CommunityDao.getPost(id);
+        if (cur == null || !"normal".equals(String.valueOf(cur.get("status")))) return notFound();
+        if (((Number) cur.get("author_id")).longValue() != uid) {
+            return ResponseEntity.status(403).body(Map.of("error", "只能编辑自己的主题"));
+        }
+        // 禁言期连改都不允许：禁言的语义是「暂停你在社区的一切写入」
+        String muted = CommunityDao.mutedUntil(uid);
+        if (muted != null) {
+            return ResponseEntity.status(403).body(Map.of("error", "你已被禁言，解除时间 " + muted));
+        }
+
+        String title = req.title == null ? "" : req.title.trim();
+        String md = req.content_md == null ? "" : req.content_md.trim();
+        if (title.isEmpty()) return badField("标题不能为空");
+        if (title.length() > 120) return badField("标题最长 120 个字符");
+        if (md.isEmpty()) return badField("正文不能为空");
+        if (md.length() > 20000) return badField("正文最长 20000 个字符");
+
+        long boardId = ((Number) cur.get("board_id")).longValue();
+        if (req.board_slug != null && !req.board_slug.isBlank()) {
+            Map<String, Object> b = CommunityDao.getBoardBySlug(req.board_slug.trim());
+            if (b == null) return badField("板块不存在");
+            boardId = ((Number) b.get("id")).longValue();
+        }
+        int n = CommunityDao.userUpdatePost(id, uid, boardId, title, md, stripMarkdown(md));
+        if (n == 0) return ResponseEntity.status(409).body(Map.of("error", "内容已变化，请刷新后重试"));
+        return ResponseEntity.ok(Map.of("ok", true));
+    }
+
+    public static class EditCommentReq {
+        public String content_md;
+    }
+
+    /** 编辑自己的回复（不能换楼：parent_id 不动，否则引用关系会错位） */
+    @PutMapping("/comments/{id}")
+    public ResponseEntity<Map<String, Object>> editComment(@PathVariable long id,
+                                                           @RequestBody(required = false) EditCommentReq req,
+                                                           HttpServletRequest request) {
+        Map<String, Object> user = CAuthUtil.user(request);
+        if (user == null) return CAuthUtil.unauth();
+        if (req == null) return badField("缺少请求体");
+        long uid = CAuthUtil.userId(user);
+
+        Map<String, Object> c = CommunityDao.commentBrief(id);
+        if (c == null || !"normal".equals(String.valueOf(c.get("status")))) return notFound();
+        if (((Number) c.get("author_id")).longValue() != uid) {
+            return ResponseEntity.status(403).body(Map.of("error", "只能编辑自己的回复"));
+        }
+        String muted = CommunityDao.mutedUntil(uid);
+        if (muted != null) {
+            return ResponseEntity.status(403).body(Map.of("error", "你已被禁言，解除时间 " + muted));
+        }
+
+        String md = req.content_md == null ? "" : req.content_md.trim();
+        if (md.isEmpty()) return badField("回复内容不能为空");
+        if (md.length() > 5000) return badField("回复最长 5000 个字符");
+
+        int n = CommunityDao.userUpdateComment(id, uid, md, stripMarkdown(md));
+        if (n == 0) return ResponseEntity.status(409).body(Map.of("error", "内容已变化，请刷新后重试"));
+        return ResponseEntity.ok(Map.of("ok", true));
     }
 
     // ================= 通知（M3） =================

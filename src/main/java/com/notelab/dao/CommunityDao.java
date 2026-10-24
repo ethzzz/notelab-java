@@ -88,13 +88,47 @@ public final class CommunityDao {
     // ================= 帖子 =================
 
     /**
+     * 列表筛选条件（listPosts 与 countPosts **共用这一个方法**）。
+     *
+     * <p>⚠️ 抽出来是硬性要求：两处各写一遍时，"共 N 个主题"和能翻到的条数迟早对不上 ——
+     * 这种不一致在线上表现为「翻到最后一页少了几条」，极难发现。
+     *
+     * @param filter all / featured（精华）/ mine（我参与的，需要 viewerId>0）
+     * @param sort   latest（置顶 + 最后回复倒序，默认）/ new（置顶 + 发布倒序）
+     */
+    private static String postWhere(long boardId, String filter, long viewerId, List<Object> args) {
+        StringBuilder w = new StringBuilder(" WHERE ").append(VISIBLE);
+        if (boardId > 0) {
+            w.append(" AND p.board_id = ?");
+            args.add(boardId);
+        }
+        if ("featured".equals(filter)) {
+            w.append(" AND p.is_featured = 1");
+        } else if ("mine".equals(filter) && viewerId > 0) {
+            // 「我参与的」取的是**我发起的**主题。只回帖没发帖的不算 —— 那需要再 JOIN 一次
+            // cm_comments 去重，成本高且语义模糊（回了 3 句算参与，点了个赞算不算）。
+            w.append(" AND p.author_id = ?");
+            args.add(viewerId);
+        }
+        return w.toString();
+    }
+
+    private static String postOrder(String sort) {
+        return "new".equals(sort)
+                ? " ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC"
+                : ORDER_LATEST;
+    }
+
+    /**
      * 帖子列表分页。{@code boardId<=0} 表示全站（不限板块）。
      *
-     * <p>M1 只有一种排序（置顶 + 最后回复倒序）。热门排序要时间衰减公式，属 M3，
-     * 现在加进来会让人误以为已按热度排好 —— 参数先不暴露，Controller 只认 latest。
+     * <p>排序只有「最后回复」和「发布」两种，**没有热门**：热度分（时间衰减）在这个数据量下
+     * 没有区分度，做出来「热门」和「最新」看起来一样，反而让人以为系统在推荐。
      */
-    public static List<Map<String, Object>> listPosts(long boardId, int limit, long offset) {
-        String where = VISIBLE + (boardId > 0 ? " AND p.board_id = ?" : "");
+    public static List<Map<String, Object>> listPosts(long boardId, String filter, long viewerId,
+                                                      String sort, int limit, long offset) {
+        List<Object> args = new ArrayList<>();
+        String where = postWhere(boardId, filter, viewerId, args);
         String sql = """
                 SELECT p.id, p.board_id, p.title, p.link_type, p.link_key, p.status,
                        p.is_pinned, p.is_featured, p.view_count, p.comment_count, p.like_count,
@@ -103,19 +137,16 @@ public final class CommunityDao {
                   FROM cm_posts p
                   JOIN cm_boards b ON b.id = p.board_id
                   LEFT JOIN c_users u ON u.id = p.author_id
-                 WHERE %s
-                %s
-                 LIMIT ? OFFSET ?""".formatted(AUTHOR_NAME, where, ORDER_LATEST);
-        return boardId > 0
-                ? Db.queryAll(sql, boardId, limit, offset)
-                : Db.queryAll(sql, limit, offset);
+                """.formatted(AUTHOR_NAME) + where + postOrder(sort) + " LIMIT ? OFFSET ?";
+        args.add(limit);
+        args.add(offset);
+        return Db.queryAll(sql, args.toArray());
     }
 
-    public static long countPosts(long boardId) {
-        // ⚠️ 必须与 listPosts 的 VISIBLE 完全一致，否则「共 N 个主题」与实际能翻到的条数不符
-        Map<String, Object> r = boardId > 0
-                ? Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE + " AND p.board_id = ?", boardId)
-                : Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p WHERE " + VISIBLE);
+    public static long countPosts(long boardId, String filter, long viewerId) {
+        List<Object> args = new ArrayList<>();
+        String where = postWhere(boardId, filter, viewerId, args);
+        Map<String, Object> r = Db.queryOne("SELECT COUNT(*) AS n FROM cm_posts p" + where, args.toArray());
         return r == null ? 0 : ((Number) r.get("n")).longValue();
     }
 
@@ -125,11 +156,35 @@ public final class CommunityDao {
                 SELECT p.id, p.board_id, p.author_id, p.title, p.content_md,
                        p.link_type, p.link_key, p.status, p.is_pinned, p.is_featured,
                        p.view_count, p.comment_count, p.like_count, p.created_at, p.updated_at,
+                       p.edited_at,
                        %s, b.slug AS board_slug, b.name AS board_name
                   FROM cm_posts p
                   JOIN cm_boards b ON b.id = p.board_id
                   LEFT JOIN c_users u ON u.id = p.author_id
                  WHERE p.id = ?""".formatted(AUTHOR_NAME), id);
+    }
+
+    /**
+     * 作者本人编辑自己的主题（M5-lite，2026-10-24）。
+     *
+     * <p>{@code WHERE ... AND author_id = ?} 是**唯一**的权限判定：把作者条件写进 UPDATE，
+     * 就不会出现"先查再改"之间被换人的窗口，也不用在 Controller 里再补一次判断。
+     * 返回 0 = 不存在 / 不是他的 / 已被折叠或删除，三种情况前端体验上都是"改不动"。
+     */
+    public static int userUpdatePost(long id, long authorId, long boardId,
+                                     String title, String contentMd, String contentText) {
+        return Db.execCount("""
+                UPDATE cm_posts SET board_id=?, title=?, content_md=?, content_text=?, edited_at=NOW()
+                 WHERE id=? AND author_id=? AND status='normal'""",
+                boardId, title, contentMd, contentText, id, authorId);
+    }
+
+    /** 作者本人编辑自己的回复。回复没有标题，也不允许换楼（parent_id 不动）。 */
+    public static int userUpdateComment(long id, long authorId, String contentMd, String contentText) {
+        return Db.execCount("""
+                UPDATE cm_comments SET content_md=?, content_text=?, edited_at=NOW()
+                 WHERE id=? AND author_id=? AND status='normal'""",
+                contentMd, contentText, id, authorId);
     }
 
     /** 按站内对象反查讨论帖（link_type + link_key）。找不到返回 null。 */
@@ -186,7 +241,7 @@ public final class CommunityDao {
         //    评论作者不可能是 0（系统身份不发回复），所以不需要 NoteLab 的分支。
         return Db.queryAll("""
                 SELECT c.id, c.post_id, c.author_id, c.parent_id, c.content_md, c.status,
-                       c.like_count, c.created_at,
+                       c.like_count, c.created_at, c.edited_at,
                        COALESCE(NULLIF(u.nickname, ''), u.username, '已注销') AS author_name,
                        pc.author_id AS parent_author_id,
                        COALESCE(NULLIF(pu.nickname, ''), pu.username, '已注销') AS parent_author_name
@@ -407,7 +462,8 @@ public final class CommunityDao {
 
     /** 管理端编辑：标题/正文/板块（link_* 不允许改，改了会让「讨论入口」指向另一条内容） */
     public static void adminUpdatePost(long id, long boardId, String title, String contentMd, String contentText) {
-        Db.exec("UPDATE cm_posts SET board_id=?, title=?, content_md=?, content_text=? WHERE id=?",
+        // 管理端编辑也留痕：官方帖被补过导语，读者有权知道内容变过
+        Db.exec("UPDATE cm_posts SET board_id=?, title=?, content_md=?, content_text=?, edited_at=NOW() WHERE id=?",
                 boardId, title, contentMd, contentText, id);
     }
 
@@ -681,6 +737,21 @@ public final class CommunityDao {
                  WHERE p.status = 'normal' AND p.author_id = ?
                 %s
                  LIMIT ?""".formatted(AUTHOR_NAME, ORDER_LATEST), userId, limit);
+    }
+
+    /**
+     * 按昵称**或**用户名精确找人（@提及用）。找不到返回 null。
+     *
+     * <p>⚠️ 必须精确匹配，不能用 LIKE：@小明 命中「小明同学」等于把通知发给了一个没被叫到的人。
+     * <p>⚠️ 只查 active 账号 —— 给已禁用账号发通知等于丢进黑洞。
+     */
+    public static Long findUserIdByName(String name) {
+        Map<String, Object> r = Db.queryOne("""
+                SELECT id FROM c_users
+                 WHERE status = 'active' AND (nickname = ? OR username = ?)
+                 ORDER BY (nickname = ?) DESC, id
+                 LIMIT 1""", name, name, name);
+        return r == null ? null : ((Number) r.get("id")).longValue();
     }
 
     // ================= 通知（M3） =================

@@ -89,6 +89,15 @@ final class DbSchema {
                 KEY idx_author (author_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
         seedCommunityBoards();
+        // 编辑留痕（2026-10-24）：社区允许作者改自己的帖子/回复，但页面上要显示「已编辑」。
+        // ⚠️ 不能复用 updated_at 判断：点赞/回复计数会 UPDATE 同一行，ON UPDATE 会把它一起刷新，
+        //    结果「有人点了赞」看起来也像「作者改过内容」。所以单独一列，只在真正编辑时写。
+        if (!hasColumn("cm_posts", "edited_at")) {
+            Db.exec("ALTER TABLE cm_posts ADD COLUMN edited_at DATETIME NULL");
+        }
+        if (!hasColumn("cm_comments", "edited_at")) {
+            Db.exec("ALTER TABLE cm_comments ADD COLUMN edited_at DATETIME NULL");
+        }
     }
 
     /**
