@@ -552,7 +552,7 @@ public class CommunityController {
      */
     @PutMapping("/posts/{id}")
     public ResponseEntity<Map<String, Object>> editPost(@PathVariable long id,
-                                                        @RequestBody(required = false) CreatePostReq req,
+                                                        @RequestBody(required = false) PostReq req,
                                                         HttpServletRequest request) {
         Map<String, Object> user = CAuthUtil.user(request);
         if (user == null) return CAuthUtil.unauth();
