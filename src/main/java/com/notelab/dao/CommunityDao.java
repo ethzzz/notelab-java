@@ -113,9 +113,17 @@ public final class CommunityDao {
         return w.toString();
     }
 
+    /**
+     * 排序片段。**不带前导空格** —— 由调用方统一用 `where + " " + order` 拼接。
+     *
+     * <p>⚠️ 血泪：这个常量原来没有前导空格也不出错，是因为旧 SQL 模板里 `%s` 独占一行（前面有换行）。
+     * 改成字符串 `+` 拼接后，`... is_featured = 1` 和 `ORDER` 连成 `1ORDER` → 只有
+     * featured/mine 两个筛选 500，而 `all` 的 where 以 `)` 结尾恰好把 token 断开了。
+     * **用拼接构建 SQL 时，分隔符不能靠"模板里恰好有换行"。**
+     */
     private static String postOrder(String sort) {
         return "new".equals(sort)
-                ? " ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC"
+                ? "ORDER BY p.is_pinned DESC, p.created_at DESC, p.id DESC"
                 : ORDER_LATEST;
     }
 
@@ -137,7 +145,7 @@ public final class CommunityDao {
                   FROM cm_posts p
                   JOIN cm_boards b ON b.id = p.board_id
                   LEFT JOIN c_users u ON u.id = p.author_id
-                """.formatted(AUTHOR_NAME) + where + postOrder(sort) + " LIMIT ? OFFSET ?";
+                """.formatted(AUTHOR_NAME) + where + " " + postOrder(sort) + " LIMIT ? OFFSET ?";
         args.add(limit);
         args.add(offset);
         return Db.queryAll(sql, args.toArray());
