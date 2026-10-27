@@ -46,6 +46,9 @@ if [ "${BUILD_GUARD_INNER:-0}" != 1 ]; then
 fi
 
 cg="/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)"
+# 内层监督进程必须比构建本身更"耐杀"：否则构建撞上限时内核可能连它一起收走，
+# 该打的 [guard] 诊断信息就丢了（只剩一个 255 退出码）。
+echo -500 >/proc/self/oom_score_adj 2>/dev/null || true
 mem_peak() {
   [ -r "$cg/memory.peak" ] && awk '{printf "%.0f", $1/1048576}' "$cg/memory.peak"
 }
