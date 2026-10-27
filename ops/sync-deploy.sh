@@ -12,6 +12,14 @@
 #       有变更才构建并重启（**仅文档变更默认跳过**，用 --build 强制）。
 #       工作区脏 → 拒绝执行：说明有人在服务器上手改了代码，先查清。
 #
+# 资源守护（2026-10-27 宕机后加，2 vCPU / 3.9 GB 机器上的硬约束）：
+#   · 全局部署锁：同一时刻只允许一个部署，后来的排队而不是并发叠加；
+#   · 构建前体检：可用内存/swap/负载/磁盘不达标就等，等不到就拒绝；
+#   · 构建限额：CPU/内存/swap/超时全部封顶（默认 180% / 2700M / 1024M / 1800s），
+#     超限只杀构建自己，nginx 与 pm2 服务不受影响。可用环境变量覆盖：
+#     BUILD_CPU_QUOTA、BUILD_MEM_HIGH、BUILD_MEM_MAX、BUILD_SWAP_MAX、BUILD_TIMEOUT、
+#     MIN_MEM_MB、MIN_SWAP_MB、MIN_DISK_MB、LOCK_WAIT。
+#
 # 退出码：0 成功（含"已是最新"）；非 0 表示同步或构建失败，需人工介入。
 set -euo pipefail
 
@@ -19,6 +27,26 @@ ROOT=/root                        # 家目录：日志/备份仍在 /root/ops、
 REPO_ROOT=/root/Notelab           # 三个 notelab 仓所在（2026-10-01 从 /root 平铺迁入）
 OPS_LOG_DIR=/root/ops
 PROG=$(basename "$0")
+OPS_DIR=$(cd "$(dirname "$0")" && pwd)
+
+# 构建资源上限：2 vCPU / 3.9 GB，必须给线上服务与 ssh 留出余量。
+BUILD_CPU_QUOTA=${BUILD_CPU_QUOTA:-180%}
+BUILD_MEM_HIGH=${BUILD_MEM_HIGH:-1900M}
+BUILD_MEM_MAX=${BUILD_MEM_MAX:-2700M}
+BUILD_SWAP_MAX=${BUILD_SWAP_MAX:-1024M}
+BUILD_TIMEOUT=${BUILD_TIMEOUT:-1800}
+export BUILD_CPU_QUOTA BUILD_MEM_HIGH BUILD_MEM_MAX BUILD_SWAP_MAX BUILD_TIMEOUT
+
+# 构建前体检红线
+MIN_MEM_MB=${MIN_MEM_MB:-800}
+MIN_SWAP_MB=${MIN_SWAP_MB:-256}
+MIN_DISK_MB=${MIN_DISK_MB:-2048}
+PREFLIGHT_WAIT=${PREFLIGHT_WAIT:-90}
+MAX_LOAD_FACTOR=${MAX_LOAD_FACTOR:-2}
+
+LOCK_FILE=/run/notelab-deploy.lock
+LOCK_OWNER=/run/notelab-deploy.owner
+LOCK_WAIT=${LOCK_WAIT:-1800}
 
 BUILD=auto          # auto | force | skip
 DRY_RUN=0
@@ -51,6 +79,9 @@ for r in "${TARGETS[@]}"; do
   case " $ALL_REPOS " in *" $r "*) ;; *) die "不认识的仓：$r（支持：$ALL_REPOS）" ;; esac
 done
 
+ARGS="$*"
+acquire_deploy_lock   # 整段部署（含 all 的多个仓）独占，防止并发构建把机器压死
+
 # 只有文档变更时跳过构建：这些路径不会被构建期读取（若某页面直接渲染 md，用 --build 强制）
 docs_only() {
   local f
@@ -76,13 +107,66 @@ wait_http() {
   return 1
 }
 
-run_build() {   # $1=仓名 $2=工作目录内的构建命令 $3=构建失败时的恢复命令（可选）
+# 全局部署锁：agent 并行发起多个 ssh 部署时，这里排队而不是让两个 npm/mvn 同时跑。
+# 2026-10-27 宕机复盘：构建把 2 核吃满、swap 被打穿，整机失去响应，只能硬重启。
+acquire_deploy_lock() {
+  if [ "$DRY_RUN" = 1 ]; then log "dry-run：不占用部署锁"; return 0; fi
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    local holder
+    holder=$(cat "$LOCK_OWNER" 2>/dev/null || echo '未知')
+    log "另一个部署正在运行（$holder），排队等待（最多 ${LOCK_WAIT}s）…"
+    flock -w "$LOCK_WAIT" 9 || die "等待部署锁超时：另一个部署仍未结束（$holder）"
+    log "已获得部署锁，继续"
+  fi
+  printf 'pid=%s args=%s since=%s\n' "$$" "$ARGS" "$(date '+%F %T')" >"$LOCK_OWNER"
+  trap 'rm -f "$LOCK_OWNER"' EXIT
+}
+
+# 开工前体检：内存/swap/负载/磁盘任一项在红线上就先等，等不到就拒绝。
+# 目的是「不在机器已经吃紧的时候再压一个构建上去」。
+preflight_resources() {
+  local i=0 mem swap load ncpu disk
+  while :; do
+    mem=$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)
+    swap=$(awk '/^SwapFree:/{print int($2/1024)}' /proc/meminfo)
+    load=$(awk '{print $1}' /proc/loadavg)
+    ncpu=$(nproc)
+    disk=$(df -Pk / | awk 'NR==2{print int($4/1024)}')
+    log "  体检：可用内存 ${mem}MiB / 可用 swap ${swap}MiB / load1 ${load}（${ncpu} 核）/ 磁盘 ${disk}MiB"
+
+    [ "$disk" -ge "$MIN_DISK_MB" ] \
+      || die "根分区可用空间仅 ${disk}MiB（< ${MIN_DISK_MB}MiB），构建可能写满磁盘，已中止"
+
+    if awk -v l="$load" -v n="$ncpu" -v f="$MAX_LOAD_FACTOR" 'BEGIN{exit !(l <= n*f)}' \
+       && [ "$mem" -ge "$MIN_MEM_MB" ] && [ "$swap" -ge "$MIN_SWAP_MB" ]; then
+      return 0
+    fi
+
+    [ "$i" -lt "$PREFLIGHT_WAIT" ] \
+      || die "资源不达标且已等待 ${i}s（内存 ${mem}MiB / swap ${swap}MiB / load1 ${load}）；先查清谁在吃资源：pm2 list、ps aux --sort=-%mem"
+    sleep 5; i=$((i + 5))
+  done
+}
+
+# 所有构建/依赖安装的唯一入口：先体检，再在 cgroup 限额里执行。
+run_guarded() {  # $1=命令 $2=日志文件（可选）
+  local cmd=$1 logfile=${2:-}
+  preflight_resources
+  if [ -n "$logfile" ]; then
+    bash "$OPS_DIR/build-guard.sh" "$cmd" >"$logfile" 2>&1
+  else
+    bash "$OPS_DIR/build-guard.sh" "$cmd"
+  fi
+}
+
+run_build() {   # $1=仓名 $2=构建命令 $3=构建失败时的恢复命令（可选）
   local repo=$1 cmd=$2 restore=${3:-}
   local logfile="$OPS_LOG_DIR/sync-deploy-$repo.log"
   mkdir -p "$OPS_LOG_DIR"
-  log "  构建：$cmd （输出 → $logfile）"
+  log "  构建：$cmd （输出 → $logfile；限额 CPU ${BUILD_CPU_QUOTA} / 内存 ${BUILD_MEM_MAX} / swap ${BUILD_SWAP_MAX} / 超时 ${BUILD_TIMEOUT}s）"
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过实际执行"; return 0; fi
-  if ! ( eval "$cmd" ) >"$logfile" 2>&1; then
+  if ! run_guarded "$cmd" "$logfile"; then
     tail -25 "$logfile" >&2
     # 恢复命令：用于「构建前必须先停服务」的场景（见 notelab-java 分支），
     # 否则构建一失败服务就永远停在 stopped，比构建失败本身更致命。
@@ -105,16 +189,44 @@ npm_install_if_needed() {  # $1=变更文件清单
   if printf '%s\n' "$1" | grep -qE '^(.*/)?package(-lock)?\.json$|^pnpm-lock\.yaml$' \
      && ! printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
     log "  package.json / lock 有变更 → 先 npm install"
-    [ "$DRY_RUN" = 1 ] || npm install --no-audit --no-fund >/dev/null 2>&1 || die "npm install 失败"
+    if [ "$DRY_RUN" != 1 ]; then
+      local nlog="$OPS_LOG_DIR/sync-deploy-npm-install.log"
+      if ! run_guarded "npm install --no-audit --no-fund" "$nlog"; then
+        tail -20 "$nlog" >&2
+        die "npm install 失败（日志：$nlog）"
+      fi
+      restore_lockfile_noise
+    fi
   fi
   # 2026-10-01：ArchGuard 在 notelab-c 里是**子包**（notelab-c/archguard），有自己的 package.json。
   # ⚠️ 它**不属于** npm workspace（不在 workspaces 声明里，自己带 node_modules），
   #    所以必须从上面的放宽规则里排除，否则会在仓根误跑一次、真正的子包 install 反而没跑。
   if printf '%s\n' "$1" | grep -qE '^archguard/package(-lock)?\.json$'; then
     log "  archguard 子包依赖有变更 → 在 notelab-c/archguard 内 npm install"
-    [ "$DRY_RUN" = 1 ] || ( cd /root/Notelab/notelab-c/archguard && npm install --no-audit --no-fund >/dev/null 2>&1 ) \
-      || die "archguard npm install 失败"
+    if [ "$DRY_RUN" != 1 ]; then
+      local alog="$OPS_LOG_DIR/sync-deploy-npm-install-archguard.log"
+      # 子 shell 里的 cd 不影响 run_guarded：这里直接给出带路径的命令
+      if ! run_guarded "cd /root/Notelab/notelab-c/archguard && npm install --no-audit --no-fund" "$alog"; then
+        tail -20 "$alog" >&2
+        die "archguard npm install 失败（日志：$alog）"
+      fi
+      restore_lockfile_noise
+    fi
   fi
+}
+
+# npm 版本差异会顺手重写 lock（典型：删掉可选依赖的 libc 字段），把服务器工作区改脏，
+# 下一次部署直接被「工作区脏」守护拦下 —— 这正是有人绕过脚本手搓构建的起点。
+# 部署只负责按 lock 装依赖，不该改仓库：装完发现 lock 被动过就还原。
+restore_lockfile_noise() {
+  local dirty
+  dirty=$(git status --porcelain -- '*package-lock.json' 2>/dev/null | awk '{print $2}' || true)
+  [ -n "$dirty" ] || return 0
+  warn "npm install 改写了 lockfile（通常是 npm 版本差异），已还原以免工作区变脏："
+  printf '%s\n' "$dirty" | sed 's/^/    /' >&2
+  local -a paths=()
+  while IFS= read -r p; do [ -n "$p" ] && paths+=("$p"); done <<< "$dirty"
+  git checkout -- "${paths[@]}" || warn "还原 lockfile 失败，需手工执行 git checkout -- ${dirty}"
 }
 
 # 2026-10-01：架构门禁。ArchGuard 扫 java/b/c 三仓源码建依赖图，error>0 即中止部署。
