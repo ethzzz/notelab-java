@@ -10,9 +10,9 @@
 #
 # 可调环境变量（默认值按当前服务器定）：
 #   BUILD_CPU_QUOTA=180%  构建可用 CPU（2 核 = 200%，留 20% 给线上服务与 ssh）
-#   BUILD_MEM_HIGH=1900M  软上限：超过后内核只在 cgroup 内回收/限流
-#   BUILD_MEM_MAX=2700M   硬上限：超过即杀构建（只杀构建）
-#   BUILD_SWAP_MAX=1024M  构建最多用多少 swap（不设上限会疯狂换页，是整机卡死的主因）
+#   BUILD_MEM_HIGH=2400M  软上限：超过后内核只在 cgroup 内回收/限流
+#   BUILD_MEM_MAX=3200M   硬上限：超过即杀构建（只杀构建）
+#   BUILD_SWAP_MAX=1536M  构建最多用多少 swap（不设上限会疯狂换页，是整机卡死的主因）
 #   BUILD_TIMEOUT=1800    超时秒数
 set -uo pipefail
 
@@ -33,15 +33,15 @@ if [ "${BUILD_GUARD_INNER:-0}" != 1 ]; then
   # --collect：失败/超时后自动清理 scope，不残留 failed unit。
   exec systemd-run --scope --quiet --collect \
     -p "CPUQuota=${BUILD_CPU_QUOTA:-180%}" \
-    -p "MemoryHigh=${BUILD_MEM_HIGH:-1900M}" \
-    -p "MemoryMax=${BUILD_MEM_MAX:-2700M}" \
-    -p "MemorySwapMax=${BUILD_SWAP_MAX:-1024M}" \
+    -p "MemoryHigh=${BUILD_MEM_HIGH:-2400M}" \
+    -p "MemoryMax=${BUILD_MEM_MAX:-3200M}" \
+    -p "MemorySwapMax=${BUILD_SWAP_MAX:-1536M}" \
     -p "OOMPolicy=continue" \
     /usr/bin/env \
       BUILD_GUARD_INNER=1 \
       BUILD_CPU_QUOTA="${BUILD_CPU_QUOTA:-180%}" \
-      BUILD_MEM_MAX="${BUILD_MEM_MAX:-2700M}" \
-      BUILD_SWAP_MAX="${BUILD_SWAP_MAX:-1024M}" \
+      BUILD_MEM_MAX="${BUILD_MEM_MAX:-3200M}" \
+      BUILD_SWAP_MAX="${BUILD_SWAP_MAX:-1536M}" \
       BUILD_TIMEOUT="${BUILD_TIMEOUT:-1800}" \
     /bin/bash "$0" "$cmd"
 fi

@@ -15,8 +15,8 @@
 # 资源守护（2026-10-27 宕机后加，2 vCPU / 3.9 GB 机器上的硬约束）：
 #   · 全局部署锁：同一时刻只允许一个部署，后来的排队而不是并发叠加；
 #   · 构建前体检：可用内存/swap/负载/磁盘不达标就等，等不到就拒绝；
-#   · 构建限额：CPU/内存/swap/超时全部封顶（默认 180% / 2700M / 1024M / 1800s），
-#     超限只杀构建自己，nginx 与 pm2 服务不受影响。可用环境变量覆盖：
+#   · 构建限额：CPU/内存/swap/超时全部封顶（默认见 ops/build-guard.sh：180% / 3200M / 1536M / 1800s），
+#     超限只杀构建自己，nginx 与 pm2 服务不受影响。可用同名环境变量覆盖：
 #     BUILD_CPU_QUOTA、BUILD_MEM_HIGH、BUILD_MEM_MAX、BUILD_SWAP_MAX、BUILD_TIMEOUT、
 #     MIN_MEM_MB、MIN_SWAP_MB、MIN_DISK_MB、LOCK_WAIT。
 #
@@ -29,13 +29,8 @@ OPS_LOG_DIR=/root/ops
 PROG=$(basename "$0")
 OPS_DIR=$(cd "$(dirname "$0")" && pwd)
 
-# 构建资源上限：2 vCPU / 3.9 GB，必须给线上服务与 ssh 留出余量。
-BUILD_CPU_QUOTA=${BUILD_CPU_QUOTA:-180%}
-BUILD_MEM_HIGH=${BUILD_MEM_HIGH:-1900M}
-BUILD_MEM_MAX=${BUILD_MEM_MAX:-2700M}
-BUILD_SWAP_MAX=${BUILD_SWAP_MAX:-1024M}
-BUILD_TIMEOUT=${BUILD_TIMEOUT:-1800}
-export BUILD_CPU_QUOTA BUILD_MEM_HIGH BUILD_MEM_MAX BUILD_SWAP_MAX BUILD_TIMEOUT
+# 构建资源上限的唯一来源是 ops/build-guard.sh（默认值写在那里，避免两处漂移）；
+# 临时放宽在调用前 export 即可，例如 BUILD_MEM_MAX=4000M ./sync-deploy.sh notelab-b。
 
 # 构建前体检红线
 MIN_MEM_MB=${MIN_MEM_MB:-800}
@@ -163,7 +158,7 @@ run_build() {   # $1=仓名 $2=构建命令 $3=构建失败时的恢复命令（
   local repo=$1 cmd=$2 restore=${3:-}
   local logfile="$OPS_LOG_DIR/sync-deploy-$repo.log"
   mkdir -p "$OPS_LOG_DIR"
-  log "  构建：$cmd （输出 → $logfile；限额 CPU ${BUILD_CPU_QUOTA} / 内存 ${BUILD_MEM_MAX} / swap ${BUILD_SWAP_MAX} / 超时 ${BUILD_TIMEOUT}s）"
+  log "  构建：$cmd （输出 → $logfile；限额与峰值见日志里的 [guard] 行）"
   if [ "$DRY_RUN" = 1 ]; then log "  [dry-run] 跳过实际执行"; return 0; fi
   if ! run_guarded "$cmd" "$logfile"; then
     tail -25 "$logfile" >&2
