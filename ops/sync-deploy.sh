@@ -80,7 +80,6 @@ for r in "${TARGETS[@]}"; do
 done
 
 ARGS="$*"
-acquire_deploy_lock   # 整段部署（含 all 的多个仓）独占，防止并发构建把机器压死
 
 # 只有文档变更时跳过构建：这些路径不会被构建期读取（若某页面直接渲染 md，用 --build 强制）
 docs_only() {
@@ -404,5 +403,7 @@ sync_one() {
   log "=== $repo 同步完成 ==="
 }
 
+# 整段部署（含 all 的多个仓）独占执行，防止并发构建把机器压死
+acquire_deploy_lock
 for r in "${TARGETS[@]}"; do sync_one "$r"; done
 log "全部完成：${TARGETS[*]}"
