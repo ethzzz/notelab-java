@@ -36,6 +36,7 @@ if [ "${BUILD_GUARD_INNER:-0}" != 1 ]; then
     -p "MemoryHigh=${BUILD_MEM_HIGH:-1900M}" \
     -p "MemoryMax=${BUILD_MEM_MAX:-2700M}" \
     -p "MemorySwapMax=${BUILD_SWAP_MAX:-1024M}" \
+    -p "OOMPolicy=continue" \
     /usr/bin/env \
       BUILD_GUARD_INNER=1 \
       BUILD_CPU_QUOTA="${BUILD_CPU_QUOTA:-180%}" \
