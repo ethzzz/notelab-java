@@ -96,6 +96,10 @@ public final class MenuTree {
                     // Next.js 路线（2026-10-20）：面向高级/资深前端，内容在 notelab-b/src/content/study/nextjs.md。
                     // ⚠️ 同样必须同步登记 PageRoutes。
                     menu("learn-nextjs", "Next.js 路线", "▲", "/study/nextjs", true),
+                    // Agent 前端路线（2026-10-27）：面向 AI Agent 产品前端岗位，6 周冲刺、目标 P6；
+                    // 内容在 notelab-b/src/content/study/agent.md，配套实验台在 .agent/tmp/agent-frontend-lab。
+                    // ⚠️ 同样必须同步登记 PageRoutes（漏了普通角色看不到）。
+                    menu("learn-agent", "Agent 路线", "🤖", "/study/agent", true),
                     // 实践项目库（2026-10-19）：按企业业务方向组织的项目文档，内容在
                     // notelab-b/src/content/study/projects/<route>/*.md —— 加项目只加文件，不改路由。
                     // ⚠️ 路由必须同步登记 PageRoutes，否则叶子被 RBAC 过滤 → 谁都看不到。
