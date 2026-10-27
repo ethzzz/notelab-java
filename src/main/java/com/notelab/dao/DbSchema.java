@@ -510,17 +510,29 @@ final class DbSchema {
                 created_by BIGINT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
-        // ---- B 端文档编辑（只增不改）：富文本正文存 content_html，导入 .docx 解析后可编辑/导出 ----
+        // ---- B 端文档编辑：正文就是 .docx 原始字节，编辑器（SuperDoc）直接读写，不再做 HTML 往返 ----
         Db.exec("""
             CREATE TABLE IF NOT EXISTS documents (
                 id BIGINT AUTO_INCREMENT PRIMARY KEY,
                 title VARCHAR(200) NOT NULL,
-                content_html LONGTEXT NOT NULL,
+                content_docx LONGBLOB NOT NULL,
                 size_bytes BIGINT NOT NULL DEFAULT 0,
                 created_by BIGINT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""");
+        // 老库补列：先加可空列（老行没有 DOCX），新写入一定会带值
+        if (!hasColumn("documents", "content_docx")) {
+            Db.exec("ALTER TABLE documents ADD COLUMN content_docx LONGBLOB NULL AFTER title");
+        }
+        // content_html 是旧的富文本列：先放开 NOT NULL，避免新写入被旧约束卡住；
+        // 仅当表内确实没有数据时才删除该列 —— 有历史正文的库宁可留一列空字段，也不静默丢内容。
+        if (hasColumn("documents", "content_html")) {
+            Db.exec("ALTER TABLE documents MODIFY content_html LONGTEXT NULL");
+            Map<String, Object> n = Db.queryOne("SELECT COUNT(*) AS n FROM documents");
+            long rows = n == null ? 0 : ((Number) n.get("n")).longValue();
+            if (rows == 0) Db.exec("ALTER TABLE documents DROP COLUMN content_html");
+        }
         // ---- B 端笔记（只增不改）：Markdown 正文存 content_md，Notion 式笔记列表/编辑/查看 ----
         // doc_type 区分**文档类型**（note 普通笔记 / prd 产品需求文档）：两者字段、编辑器、接口完全一样，
         // 只是「在不同页面里、各看各的」。默认 'note' ⟹ 老数据自动归入笔记，无需回填。

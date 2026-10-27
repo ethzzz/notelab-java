@@ -6,14 +6,14 @@ import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDateTime;
 
-/** documents 表（B 端文档编辑：富文本正文存 content_html） */
+/** documents 表（B 端文档编辑：正文存 .docx 原始字节 content_docx） */
 @TableName("documents")
 public class Document {
 
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
     private String title;
-    private String contentHtml;
+    private byte[] contentDocx;
     private Long sizeBytes;
     private Long createdBy;
     private LocalDateTime createdAt;
@@ -25,8 +25,8 @@ public class Document {
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
 
-    public String getContentHtml() { return contentHtml; }
-    public void setContentHtml(String contentHtml) { this.contentHtml = contentHtml; }
+    public byte[] getContentDocx() { return contentDocx; }
+    public void setContentDocx(byte[] contentDocx) { this.contentDocx = contentDocx; }
 
     public Long getSizeBytes() { return sizeBytes; }
     public void setSizeBytes(Long sizeBytes) { this.sizeBytes = sizeBytes; }
