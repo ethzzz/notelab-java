@@ -264,6 +264,25 @@ public final class AppConfig {
         return repoRoot() + "/notelab-c";
     }
 
+    /** B 端仓库目录 —— 课程 JSON（src/content/learning）在里面，见 {@link #learningContentDir()}。 */
+    public static String bRepoDir() {
+        return repoRoot() + "/notelab-b";
+    }
+
+    // ---------- 编程学习：文件型课程 ----------
+    /**
+     * 课程 JSON 目录，约定<strong>一门语言一个文件</strong>（{@code src/content/learning/<code>.json}）。
+     *
+     * <p>为什么放在 B 端仓而不是 {@link com.notelab.model.LearningSeed}：课程正文是 145KB 级别的
+     * 长 Markdown，写进 Java 字符串常量既没法 diff 也没法 review；放仓里随 git 走，改完部署 B 端即可生效。
+     * 后端与 B 端同机部署，所以直接扫盘读（与 C 端素材清单同一套做法）。
+     *
+     * <p>目录不存在时跳过，不抛错 —— 本地开发没有 B 端仓也不该把接口打挂。
+     */
+    public static String learningContentDir() {
+        return get("LEARNING_CONTENT_DIR", bRepoDir() + "/src/content/learning");
+    }
+
     // ---------- 爬塔素材清单（B 端「素材资源」页的候选池） ----------
     /**
      * C 端爬塔素材所在目录。B 端浏览器**读不到 C 端仓库**，所以素材候选清单由后端直接扫盘下发；

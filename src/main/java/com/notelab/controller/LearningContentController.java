@@ -1,18 +1,24 @@
 package com.notelab.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.notelab.common.AppConfig;
 import com.notelab.common.JsonSanitizer;
 import com.notelab.common.JsonUtil;
 import com.notelab.model.LearningSeed;
 import com.notelab.service.UiConfigService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -20,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * 编程学习：GET|POST /api/learning。
@@ -43,11 +50,21 @@ import java.util.Set;
  * <p>⚠️ 已上线后改内置内容不生效：库里 tracks 非空时一律以库里的为准（用户的删改要保住）。
  * 想让内置新增的语言冒出来，得先把 tracks 清空（POST {@code {"tracks":[]}}）再 GET。
  *
+ * <p><b>课程有两个来源</b>（2026-10-28 增加文件型）：
+ * <ol>
+ *   <li><b>库里的 tracks</b>（{@code ui_config.learning}）：手工/接口写入，非空时**完全取代**内置常量；</li>
+ *   <li><b>仓里的 JSON</b>（{@code notelab-b/src/content/learning/*.json}，一门语言一个文件）：
+ *       每次读取时扫盘合并，<b>同 code 以库为准</b> —— 这样长 Markdown 能随 git review，
+ *       又不会和「库里已有人改过」的版本打架。目录缺失就当没有。</li>
+ * </ol>
+ *
  * <p>LLM 依赖：无。本 Controller 全程确定性计算。
  */
 @RestController
 @RequestMapping("/api/learning")
 public class LearningContentController {
+
+    private static final Logger log = LoggerFactory.getLogger(LearningContentController.class);
 
     /**
      * 整包上限。2026-10-21 从 1MB 提到 2MB：课程从 88 节扩到 108 节、每节补到 2.4k+ 中文字后，
@@ -169,11 +186,60 @@ public class LearningContentController {
     private static Map<String, Object> learningOf(Map<String, Object> cfg) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("runners", new ArrayList<>(LearningSeed.RUNNERS));
-        out.put("tracks", new ArrayList<>(LearningSeed.BASE_TRACKS));
+
+        List<Object> tracks = new ArrayList<Object>(LearningSeed.BASE_TRACKS);
         Object o = cfg.get("learning");
         if (o instanceof Map) {
             Object ts = ((Map<String, Object>) o).get("tracks");
-            if (ts instanceof List && !((List<?>) ts).isEmpty()) out.put("tracks", ts);
+            if (ts instanceof List && !((List<?>) ts).isEmpty()) tracks = new ArrayList<Object>((List<Object>) ts);
+        }
+
+        // 库里已有同 code 的课程时，文件版本让位：用户改过的内容优先，文件只补空缺
+        Set<String> codes = new LinkedHashSet<>();
+        for (Object t : tracks) {
+            if (t instanceof Map<?, ?> tm && tm.get("code") != null) codes.add(String.valueOf(tm.get("code")));
+        }
+        tracks.addAll(fileTracks(codes));
+
+        out.put("tracks", tracks);
+        return out;
+    }
+
+    /**
+     * 扫盘读取「文件型课程」：{@code <dir>/*.json}，一个文件一门语言，按文件名排序追加。
+     *
+     * <p>复用 {@link #sanitizeTracks} 做净化 —— 文件里多写的字段与接口提交同样被丢弃，
+     * 避免出现「文件一套规则、接口一套规则」两份真相。
+     *
+     * <p>单个文件出错只跳过它并打日志，绝不让整个接口 500：少一门课，比编程学习页整页打不开好得多。
+     */
+    private static List<Map<String, Object>> fileTracks(Set<String> existingCodes) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        Path dir = Path.of(AppConfig.learningContentDir());
+        if (!Files.isDirectory(dir)) return out;
+
+        List<Path> files;
+        try (Stream<Path> s = Files.list(dir)) {
+            files = s.filter(p -> p.getFileName().toString().endsWith(".json")).sorted().toList();
+        } catch (IOException e) {
+            log.warn("课程目录不可读，跳过文件型课程：{} ({})", dir, e.toString());
+            return out;
+        }
+
+        for (Path f : files) {
+            if (existingCodes.size() + out.size() >= MAX_TRACKS) break;
+            try {
+                String raw = Files.readString(f, StandardCharsets.UTF_8).replace("\uFEFF", "");
+                // 单个对象包成数组，直接复用 save() 的白名单净化
+                for (Map<String, Object> t : sanitizeTracks(JsonUtil.parse("[" + raw + "]"))) {
+                    String code = String.valueOf(t.get("code"));
+                    if (existingCodes.contains(code)) continue;   // 库里已有同 code → 以库为准
+                    existingCodes.add(code);
+                    out.add(t);
+                }
+            } catch (Exception e) {
+                log.warn("课程文件解析失败，已跳过：{} ({})", f, e.toString());
+            }
         }
         return out;
     }
