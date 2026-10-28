@@ -23,6 +23,8 @@ SERVICES = [
     ("notelab-c",    3010, "/games/",      {"200", "308", "301"}),
     ("notelab-b",    3020, "/admin/",      {"200", "308", "301"}),
     ("ai-lab",       8002, "/api/health",  {"200"}),
+    # 2026-10-28 起博客朗读与 B 端英语学习的唯一出口（替掉了 1GB 常驻的 Kokoro 容器）
+    ("notelab-tts",  8881, "/health",      {"200"}),
 ]
 # git 仓：目录名 -> GitHub 仓（用于 fetch 落后检查）
 REPOS = ["notelab-java", "notelab-c", "notelab-b", "ai-lab"]
@@ -88,6 +90,42 @@ def check_services(pmmap):
             warn("red", f"{name} 探活异常：HTTP {code}（期望 {'/'.join(sorted(ok_codes))}）")
         if isinstance(rst, int) and rst > 60:
             warn("yellow", f"{name} 累计重启 {rst} 次，偏高，查是否有崩溃循环")
+    out()
+
+
+# ================= 1b. 语音引擎 =================
+TTS_URL = "http://127.0.0.1:8881"
+
+def check_tts():
+    """探测 tts-edge —— 它后面是微软 Edge TTS，会被封也会被限流，光看端口活着没用。
+
+    为什么要 deep=1：`/health` 只证明 aiohttp 还活着（进程没崩），
+    真正会坏的是「微软端点又不认这个版本了」（2026-10 已发生过一次，返回 403）。
+    deep=1 会真合成两个字符，把这条链路端到端走一遍 —— 每天早上花 ~2 秒，换掉一次用户点朗读才发现没声音。
+    """
+    out("## 1b. 语音引擎（tts-edge → 微软 Edge TTS）")
+    rc, raw, err = sh(f"curl -s -m 15 '{TTS_URL}/health?deep=1'", 20)
+    try:
+        data = json.loads(raw) if raw else None
+    except Exception:
+        data = None
+    if not data:
+        out(f"- 🔴 探针无响应（rc={rc}）：{(err or raw or '无输出')[:140]}")
+        warn("red", "tts-edge 探针无响应：博客朗读与 B 端英语学习都会失败")
+        out()
+        return
+
+    deep = data.get("deep") or {}
+    ok = bool(data.get("ok")) and bool(deep.get("ok"))
+    ver = data.get("version", "?")
+    if ok:
+        out(f"- 🟢 edge-tts {ver} · 深度合成 {deep.get('bytes', 0)} B · 音色 {data.get('voices', '?')} 个")
+    else:
+        reason = str(deep.get("error") or "未知")[:140]
+        out(f"- 🔴 深度合成失败：{reason}")
+        # 403 是微软改端点/封 IP 的典型症状；给出可执行的处置建议，避免下次又从头排查
+        hint = "（微软端点 403 的典型症状：pip install --upgrade edge-tts 后重启 notelab-tts）" if "403" in reason else ""
+        warn("red", f"tts-edge 合成失败：{reason}{hint}")
     out()
 
 
@@ -452,6 +490,7 @@ def main():
         warn("red", "无法解析 pm2 jlist，pm2 可能异常")
 
     check_services(pmmap)
+    check_tts()
     check_resources()
     check_logs()
     check_git()
